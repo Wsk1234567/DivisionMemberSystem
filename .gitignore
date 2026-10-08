@@ -1,0 +1,7 @@
+dist/
+preview/
+test-results/
+build/
+deployment.local.json
+.clasp.json
+node_modules/
