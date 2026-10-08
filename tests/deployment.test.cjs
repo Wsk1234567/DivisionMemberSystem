@@ -4,7 +4,18 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const read = name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
+
+test('built admin page embeds literal scripts without unresolved placeholders', () => {
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: path.join(__dirname, '..') });
+  const html = read('build/apps-script/admin/Admin.html');
+  assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|TRANSPORT|ADMIN)__/.test(html), false);
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
+  assert.equal(scripts.length, 5);
+  for (const script of scripts) assert.doesNotThrow(() => new vm.Script(script));
+  assert.equal(scripts[0], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
+});
 test('public and admin Apps Script deployments have separate scope and execution identity', () => {
   const admin = JSON.parse(read('apps-script/admin/appsscript.json'));
   const publicManifest = JSON.parse(read('apps-script/public/appsscript.json'));

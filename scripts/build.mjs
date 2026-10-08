@@ -25,7 +25,7 @@ if (libraryHash !== expectedHash || !library.includes('0.20.3')) throw new Error
 const adminTemplate = await read('src/admin.html');
 const inline = code => '<script>' + code.replace(/<\/script/gi, '<\\/script') + '</script>';
 const transport = (await read('src/transport.js')).replace("'__PUBLIC_URL__'", JSON.stringify(config.publicSiteUrl || ''));
-const productionAdmin = adminTemplate.replace('__STYLE__', '<style>' + style + '</style>').replace('__LIBRARY__', inline(library)).replace('__DOMAIN__', inline(domainCode)).replace('__WORKBOOK__', inline(workbook)).replace('__TRANSPORT__', inline(transport)).replace('__ADMIN__', inline(admin));
+const productionAdmin = adminTemplate.replace('__STYLE__', () => '<style>' + style + '</style>').replace('__LIBRARY__', () => inline(library)).replace('__DOMAIN__', () => inline(domainCode)).replace('__WORKBOOK__', () => inline(workbook)).replace('__TRANSPORT__', () => inline(transport)).replace('__ADMIN__', () => inline(admin));
 const previewAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__TRANSPORT__', '<script src="demo-transport.js"></script>').replace('__ADMIN__', '<script src="admin.js"></script>');
 for (const dir of ['dist', 'preview']) {
   await write(dir + '/index.html', await read('src/public.html'));
