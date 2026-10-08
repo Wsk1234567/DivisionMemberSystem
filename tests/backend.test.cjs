@@ -69,6 +69,21 @@ test('wrong deployment identity fails closed', () => {
   const { env, sandbox } = environment(); env.actor = 'secretary@gmail.com'; env.effective = 'owner@gmail.com';
   assert.equal(sandbox.rpc({ action: 'bootstrap' }).ok, false);
 });
+
+test('admin serves bundled HTML literally after identity checks', () => {
+  const { env, sandbox } = environment();
+  let fileReads = 0;
+  const output = { setTitle() { return this; }, addMetaTag() { return this; } };
+  sandbox.HtmlService = {
+    createHtmlOutputFromFile(name) { assert.equal(name, 'Admin'); fileReads++; return output; },
+    createHtmlOutput: text => ({ text }),
+    createTemplateFromFile() { throw new Error('Bundled XML literals must not become scriptlets'); }
+  };
+  assert.equal(sandbox.doGet(), output);
+  env.actor = 'stranger@gmail.com';
+  assert.match(sandbox.doGet().text, /Access unavailable/);
+  assert.equal(fileReads, 1);
+});
 test('sync failure leaves private save intact and can be retried', () => {
   const { env, sandbox, initial, properties } = environment(); env.publicFailure = true;
   const response = sandbox.rpc({ action: 'save', table: 'Members', row: { ...initial.Members[0], name: 'Saved privately' }, year: 2026, revision: 1 });

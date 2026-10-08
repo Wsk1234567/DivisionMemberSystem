@@ -17,7 +17,7 @@ function identity_(ownerOnly) {
 function doGet() {
   try {
     identity_(false);
-    return HtmlService.createTemplateFromFile('Admin').evaluate().setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
     return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised administrator account. If this is your first visit, complete the Google authorisation.</p>');
   }
