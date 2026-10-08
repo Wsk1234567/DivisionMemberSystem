@@ -7,7 +7,7 @@
 1. 用你的个人 Gmail 打开 [Google Apps Script](https://script.google.com/)，新建独立项目，命名 `TCCD Admin`。项目不要与秘书共享代码编辑权限。
 2. 执行 `npm run build`。把 `build/apps-script/admin/Code.gs`、`Domain.gs`、`Admin.html` 加入项目，文件名保持一致。
 3. 在项目设置中开启显示 `appsscript.json`，复制同目录的 manifest。时区使用 `Asia/Kuala_Lumpur`。
-4. 在编辑器选择并执行 `initialSetup_`，完成你自己项目的 Google 授权。它建立私人资料表、独立公开资料表、私人备份文件夹和每日备份触发器，不导入任何真实资料。末尾的下划线保留，避免初始化函数被网页远程调用。
+4. 编辑器不列出下划线结尾的函数。临时在 Code.gs 加入 `function initializeTCCD() { initialSetup_(); }`，保存后选择并执行 `initializeTCCD`，完成你自己项目的 Google 授权。它建立私人资料表、独立公开资料表、私人备份文件夹和每日备份触发器，不导入任何真实资料。成功后移除临时函数并保存，才继续部署；`initialSetup_` 的下划线保留，避免初始化函数被网页远程调用。
 5. 在项目设置 → Script properties 检查 `OWNER_EMAIL`、`PRIVATE_SHEET_ID`、`PUBLIC_SHEET_ID`、`BACKUP_FOLDER_ID`。初次设置自动填写，现有资料不会被重复 setup 清空。
 6. Deploy → New deployment → Web app：**Execute as: User accessing the web app**；**Who has access: Anyone with Google account**。复制 `/exec` 地址作为 `adminUrl`。不要选择 Execute as me，否则秘书的身份检查会拒绝访问。
 7. 用你的 Gmail 打开管理页面，在 Settings 增加秘书的 Gmail。后台会共享必要的储存文件并登记授权名单。
@@ -18,7 +18,7 @@ Google 可能要求 OAuth consent 配置或显示尚未验证应用的提示。�
 ## 2. 建立只读公开服务
 
 1. 同一 Gmail 新建第二个 Apps Script 项目，命名 `TCCD Public`。
-2. 复制 `build/apps-script/public/Code.gs` 和 `appsscript.json`。
+2. 复制 `build/apps-script/public/Code.gs` 和 `appsscript.json`。manifest 启用 Advanced Sheets v4 服务，保持 spreadsheets.readonly 权限；默认 Google Cloud 项目会自动启用对应 API。若使用自定义 Cloud 项目，需自行启用 Google Sheets API。
 3. Script properties 只加入 `PUBLIC_SHEET_ID`，使用第一步建立的公开资料表 ID。**不加入 PRIVATE_SHEET_ID、OWNER_EMAIL 或备份信息**。
 4. 部署 Web app：**Execute as: Me**，**Who has access: Anyone（包含未登录访客）**。复制 `/exec` 地址作为 `publicApiUrl`。
 5. 无痕打开这个地址，应返回 `ok:true` 和只有允许公开字段的 JSON。公开表和私人表本身保持不公开，不设置 Anyone with the link。

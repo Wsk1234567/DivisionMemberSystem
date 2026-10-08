@@ -142,9 +142,10 @@ test('public service applies a second allowlist and rejects executable callback 
   const { publicBook } = environment();
   const slot = publicBook.getSheetByName('Manifest').getRange('A1').getValue();
   publicBook.getSheetByName('Store' + slot).getRange(1, 1, 1, 1).setValues([['KPT:' + JSON.stringify({ schema: 1, revision: 1, updatedAt: '', members: [{ name: 'Student', sjamId: '001', status: 'Active', ic: 'DO_NOT_LEAK', awards: [{ name: 'Award', date: '2026-01-01', category: 'Probadge', level: 'Cadet', notes: 'DO_NOT_LEAK' }] }] })]]);
-  const sandbox = { PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'public' }) }, SpreadsheetApp: { openById: () => publicBook }, ContentService: { MimeType: { JSON: 'json', JAVASCRIPT: 'js' }, createTextOutput: text => ({ text, setMimeType() { return this; } }) } };
+  const sandbox = { PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'public' }) }, Sheets: { Spreadsheets: { Values: { get(id, range) { assert.equal(id, 'public'); const [name, cells] = range.split('!'); const sheet = publicBook.getSheetByName(name); return { values: cells === 'A1:B1' ? sheet.getRange('A1:B1').getDisplayValues() : sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues() }; } } } }, ContentService: { MimeType: { JSON: 'json', JAVASCRIPT: 'js' }, createTextOutput: text => ({ text, setMimeType() { return this; } }) } };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require.resolve('../apps-script/public/Code.gs'), 'utf8'), sandbox);
+  assert.equal(JSON.parse(sandbox.doGet({ parameter: {} }).text).ok, true);
   assert.equal(sandbox.doGet({ parameter: { callback: 'kpt_test' } }).text.includes('DO_NOT_LEAK'), false);
   assert.match(sandbox.doGet({ parameter: { callback: 'alert(1)//' } }).text, /Invalid callback/);
 });

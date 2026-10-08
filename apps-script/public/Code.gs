@@ -1,12 +1,12 @@
 function publicPayload_() {
   const id = PropertiesService.getScriptProperties().getProperty('PUBLIC_SHEET_ID');
   if (!id) throw new Error('Public service is not configured.');
-  const book = SpreadsheetApp.openById(id);
+  const read = range => Sheets.Spreadsheets.Values.get(id, range, { valueRenderOption: 'FORMATTED_VALUE' }).values || [];
   for (let attempt = 0; attempt < 3; attempt++) {
-    const marker = book.getSheetByName('Manifest').getRange('A1:B1').getDisplayValues()[0];
-    const sheet = book.getSheetByName('Store' + marker[0]);
-    const value = JSON.parse(sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues().map(row => { if (!row[0].startsWith('KPT:')) throw new Error('Invalid projection.'); return row[0].slice(4); }).join(''));
-    const after = book.getSheetByName('Manifest').getRange('A1:B1').getDisplayValues()[0];
+    const marker = read('Manifest!A1:B1')[0];
+    if (!marker || !/^[01]$/.test(String(marker[0]))) throw new Error('Invalid projection marker.');
+    const value = JSON.parse(read('Store' + marker[0] + '!A:A').map(row => { if (!String(row[0]).startsWith('KPT:')) throw new Error('Invalid projection.'); return row[0].slice(4); }).join(''));
+    const after = read('Manifest!A1:B1')[0];
     if (marker.join(':') !== after.join(':')) continue;
     return { schema: 1, revision: Number(value.revision), updatedAt: String(value.updatedAt), members: value.members.map(member => ({ name: String(member.name), sjamId: String(member.sjamId), status: String(member.status), awards: member.awards.map(award => ({ name: String(award.name), date: String(award.date), category: String(award.category), level: String(award.level) })) })) };
   }
