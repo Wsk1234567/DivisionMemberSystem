@@ -1,4 +1,4 @@
-name: Publish KPT public directory
+name: Publish TCCD public directory
 on:
   push:
     branches: [main]

@@ -4,7 +4,7 @@
 
 ## 1. 建立 Google 管理后台
 
-1. 用你的个人 Gmail 打开 [Google Apps Script](https://script.google.com/)，新建独立项目，命名 `KPT Admin`。项目不要与秘书共享代码编辑权限。
+1. 用你的个人 Gmail 打开 [Google Apps Script](https://script.google.com/)，新建独立项目，命名 `TCCD Admin`。项目不要与秘书共享代码编辑权限。
 2. 执行 `npm run build`。把 `build/apps-script/admin/Code.gs`、`Domain.gs`、`Admin.html` 加入项目，文件名保持一致。
 3. 在项目设置中开启显示 `appsscript.json`，复制同目录的 manifest。时区使用 `Asia/Kuala_Lumpur`。
 4. 在编辑器选择并执行 `initialSetup_`，完成你自己项目的 Google 授权。它建立私人资料表、独立公开资料表、私人备份文件夹和每日备份触发器，不导入任何真实资料。末尾的下划线保留，避免初始化函数被网页远程调用。
@@ -17,7 +17,7 @@ Google 可能要求 OAuth consent 配置或显示尚未验证应用的提示。�
 
 ## 2. 建立只读公开服务
 
-1. 同一 Gmail 新建第二个 Apps Script 项目，命名 `KPT Public`。
+1. 同一 Gmail 新建第二个 Apps Script 项目，命名 `TCCD Public`。
 2. 复制 `build/apps-script/public/Code.gs` 和 `appsscript.json`。
 3. Script properties 只加入 `PUBLIC_SHEET_ID`，使用第一步建立的公开资料表 ID。**不加入 PRIVATE_SHEET_ID、OWNER_EMAIL 或备份信息**。
 4. 部署 Web app：**Execute as: Me**，**Who has access: Anyone（包含未登录访客）**。复制 `/exec` 地址作为 `publicApiUrl`。

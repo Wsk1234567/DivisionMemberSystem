@@ -47,7 +47,7 @@
   function create(state, template, summaryRows) {
     const library = requireLibrary();
     const book = library.utils.book_new();
-    const instructions = [['KPT Excel import template'], ['Use exact sheet names and column headers. Header order may change.'], ['Keep id and version unchanged when editing exported records.'], ['New records: leave id blank and version blank or 0.'], ['IC, SJAM ID and certificate numbers must be text.'], ['Dates: YYYY-MM-DD. Activity tags: DIM|Inspection|Exam|Other.'], ['TRUE/FALSE fields: present, attended, archived.'], ['Missing rows are never deleted. Use status or archived to retain history.'], ['Import preview is required. A stale version must be re-exported.'], ['New students receive an internal ID after saving. Export them before adding related records.'], ['Linked examinations must match the activity date, type and attendance.'], ['An activity tagged Exam creates Pending/Absent exam records when attendance is saved.']];
+    const instructions = [['TCCD Excel import template'], ['Use exact sheet names and column headers. Header order may change.'], ['Keep id and version unchanged when editing exported records.'], ['New records: leave id blank and version blank or 0.'], ['IC, SJAM ID and certificate numbers must be text.'], ['Dates: YYYY-MM-DD. Activity tags: DIM|Inspection|Exam|Other.'], ['TRUE/FALSE fields: present, attended, archived.'], ['Missing rows are never deleted. Use status or archived to retain history.'], ['Import preview is required. A stale version must be re-exported.'], ['New students receive an internal ID after saving. Export them before adding related records.'], ['Linked examinations must match the activity date, type and attendance.'], ['An activity tagged Exam creates Pending/Absent exam records when attendance is saved.']];
     instructions.push(['New imported students need IC or SJAM ID for duplicate checks. If both are unknown, create them on the website first.']);
     library.utils.book_append_sheet(book, library.utils.aoa_to_sheet(instructions), 'Instructions');
     root.KPT.tables.forEach(table => {
@@ -76,7 +76,7 @@
   }
   function download(state, template, summaryRows) {
     const library = requireLibrary();
-    library.writeFile(create(state, template, summaryRows), template ? 'KPT_Import_Template.xlsx' : 'KPT_Export_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+    library.writeFile(create(state, template, summaryRows), template ? 'TCCD_Import_Template.xlsx' : 'TCCD_Export_' + new Date().toISOString().slice(0, 10) + '.xlsx');
   }
   root.KPTWorkbook = { parse, create, download };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTWorkbook;

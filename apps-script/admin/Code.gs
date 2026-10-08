@@ -17,7 +17,7 @@ function identity_(ownerOnly) {
 function doGet() {
   try {
     identity_(false);
-    return HtmlService.createTemplateFromFile('Admin').evaluate().setTitle('KPT • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    return HtmlService.createTemplateFromFile('Admin').evaluate().setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
     return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised administrator account. If this is your first visit, complete the Google authorisation.</p>');
   }
@@ -86,13 +86,13 @@ function withLock_(work) {
 function backup_(state, reason) {
   const folder = DriveApp.getFolderById(configuration_().backupsId);
   const payload = { schema: 1, createdAt: new Date().toISOString(), reason, state };
-  const file = folder.createFile('KPT-' + payload.createdAt.replace(/[:.]/g, '-') + '-r' + state.revision + '.json', JSON.stringify(payload), 'application/json');
+  const file = folder.createFile('TCCD-' + payload.createdAt.replace(/[:.]/g, '-') + '-r' + state.revision + '.json', JSON.stringify(payload), 'application/json');
   return { id: file.getId(), name: file.getName() };
 }
 function listBackups_() {
   const files = DriveApp.getFolderById(configuration_().backupsId).getFiles();
   const rows = [];
-  while (files.hasNext()) { const file = files.next(); if (file.getName().startsWith('KPT-') && file.getMimeType() === 'application/json') rows.push({ id: file.getId(), name: file.getName(), at: file.getDateCreated().toISOString() }); }
+  while (files.hasNext()) { const file = files.next(); if (/^(KPT|TCCD)-/.test(file.getName()) && file.getMimeType() === 'application/json') rows.push({ id: file.getId(), name: file.getName(), at: file.getDateCreated().toISOString() }); }
   return rows.sort((first, second) => second.at.localeCompare(first.at));
 }
 function bootstrap_(actor) {
@@ -138,7 +138,7 @@ function rpc(request) {
         const parents = file.getParents();
         let allowed = false;
         while (parents.hasNext()) if (parents.next().getId() === actor.config.backupsId) allowed = true;
-        if (!allowed || !file.getName().startsWith('KPT-')) throw new Error('Select a backup from the private backup folder.');
+        if (!allowed || !/^(KPT|TCCD)-/.test(file.getName())) throw new Error('Select a backup from the private backup folder.');
         const payload = JSON.parse(file.getBlob().getDataAsString());
         if (payload.schema !== 1 || !payload.state) throw new Error('Invalid backup format.');
         const restored = KPT.copy(payload.state);
@@ -179,9 +179,9 @@ function initialSetup_() {
   if (props.getProperty('OWNER_EMAIL') && props.getProperty('OWNER_EMAIL') !== email) throw new Error('Only the configured owner can initialise this project.');
   props.setProperty('OWNER_EMAIL', email);
   if (props.getProperty('PRIVATE_SHEET_ID')) { console.log('Already initialised. Existing data kept.'); return; }
-  const privateBook = SpreadsheetApp.create('KPT Private Data — do not edit storage tabs');
-  const publicBook = SpreadsheetApp.create('KPT Public Projection');
-  const folder = DriveApp.createFolder('KPT Private Backups');
+  const privateBook = SpreadsheetApp.create('TCCD Private Data — do not edit storage tabs');
+  const publicBook = SpreadsheetApp.create('TCCD Public Projection');
+  const folder = DriveApp.createFolder('TCCD Private Backups');
   [DriveApp.getFileById(privateBook.getId()), DriveApp.getFileById(publicBook.getId()), folder].forEach(file => file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE));
   props.setProperties({ PRIVATE_SHEET_ID: privateBook.getId(), PUBLIC_SHEET_ID: publicBook.getId(), BACKUP_FOLDER_ID: folder.getId(), CURRENT_SLOT: '0', ADMINS: '[]' });
   const state = KPT.empty();

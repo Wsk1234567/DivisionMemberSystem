@@ -1,6 +1,6 @@
-# DivisionMemberSystem
+# TCCD Member System
 
-KPT cadet member administration and public award directory for SMJK Triang Combined Cadet Division.
+TCCD cadet member administration and public award directory for SMJK Triang Combined Cadet Division.
 
 Public website: https://wsk1234567.github.io/DivisionMemberSystem/
 

@@ -47,5 +47,5 @@ for (const project of ['admin', 'public']) for (const file of ['Code.gs', 'appss
 const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css'];
 const publicFiles = await fs.readdir(path.join(root, 'dist'));
 if (publicFiles.some(name => !approvedFiles.includes(name))) throw new Error('Unexpected file in public dist. Review before publishing.');
-console.log('Built public site, 500-member fictional preview, and two Google Apps Script deployment packages.');
+console.log('Built TCCD public site, 500-member fictional preview, and two Google Apps Script deployment packages.');
 console.log('Public deployment: dist/ · Local preview: preview/ · Google packages: build/apps-script/');

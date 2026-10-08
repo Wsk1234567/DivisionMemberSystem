@@ -15,4 +15,4 @@ http.createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': types[path.extname(target)] || 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     response.end(content);
   } catch (error) { response.writeHead(404); response.end('Not found'); }
-}).listen(port, '127.0.0.1', () => console.log('KPT fictional preview: http://127.0.0.1:' + port));
+}).listen(port, '127.0.0.1', () => console.log('TCCD fictional preview: http://127.0.0.1:' + port));
