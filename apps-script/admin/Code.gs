@@ -103,7 +103,7 @@ function bootstrap_(actor) {
 function rpc(request) {
   try {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
-    const ownerActions = ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase'];
+    const ownerActions = ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'restoreTrash', 'purgeTrash'];
     let actor = identity_(ownerActions.includes(request.action));
     if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false)) }));
     if (request.action === 'listBackups') return { ok: true, data: listBackups_() };
@@ -116,6 +116,14 @@ function rpc(request) {
         commit_(next);
         const sync = sync_(next);
         return { ok: true, data: { state: next, sync } };
+      }
+      if (request.action === 'previewDelete') return { ok: true, data: KPT.recycleBundle(state, request.table, request.id) };
+      if (['deleteRecord', 'restoreTrash', 'purgeTrash'].includes(request.action)) {
+        context.revision = request.revision;
+        backup_(state, request.action === 'deleteRecord' ? 'Before moving record to Recycle Bin' : request.action === 'restoreTrash' ? 'Before restoring Recycle Bin item' : 'Before permanent deletion');
+        const next = request.action === 'deleteRecord' ? KPT.recycleDelete(state, request.table, request.id, context) : request.action === 'restoreTrash' ? KPT.restoreTrash(state, request.trashId, context) : KPT.purgeTrash(state, request.trashId, context);
+        commit_(next);
+        return { ok: true, data: { state: next, sync: sync_(next) } };
       }
       if (request.action === 'previewImport') {
         if (request.revision !== state.revision) throw new Error('Conflict: reload data before importing.');

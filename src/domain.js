@@ -216,7 +216,71 @@
     if (!errors.length && changes.length) finish(state, context.actor, 'Excel import: ' + changes.length + ' changes', context.now);
     return { state: errors.length ? null : state, changes, errors, revision: original.revision };
   }
-  const api = { fields, tables, categories, statuses, results, empty, normalize, validateState, mutate, summary, projectPublic, publicSearch, importRows, copy, finish, norm, icKey };
+  function recycleBundle(state, table, id) {
+    if (!fields[table]) fail('Unknown record type.');
+    const root = state[table].find(row => row.id === id);
+    if (!root) fail('Record not found. Reload current data.');
+    const selected = Object.fromEntries(tables.map(name => [name, new Set()]));
+    selected[table].add(id);
+    let changed = true;
+    const add = (name, rows) => rows.forEach(row => { if (!selected[name].has(row.id)) { selected[name].add(row.id); changed = true; } });
+    while (changed) {
+      changed = false;
+      const memberIds = selected.Members;
+      if (memberIds.size) ['Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments'].forEach(name => add(name, state[name].filter(row => memberIds.has(row.memberId))));
+      const activityIds = selected.Activities;
+      if (activityIds.size) {
+        add('Attendance', state.Attendance.filter(row => activityIds.has(row.activityId)));
+        add('Exams', state.Exams.filter(row => activityIds.has(row.activityId)));
+      }
+      if (selected.Attendance.size) add('Exams', state.Exams.filter(exam => exam.activityId && state.Attendance.some(attendance => selected.Attendance.has(attendance.id) && attendance.activityId === exam.activityId && attendance.memberId === exam.memberId)));
+      selected.Catalog.forEach(catalogId => {
+        const catalog = state.Catalog.find(row => row.id === catalogId);
+        if (!catalog) return;
+        if (catalog.kind === 'Exam') {
+          add('Activities', state.Activities.filter(row => row.tags.includes('Exam') && row.examType === catalog.name));
+          add('Exams', state.Exams.filter(row => row.type === catalog.name));
+        } else add('Awards', state.Awards.filter(row => row.category === catalog.category && row.name === catalog.name && row.level === catalog.level));
+      });
+    }
+    const records = {};
+    tables.forEach(name => { const rows = state[name].filter(row => selected[name].has(row.id)); if (rows.length) records[name] = copy(rows); });
+    const counts = Object.fromEntries(Object.entries(records).map(([name, rows]) => [name, rows.length]));
+    const label = table === 'Members' ? root.name : table === 'Activities' ? root.name : table === 'Catalog' ? root.name : root.id;
+    return { rootTable: table, rootId: id, label, records, counts, total: Object.values(counts).reduce((sum, count) => sum + count, 0) };
+  }
+  function recycleDelete(original, table, id, context) {
+    const state = copy(original);
+    if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before deleting.');
+    const bundle = recycleBundle(state, table, id);
+    Object.entries(bundle.records).forEach(([name, rows]) => { const ids = new Set(rows.map(row => row.id)); state[name] = state[name].filter(row => !ids.has(row.id)); });
+    state.trash = Array.isArray(state.trash) ? state.trash : [];
+    state.trash.unshift({ id: 'TRASH-' + context.uuid(), deletedAt: context.now, actor: context.actor, rootTable: bundle.rootTable, rootId: bundle.rootId, label: bundle.label, records: bundle.records, counts: bundle.counts });
+    return finish(state, context.actor, 'Delete to Recycle Bin: ' + table + ':' + id, context.now);
+  }
+  function restoreTrash(original, trashId, context) {
+    const state = copy(original);
+    if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before restoring.');
+    state.trash = Array.isArray(state.trash) ? state.trash : [];
+    const item = state.trash.find(row => row.id === trashId);
+    if (!item) fail('Recycle Bin item not found.');
+    Object.entries(item.records).forEach(([name, rows]) => rows.forEach(saved => {
+      if (state[name].some(row => row.id === saved.id)) fail('Cannot restore because record ID already exists: ' + saved.id);
+      const row = copy(saved); row.version = Number(row.version) + 1; state[name].push(row);
+    }));
+    state.trash = state.trash.filter(row => row.id !== trashId);
+    return finish(state, context.actor, 'Restore from Recycle Bin: ' + item.rootTable + ':' + item.rootId, context.now);
+  }
+  function purgeTrash(original, trashId, context) {
+    const state = copy(original);
+    if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before permanently deleting.');
+    state.trash = Array.isArray(state.trash) ? state.trash : [];
+    const item = state.trash.find(row => row.id === trashId);
+    if (!item) fail('Recycle Bin item not found.');
+    state.trash = state.trash.filter(row => row.id !== trashId);
+    return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
+  }
+  const api = { fields, tables, categories, statuses, results, empty, normalize, validateState, mutate, summary, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, restoreTrash, purgeTrash, copy, finish, norm, icKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

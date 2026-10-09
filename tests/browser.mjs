@@ -104,6 +104,19 @@ try {
   await page.locator('#excel-file').setInputFiles(exportedPath);
   await page.locator('[data-action="previewImport"]').click();
   await page.getByText('0 proposed changes · 0 errors', { exact: true }).waitFor();
+  await navigate('Members');
+  await page.locator('#filter').fill('Browser Test Student');
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-action="delete"]').click();
+  await page.getByText('Record moved to Recycle Bin.', { exact: true }).waitFor();
+  await navigate('Trash');
+  await page.getByRole('cell', { name: /Members · Browser Test Student/ }).waitFor();
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-action="restoreTrash"]').click();
+  await page.getByText('Record restored from Recycle Bin.', { exact: true }).waitFor();
+  await navigate('Members');
+  await page.locator('#filter').fill('Browser Test Student');
+  await page.getByRole('cell', { name: /Browser Test Student/ }).waitFor();
   await navigate('Settings');
   await page.locator('[data-action="backup"]').click();
   await page.getByText(/Private backup created/).waitFor();
@@ -117,5 +130,5 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: path.join(results, 'admin-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: public search, alumni, mobile widths, member CRUD, Duty, multi-tag attendance, linked exams, awards, Excel round trip and restore.');
+  console.log('Browser checks passed: public search, alumni, mobile widths, member CRUD, Duty, multi-tag attendance, linked exams, awards, Excel round trip, Recycle Bin and backup restore.');
 } finally { await browser.close(); if (server) server.kill(); }

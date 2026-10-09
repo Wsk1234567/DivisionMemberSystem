@@ -50,7 +50,7 @@ function environment() {
 test('unknown and blank Google identities cannot read or mutate data', () => {
   for (const actor of ['stranger@gmail.com', '']) {
     const { env, sandbox } = environment(); env.actor = actor;
-    for (const action of ['bootstrap', 'save', 'attendance', 'previewImport', 'commitImport', 'retrySync', 'backup', 'listBackups', 'restore', 'setAdmins', 'setCurrentPhase']) {
+    for (const action of ['bootstrap', 'save', 'attendance', 'previewImport', 'commitImport', 'retrySync', 'backup', 'listBackups', 'restore', 'setAdmins', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'restoreTrash', 'purgeTrash']) {
       const response = sandbox.rpc({ action });
       assert.equal(response.ok, false, action);
     }
@@ -63,7 +63,7 @@ test('secretary can read and save but cannot authorise administrators, restore o
   const saved = sandbox.rpc({ action: 'save', table: 'Members', row: { ...initial.Members[0], name: 'Secretary edit' }, year: 2026, revision: 1 });
   assert.equal(saved.ok, true);
   assert.equal(saved.data.state.Members[0].name, 'Secretary edit');
-  for (const action of ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
+  for (const action of ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'restoreTrash', 'purgeTrash']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
 });
 test('owner can set phase 1 to 6 without changing or restoring member data', () => {
   const { sandbox, properties, initial } = environment();
@@ -137,6 +137,22 @@ test('import backup failure prevents changes; successful import creates safety b
   assert.equal(sandbox.rpc({ action: 'commitImport', workbook, revision: 1 }).ok, true);
   assert.equal(files.size, 1);
   assert.equal(JSON.parse([...files.values()][0].getBlob().getDataAsString()).state.revision, 1);
+});
+test('owner deletion creates backup, syncs public data and can restore from Recycle Bin', () => {
+  const { sandbox, initial, files } = environment();
+  const member = initial.Members[0];
+  const preview = sandbox.rpc({ action: 'previewDelete', table: 'Members', id: member.id });
+  assert.equal(preview.ok, true);
+  assert.ok(preview.data.counts.Attendance > 0);
+  const deleted = sandbox.rpc({ action: 'deleteRecord', table: 'Members', id: member.id, revision: initial.revision });
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.data.state.Members.length, 0);
+  assert.equal(files.size, 1);
+  const trashId = deleted.data.state.trash[0].id;
+  const restored = sandbox.rpc({ action: 'restoreTrash', trashId, revision: deleted.data.state.revision });
+  assert.equal(restored.ok, true);
+  assert.equal(restored.data.state.Members[0].id, member.id);
+  assert.equal(files.size, 2);
 });
 test('restore creates a safety backup, increases revision and rejects stale import', () => {
   const { sandbox, initial, files } = environment();

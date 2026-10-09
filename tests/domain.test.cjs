@@ -126,6 +126,39 @@ test('Phase 1 import keeps duplicate protection without merging equal names', ()
   assert.equal(duplicateSjam.state, null);
   assert.match(duplicateSjam.errors[0].message, /already exists/);
 });
+test('Recycle Bin deletes and restores a member with all linked records', () => {
+  const state = fixture(2, 2026, 2026);
+  const member = state.Members[0];
+  const preview = KPT.recycleBundle(state, 'Members', member.id);
+  assert.equal(preview.counts.Members, 1);
+  assert.ok(preview.counts.Attendance > 0);
+  assert.ok(preview.counts.Exams > 0);
+  const deleted = KPT.recycleDelete(state, 'Members', member.id, { ...context(), revision: state.revision });
+  assert.equal(deleted.Members.some(row => row.id === member.id), false);
+  assert.equal(deleted.Attendance.some(row => row.memberId === member.id), false);
+  assert.equal(deleted.trash.length, 1);
+  assert.equal(KPT.projectPublic(deleted).members.some(row => row.name === member.name), false);
+  const restored = KPT.restoreTrash(deleted, deleted.trash[0].id, { ...context(), revision: deleted.revision });
+  assert.equal(restored.Members.some(row => row.id === member.id), true);
+  assert.equal(restored.Attendance.filter(row => row.memberId === member.id).length, preview.counts.Attendance);
+  assert.equal(restored.trash.length, 0);
+  KPT.validateState(restored);
+});
+test('Recycle Bin cascades activity and catalogue dependencies and supports permanent deletion', () => {
+  const state = fixture(2, 2026, 2026);
+  const activity = state.Activities[0];
+  const activityPreview = KPT.recycleBundle(state, 'Activities', activity.id);
+  assert.equal(activityPreview.counts.Activities, 1);
+  assert.equal(activityPreview.counts.Attendance, 2);
+  const examCatalog = state.Catalog.find(row => row.kind === 'Exam' && row.name === state.Exams[0].type);
+  const catalogPreview = KPT.recycleBundle(state, 'Catalog', examCatalog.id);
+  assert.equal(catalogPreview.counts.Catalog, 1);
+  assert.ok(catalogPreview.counts.Exams > 0);
+  const deleted = KPT.recycleDelete(state, 'Activities', activity.id, { ...context(), revision: state.revision });
+  const purged = KPT.purgeTrash(deleted, deleted.trash[0].id, { ...context(), revision: deleted.revision });
+  assert.equal(purged.trash.length, 0);
+  assert.throws(() => KPT.restoreTrash(purged, deleted.trash[0].id, { ...context(), revision: purged.revision }), /not found/);
+});
 test('invalid imports preserve state and pinpoint worksheet row', () => {
   const state = fixture(1, 2026, 2026);
   const prior = JSON.stringify(state);

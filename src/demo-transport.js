@@ -17,6 +17,13 @@
       await new Promise(resolve => setTimeout(resolve, 30));
       if (request.action === 'bootstrap') return { state: copy(state), user: identity, sync: { ok: true, revision: state.revision }, admins: copy(admins), currentPhase };
       if (['save', 'attendance'].includes(request.action)) { state = KPT.mutate(state, request, context()); return { state: copy(state), sync: { ok: true, revision: state.revision } }; }
+      if (request.action === 'previewDelete') return KPT.recycleBundle(state, request.table, request.id);
+      if (['deleteRecord', 'restoreTrash', 'purgeTrash'].includes(request.action)) {
+        const operation = context(); operation.revision = request.revision;
+        backup(request.action);
+        state = request.action === 'deleteRecord' ? KPT.recycleDelete(state, request.table, request.id, operation) : request.action === 'restoreTrash' ? KPT.restoreTrash(state, request.trashId, operation) : KPT.purgeTrash(state, request.trashId, operation);
+        return { state: copy(state), sync: { ok: true, revision: state.revision } };
+      }
       if (['previewImport', 'commitImport'].includes(request.action)) {
         if (request.revision !== state.revision) throw new Error('Conflict: reload current data before importing.');
         const preview = KPT.importRows(state, request.workbook, context());
