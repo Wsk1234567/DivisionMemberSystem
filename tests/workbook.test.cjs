@@ -21,6 +21,7 @@ test('template has fixed sheets and headers', () => {
   assert.deepEqual(global.XLSX.utils.sheet_to_json(book.Sheets.Members, { header: 1 })[0], global.KPT.fields.Members);
   assert.equal(book.Sheets.Members.D2.z, '@');
   assert.equal(book.Sheets.Members.E1001.z, '@');
+  assert.ok(global.XLSX.utils.sheet_to_json(book.Sheets.Catalog).every(row => Object.values(row).every(value => value === '')));
 });
 test('formula cells and numeric identifiers are rejected with cell row', () => {
   const book = Workbook.create(global.KPT.empty(), true);

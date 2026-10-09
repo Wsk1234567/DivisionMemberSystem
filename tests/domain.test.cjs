@@ -126,6 +126,17 @@ test('Phase 1 import keeps duplicate protection without merging equal names', ()
   assert.equal(duplicateSjam.state, null);
   assert.match(duplicateSjam.errors[0].message, /already exists/);
 });
+test('old Phase 1 templates ignore unchanged default catalogue rows', () => {
+  const state = KPT.empty();
+  state.Catalog[0].version = 2;
+  state.Catalog[0].name = 'EFA Updated';
+  const oldTemplateCatalog = KPT.empty().Catalog;
+  const preview = KPT.importRows(state, { Catalog: oldTemplateCatalog, Members: [{ name: 'New Student', sjamId: '001' }] }, context());
+  assert.equal(preview.errors.length, 0);
+  assert.equal(preview.changes.length, 1);
+  assert.equal(preview.state.Members[0].name, 'New Student');
+  assert.equal(preview.state.Catalog[0].name, 'EFA Updated');
+});
 test('Recycle Bin deletes and restores a member with all linked records', () => {
   const state = fixture(2, 2026, 2026);
   const member = state.Members[0];

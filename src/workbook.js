@@ -51,7 +51,7 @@
     library.utils.book_append_sheet(book, library.utils.aoa_to_sheet(instructions), 'Instructions');
     root.KPT.tables.forEach(table => {
       const headers = root.KPT.fields[table];
-      const records = template ? table === 'Catalog' ? root.KPT.empty().Catalog : [] : state[table];
+      const records = template ? [] : state[table];
       const rows = [headers, ...records.map(row => headers.map(header => Array.isArray(row[header]) ? row[header].join('|') : row[header] == null ? '' : row[header]))];
       const sheet = library.utils.aoa_to_sheet(rows);
       if (template) {

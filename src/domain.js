@@ -196,6 +196,10 @@
     const seen = new Set();
     order.forEach(table => (workbook[table] || []).forEach((input, index) => {
       try {
+        if (table === 'Catalog') {
+          const templateRow = empty().Catalog.find(row => row.id === str(input.id));
+          if (templateRow && JSON.stringify(normalize(table, input)) === JSON.stringify(normalize(table, templateRow))) return;
+        }
         if (input.id && seen.has(table + ':' + input.id)) fail('Repeated record ID in file.');
         if (input.id) seen.add(table + ':' + input.id);
         const prepared = table === 'Members' && !str(input.id) && !str(input.status) ? Object.assign({}, input, { status: 'Active' }) : input;
