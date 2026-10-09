@@ -198,12 +198,12 @@
       try {
         if (input.id && seen.has(table + ':' + input.id)) fail('Repeated record ID in file.');
         if (input.id) seen.add(table + ':' + input.id);
-        if (table === 'Members' && !str(input.id) && !str(input.ic) && !str(input.sjamId)) fail('New imported students need IC or SJAM ID to detect duplicates. If both are unknown, create the student on the website first, then export their internal ID.');
-        const previous = state[table].find(row => row.id === str(input.id));
-        const normalized = normalize(table, input);
+        const prepared = table === 'Members' && !str(input.id) && !str(input.status) ? Object.assign({}, input, { status: 'Active' }) : input;
+        const previous = state[table].find(row => row.id === str(prepared.id));
+        const normalized = normalize(table, prepared);
         if (previous && normalized.version !== previous.version) fail('Conflict: export current data first.');
         if (previous && JSON.stringify(normalized) === JSON.stringify(normalize(table, previous))) return;
-        const row = upsert(state, table, input, context.uuid);
+        const row = upsert(state, table, prepared, context.uuid);
         changes.push({ sheet: table, row: input.__excelRow || index + 2, id: row.id, change: previous ? 'Update' : 'Add' });
       } catch (error) { errors.push({ sheet: table, row: input.__excelRow || index + 2, message: error.message }); }
     }));

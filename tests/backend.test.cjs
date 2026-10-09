@@ -50,20 +50,32 @@ function environment() {
 test('unknown and blank Google identities cannot read or mutate data', () => {
   for (const actor of ['stranger@gmail.com', '']) {
     const { env, sandbox } = environment(); env.actor = actor;
-    for (const action of ['bootstrap', 'save', 'attendance', 'previewImport', 'commitImport', 'retrySync', 'backup', 'listBackups', 'restore', 'setAdmins']) {
+    for (const action of ['bootstrap', 'save', 'attendance', 'previewImport', 'commitImport', 'retrySync', 'backup', 'listBackups', 'restore', 'setAdmins', 'setCurrentPhase']) {
       const response = sandbox.rpc({ action });
       assert.equal(response.ok, false, action);
     }
     assert.equal(env.actorCalls, 0);
   }
 });
-test('secretary can read and save but cannot authorise administrators or restore', () => {
+test('secretary can read and save but cannot authorise administrators, restore or change phase', () => {
   const { env, sandbox, initial } = environment(); env.actor = 'secretary@gmail.com';
   assert.equal(sandbox.rpc({ action: 'bootstrap' }).ok, true);
   const saved = sandbox.rpc({ action: 'save', table: 'Members', row: { ...initial.Members[0], name: 'Secretary edit' }, year: 2026, revision: 1 });
   assert.equal(saved.ok, true);
   assert.equal(saved.data.state.Members[0].name, 'Secretary edit');
-  for (const action of ['restore', 'setAdmins', 'installBackup']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
+  for (const action of ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
+});
+test('owner can set phase 1 to 6 without changing or restoring member data', () => {
+  const { sandbox, properties, initial } = environment();
+  assert.equal(sandbox.rpc({ action: 'bootstrap' }).data.currentPhase, 1);
+  assert.equal(sandbox.rpc({ action: 'setCurrentPhase', phase: 4 }).data.currentPhase, 4);
+  assert.equal(properties.getProperty('CURRENT_PHASE'), '4');
+  assert.equal(sandbox.loadState_().revision, initial.revision);
+  assert.equal(sandbox.rpc({ action: 'setCurrentPhase', phase: 7 }).ok, false);
+  const backup = sandbox.rpc({ action: 'backup' }).data;
+  sandbox.rpc({ action: 'setCurrentPhase', phase: 5 });
+  sandbox.rpc({ action: 'restore', backupId: backup.id, revision: initial.revision });
+  assert.equal(sandbox.rpc({ action: 'bootstrap' }).data.currentPhase, 5);
 });
 test('wrong deployment identity fails closed', () => {
   const { env, sandbox } = environment(); env.actor = 'secretary@gmail.com'; env.effective = 'owner@gmail.com';

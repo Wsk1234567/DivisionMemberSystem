@@ -2,7 +2,15 @@
   'use strict';
   const byId = id => document.getElementById(id);
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const nav = [['Overview', 'Dashboard'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Catalog', 'Catalogue'], ['Import', 'Import & export'], ['Settings', 'Settings & backups']];
+  const nav = [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Catalog', 'Catalogue'], ['Import', 'Import & export'], ['Settings', 'Settings & backups']];
+  const phases = [
+    { title: '学生名单进入系统', owner: 'Secretary', goal: '先把学生名单安全地放进系统。', steps: ['在 Excel 的 Members sheet 填写 name 和 sjamId；sjamId 可以暂时留空。', 'id、version 和 status 留空，系统会自动建立内部 ID，并设为 Active。', '先按 Preview Import 检查，再按 Confirm Import 正式加入资料。'] },
+    { title: '补完整学生资料', owner: 'Owner & Secretary', goal: '名单确认后，再慢慢补齐个人资料。', steps: ['补上 ic、race、form、joined 和正确的 status。', '不需要一次填完，空白资料以后仍然可以补上。', '补资料时使用系统内部 id，原本的历史记录不会断开。'] },
+    { title: '准备考试与奖项类别', owner: 'Owner & Secretary', goal: '先整理好以后会使用的选项。', steps: ['在 Catalogue 设置 Exam、Award、Promotion 和其他类别。', '确认奖项名称、类别和等级，避免之后重复输入不同写法。', '不再使用的选项可以 Archive，旧记录会继续保留。'] },
+    { title: '开始记录活动与出席', owner: 'Secretary', goal: '建立活动，并记录谁有参加。', steps: ['建立 Activity，选择 DIM、Inspection、Exam 或 Other。', '在 Attendance 批量勾选出席学生。', '同一活动可以有多个类别，但同一学生每场 DIM 最多计算一次。'] },
+    { title: '记录考试、Duty 与 Efficient', owner: 'Owner & Secretary', goal: '完成每年的参与和效率资料。', steps: ['记录 Exam 结果，以及每位学生每年的 Duty Hour。', '系统会检查 Duty、DIM、Inspection 和 Exam Participation。', '资料齐全后显示 Efficient 或 Not Efficient；资料不足显示 Pending。'] },
+    { title: '奖项、权限、备份与正式使用', owner: 'Owner', goal: '完成最后检查，再放入真实完整资料。', steps: ['整理 Awards，并检查公开页面没有 IC、证书编号或内部备注。', '确认 Owner 与 Secretary 权限，以及每日 Backup。', '完成手机、Excel 导入、同步失败和恢复测试后正式使用。'] }
+  ];
   const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
   const titles = Object.fromEntries(nav);
   const memberOptions = () => state.Members.map(row => [row.id, row.name + ' · ' + (row.sjamId || row.id)]);
@@ -18,6 +26,7 @@
   let state;
   let user;
   let admins = [];
+  let currentPhase = 1;
   let sync = { ok: true };
   let view = 'Overview';
   let query = '';
@@ -33,7 +42,7 @@
   byId('year').value = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).slice(0, 4)) || new Date().getFullYear();
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
-  function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
+  function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
   function memberName(id) { const row = state.Members.find(member => member.id === id); return row ? row.name : id; }
   function button(label, action, id, table) { return '<button class="button small" type="button" data-action="' + action + '" data-id="' + escape(id || '') + '" data-table="' + escape(table || '') + '">' + escape(label) + '</button>'; }
   function table(headers, rows) { return '<div class="table-wrap"><table><thead><tr>' + headers.map(header => '<th scope="col">' + escape(header) + '</th>').join('') + '</tr></thead><tbody>' + (rows.length ? rows.map(row => '<tr>' + row.map(cell => '<td>' + cell + '</td>').join('') + '</tr>').join('') : '<tr><td colspan="' + headers.length + '" class="empty">No records yet.</td></tr>') + '</tbody></table></div>'; }
@@ -54,6 +63,10 @@
     const metrics = [['Members on record', state.Members.length, 'Current & former members'], ['Active members', members.filter(row => row.annualStatus === 'Active').length, 'For the selected reporting year'], ['Efficient', summaries.filter(row => row.efficient === 'Efficient').length, 'All four conditions met'], ['Duty awaiting entry', summaries.filter(row => row.hours === null).length, 'Annual hours not yet recorded']];
     const activities = state.Activities.filter(row => !row.archived && Number(row.date.slice(0, 4)) === year()).sort((first, second) => second.date.localeCompare(first.date)).slice(0, 5);
     return '<p class="page-intro">Your division’s records, connected in one place. Select a year to review annual participation and efficiency.</p><div class="metrics">' + metrics.map(([label, value, caption]) => '<div class="metric"><div class="label">' + label + '</div><div class="value">' + value + '</div><small>' + caption + '</small></div>').join('') + '</div><div class="grid-two"><section class="card"><div class="section-heading" style="margin-top:0"><h2>Recent activities</h2>' + button('Manage', 'navigate', 'Activities') + '</div>' + (activities.length ? activities.map(row => '<div class="activity-line"><div><strong>' + escape(row.name) + '</strong><small>' + escape(row.date + ' · ' + row.tags.join(' / ')) + '</small></div>' + button('Attendance', 'attendance', row.id) + '</div>').join('') : '<p class="muted">No activities recorded for this year.</p>') + '</section><section class="card"><h2>Annual efficiency</h2><p class="muted">All conditions must be met within ' + year() + '.</p><ul class="rule-list"><li><span>Duty service</span><strong>≥ 60 hours</strong></li><li><span>DIM participation</span><strong>≥ 12 activities</strong></li><li><span>Inspection</span><strong>Participated</strong></li><li><span>Examination</span><strong>Participated</strong></li></ul><p class="inline-help">Pass or Fail both count as participation. Absent does not. Pending results count only when participation is confirmed.</p></section></div><section class="card" style="margin-top:24px"><h2>Recent changes</h2>' + table(['When', 'Administrator', 'Change'], (state.audit || []).slice(-5).reverse().map(row => [escape(new Date(row.at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(row.action)])) + '</section>';
+  }
+  function phaseView() {
+    const controls = user.owner ? '<div class="phase-owner"><div><strong>Owner control</strong><small>选择目前正在进行的阶段。这个选择不会自动改变，也不会跟着资料备份恢复。</small></div><div class="phase-buttons">' + phases.map((phase, index) => '<button class="button small' + (currentPhase === index + 1 ? ' primary' : '') + '" type="button" data-action="setPhase" data-id="' + (index + 1) + '">Phase ' + (index + 1) + '</button>').join('') + '</div></div>' : '<div class="message warning">目前是 Phase ' + currentPhase + '。只有 Owner 可以更改 Current Phase；Secretary 可以查看所有说明。</div>';
+    return '<p class="page-intro">这页把整个系统分成 6 个容易跟着做的阶段。一次完成一个阶段，不需要一开始就把所有资料填满。</p>' + controls + '<div class="phase-grid">' + phases.map((phase, index) => { const number = index + 1; const status = number < currentPhase ? 'Completed' : number === currentPhase ? 'Current' : 'Upcoming'; return '<section class="phase-card ' + status.toLowerCase() + '"><div class="phase-card-top"><span class="phase-number">Phase ' + number + '</span>' + pill(status) + '</div><h2>' + escape(phase.title) + '</h2><p>' + escape(phase.goal) + '</p><div class="phase-owner-label"><span>负责人</span><strong>' + escape(phase.owner) + '</strong></div><ol>' + phase.steps.map(step => '<li>' + escape(step) + '</li>').join('') + '</ol></section>'; }).join('') + '</div>';
   }
   function memberList() {
     const rows = state.Members.filter(match).sort((first, second) => first.name.localeCompare(second.name));
@@ -87,7 +100,7 @@
     return '<p class="page-intro">Maintain examination categories and award options. Archive an option to stop new selections while keeping historical records.</p>' + listHead('Catalogue', 'Catalog', 'Add option') + table(['Type', 'Category', 'Name', 'Level', 'Status', 'Actions'], paginate(rows).map(row => [escape(row.kind), escape(row.category || '—'), escape(row.name), escape(row.level || '—'), row.archived ? 'Archived' : 'Available', '<div class="row-tools">' + button('Edit', 'edit', row.id, 'Catalog') + button(row.archived ? 'Unarchive' : 'Archive', 'archive', row.id, 'Catalog') + '</div>'])) + pager(rows.length);
   }
   function importView() {
-    return '<div class="grid-two"><section class="card"><div class="eyebrow">Batch updates</div><h2>Import an Excel file</h2><p class="muted">Use the fixed template. You will review changes and errors before saving anything.</p><div class="file-input"><label for="excel-file">Choose an .xlsx file (maximum 10 MB)</label><br><input id="excel-file" type="file" accept=".xlsx"></div><div class="toolbar">' + button('Download template', 'template') + button('Preview import', 'previewImport') + '</div><p class="hint">For existing records, export first and keep their ID and version. Missing rows do not delete records.</p></section><section class="card"><div class="eyebrow">Portable records</div><h2>Export & backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
+    return '<div class="grid-two"><section class="card"><div class="eyebrow">Batch updates</div><h2>Import an Excel file</h2><p class="muted">Phase 1 新学生只需填写 Members sheet 的 name；sjamId 可以填写或留空。id、version、status 留空即可。</p><div class="file-input"><label for="excel-file">Choose an .xlsx file (maximum 10 MB)</label><br><input id="excel-file" type="file" accept=".xlsx"></div><div class="toolbar">' + button('Download template', 'template') + button('Preview import', 'previewImport') + '</div><p class="hint">系统会为新学生建立内部 ID，并把空白 status 设为 Active。其他 sheets 可以完全留空。Existing records 必须保留原本的 ID 和 version。</p></section><section class="card"><div class="eyebrow">Portable records</div><h2>Export & backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
   }
   function settingsView() {
     return '<div class="grid-two"><section class="card"><h2>Your administrator access</h2><p><strong>' + escape(user.email) + '</strong><br><small>' + (user.owner ? 'Owner' : 'Administrator') + '</small></p><p class="muted">Both administrators can maintain everyday records. Only the owner can authorise administrators and restore a full backup.</p>' + (user.owner ? '<form id="admin-access-form"><div class="field"><label for="admin-emails">Administrator Gmail addresses, one per line</label><textarea id="admin-emails">' + escape(admins.join('\n')) + '</textarea></div><button class="button primary" type="submit" style="margin-top:12px">Save administrator access</button></form>' : '') + '</section><section class="card"><h2>Private backups</h2><p class="muted">Daily backups keep the latest 30 copies. Import and restore create an additional safety copy before changing data.</p><div class="toolbar">' + button('Back up now', 'backup') + button('Refresh backup list', 'listBackups') + (user.owner ? button('Enable daily backup', 'installBackup') : '') + '</div><div id="backup-list" style="margin-top:18px"></div></section></div><section class="card" style="margin-top:24px"><h2>Public directory sync</h2><p class="muted">Only the approved public fields are copied to the member directory. If a publish fails, private records remain saved and you can retry.</p>' + button('Retry public update', 'retrySync') + '<p class="sync-line">Private revision: ' + state.revision + ' · Last saved: ' + escape(state.updatedAt ? new Date(state.updatedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'No changes yet') + '</p></section>';
@@ -96,7 +109,7 @@
     if (!state) return;
     byId('page-title').textContent = titles[view];
     document.querySelectorAll('[data-nav]').forEach(element => { element.classList.toggle('active', element.dataset.nav === view); element.setAttribute('aria-current', element.dataset.nav === view ? 'page' : 'false'); });
-    const views = { Overview: overview, Members: memberList, Activities: activityList, Exams: examList, Duty: dutyList, Awards: awardList, Data: dataList, Catalog: catalogList, Import: importView, Settings: settingsView };
+    const views = { Overview: overview, Phase: phaseView, Members: memberList, Activities: activityList, Exams: examList, Duty: dutyList, Awards: awardList, Data: dataList, Catalog: catalogList, Import: importView, Settings: settingsView };
     byId('content').innerHTML = views[view]();
     byId('sync-notice').hidden = sync.ok;
     byId('sync-notice').innerHTML = sync.ok ? '' : 'Private data is saved. The public directory is awaiting an update. ' + button('Retry', 'retrySync');
@@ -115,6 +128,7 @@
     user = response.user;
     sync = response.sync;
     admins = response.admins || [];
+    currentPhase = response.currentPhase || 1;
     byId('account').textContent = user.email;
     byId('role').textContent = user.owner ? 'Owner' : 'Administrator';
     byId('demo-banner').hidden = !window.KPTTransport.demo;
@@ -207,6 +221,15 @@
     if (name === 'selectAll' || name === 'clearAll') { document.querySelectorAll('#attendance-form input[name="present"]').forEach(input => { input.checked = name === 'selectAll'; }); return; }
     if (name === 'template') { KPTWorkbook.download(state, true); return; }
     if (name === 'export' || name === 'exportSummary') { KPTWorkbook.download(state, false, name === 'exportSummary' ? summaryRows() : null); return; }
+    if (name === 'setPhase') {
+      const phase = Number(id);
+      if (!confirm('Set Phase ' + phase + ' as the Current Phase?')) return;
+      const result = await call({ action: 'setCurrentPhase', phase });
+      currentPhase = result.currentPhase;
+      render();
+      notice('Current Phase updated to Phase ' + currentPhase + '.');
+      return;
+    }
     if (name === 'archive') {
       const row = KPT.copy(state[tableName].find(item => item.id === id));
       if (!confirm((row.archived ? 'Unarchive' : 'Archive') + ' this record? History will be kept.')) return;

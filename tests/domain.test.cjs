@@ -109,6 +109,23 @@ test('partial import updates rows without deleting absent rows, and repeat is no
   const stale = KPT.importRows(preview.state, workbook, context());
   assert.match(stale.errors[0].message, /Conflict/);
 });
+test('Phase 1 import accepts 120 minimal members and defaults blank status to Active', () => {
+  const workbook = { Members: Array.from({ length: 120 }, (_, index) => ({ name: 'Phase Student ' + String(index + 1).padStart(3, '0'), sjamId: index % 10 ? String(index + 1).padStart(6, '0') : '', status: '', __excelRow: index + 2 })) };
+  const preview = KPT.importRows(KPT.empty(), workbook, context());
+  assert.equal(preview.errors.length, 0);
+  assert.equal(preview.state.Members.length, 120);
+  assert.deepEqual([preview.state.Members[0].id, preview.state.Members[0].sjamId, preview.state.Members[0].status, preview.state.Members[119].id], ['STU-000001', '', 'Active', 'STU-000120']);
+  assert.ok(preview.state.Members.every(row => row.version === 1 && row.status === 'Active'));
+  assert.equal(preview.state.Activities.length, 0);
+});
+test('Phase 1 import keeps duplicate protection without merging equal names', () => {
+  const sameNames = KPT.importRows(KPT.empty(), { Members: [{ name: 'Same Name' }, { name: 'Same Name' }] }, context());
+  assert.equal(sameNames.errors.length, 0);
+  assert.equal(sameNames.state.Members.length, 2);
+  const duplicateSjam = KPT.importRows(KPT.empty(), { Members: [{ name: 'First', sjamId: '001' }, { name: 'Second', sjamId: '001' }] }, context());
+  assert.equal(duplicateSjam.state, null);
+  assert.match(duplicateSjam.errors[0].message, /already exists/);
+});
 test('invalid imports preserve state and pinpoint worksheet row', () => {
   const state = fixture(1, 2026, 2026);
   const prior = JSON.stringify(state);

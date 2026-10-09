@@ -97,12 +97,13 @@ function listBackups_() {
 }
 function bootstrap_(actor) {
   const state = loadState_();
-  return { state, user: { email: actor.email, owner: actor.owner }, sync: { ok: properties_().getProperty('SYNC_PENDING') === null, revision: Number(properties_().getProperty('PUBLISHED_REVISION') || -1) }, admins: actor.owner ? actor.config.admins : [] };
+  const currentPhase = Number(properties_().getProperty('CURRENT_PHASE') || 1);
+  return { state, user: { email: actor.email, owner: actor.owner }, sync: { ok: properties_().getProperty('SYNC_PENDING') === null, revision: Number(properties_().getProperty('PUBLISHED_REVISION') || -1) }, admins: actor.owner ? actor.config.admins : [], currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1 };
 }
 function rpc(request) {
   try {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
-    const ownerActions = ['restore', 'setAdmins', 'installBackup'];
+    const ownerActions = ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase'];
     let actor = identity_(ownerActions.includes(request.action));
     if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false)) }));
     if (request.action === 'listBackups') return { ok: true, data: listBackups_() };
@@ -163,6 +164,12 @@ function rpc(request) {
         properties_().setProperty('ADMINS', JSON.stringify(emails));
         return { ok: true, data: emails };
       }
+      if (request.action === 'setCurrentPhase') {
+        const phase = Number(request.phase);
+        if (!Number.isInteger(phase) || phase < 1 || phase > 6) throw new Error('Choose a phase from 1 to 6.');
+        properties_().setProperty('CURRENT_PHASE', String(phase));
+        return { ok: true, data: { currentPhase: phase } };
+      }
       if (request.action === 'installBackup') { installDailyBackup_(); return { ok: true, data: { message: 'Daily backup scheduled in Asia/Kuala_Lumpur.' } }; }
       throw new Error('Unsupported request.');
     });
@@ -183,7 +190,7 @@ function initialSetup_() {
   const publicBook = SpreadsheetApp.create('TCCD Public Projection');
   const folder = DriveApp.createFolder('TCCD Private Backups');
   [DriveApp.getFileById(privateBook.getId()), DriveApp.getFileById(publicBook.getId()), folder].forEach(file => file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE));
-  props.setProperties({ PRIVATE_SHEET_ID: privateBook.getId(), PUBLIC_SHEET_ID: publicBook.getId(), BACKUP_FOLDER_ID: folder.getId(), CURRENT_SLOT: '0', ADMINS: '[]' });
+  props.setProperties({ PRIVATE_SHEET_ID: privateBook.getId(), PUBLIC_SHEET_ID: publicBook.getId(), BACKUP_FOLDER_ID: folder.getId(), CURRENT_SLOT: '0', CURRENT_PHASE: '1', ADMINS: '[]' });
   const state = KPT.empty();
   writeSlot_(privateBook, '0', state);
   sync_(state);

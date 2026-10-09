@@ -40,6 +40,14 @@ try {
   await page.locator('.metric .value').first().waitFor();
   assert.equal(await page.locator('.metric .value').first().textContent(), '500');
   await page.screenshot({ path: path.join(results, 'admin-desktop.png'), fullPage: true });
+  await navigate('Phase');
+  await page.getByRole('heading', { name: '学生名单进入系统' }).waitFor();
+  assert.equal(await page.locator('.phase-card').count(), 6);
+  assert.equal(await page.locator('.phase-card.current').count(), 1);
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-action="setPhase"][data-id="2"]').click();
+  await page.getByText('Current Phase updated to Phase 2.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.phase-card.current h2').textContent(), '补完整学生资料');
   await navigate('Members');
   await page.locator('[data-action="add"][data-table="Members"]').click();
   await page.locator('#field-name').fill('Browser Test Student');

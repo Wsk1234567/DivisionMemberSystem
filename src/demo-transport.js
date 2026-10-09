@@ -3,6 +3,7 @@
   let state;
   let backups = [];
   let admins = ['preview-secretary@example.test'];
+  let currentPhase = 1;
   let counter = 0;
   const context = () => ({ actor: 'preview-owner@example.test', now: new Date().toISOString(), uuid: () => 'demo-' + ++counter });
   const identity = { email: 'preview-owner@example.test', owner: true };
@@ -14,7 +15,7 @@
     async call(request) {
       if (!state) { const response = await fetch('demo-private.json'); if (!response.ok) throw new Error('Preview data could not be loaded.'); state = await response.json(); }
       await new Promise(resolve => setTimeout(resolve, 30));
-      if (request.action === 'bootstrap') return { state: copy(state), user: identity, sync: { ok: true, revision: state.revision }, admins: copy(admins) };
+      if (request.action === 'bootstrap') return { state: copy(state), user: identity, sync: { ok: true, revision: state.revision }, admins: copy(admins), currentPhase };
       if (['save', 'attendance'].includes(request.action)) { state = KPT.mutate(state, request, context()); return { state: copy(state), sync: { ok: true, revision: state.revision } }; }
       if (['previewImport', 'commitImport'].includes(request.action)) {
         if (request.revision !== state.revision) throw new Error('Conflict: reload current data before importing.');
@@ -40,6 +41,12 @@
         return { state: copy(state), sync: { ok: true } };
       }
       if (request.action === 'setAdmins') { admins = request.emails; return copy(admins); }
+      if (request.action === 'setCurrentPhase') {
+        const phase = Number(request.phase);
+        if (!Number.isInteger(phase) || phase < 1 || phase > 6) throw new Error('Choose a phase from 1 to 6.');
+        currentPhase = phase;
+        return { currentPhase };
+      }
       if (request.action === 'installBackup') return { message: 'Preview only. Daily backup is scheduled when deployed to Google.' };
       throw new Error('Unsupported preview action.');
     }
