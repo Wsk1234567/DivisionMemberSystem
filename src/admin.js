@@ -71,7 +71,8 @@
   }
   function memberList() {
     const rows = state.Members.filter(match).sort((first, second) => first.name.localeCompare(second.name));
-    return listHead('Search name, SJAM ID or IC', 'Members', 'Add student') + table(['Name', 'SJAM ID', 'IC · private', 'Tingkatan', 'Status', 'Actions'], paginate(rows).map(row => [escape(row.name) + '<br><small>' + escape(row.id) + '</small>', escape(row.sjamId || 'Not assigned'), escape(row.ic || '—'), escape(row.form || '—'), pill(row.status), '<div class="row-tools">' + button('View', 'detail', row.id) + button('Edit', 'edit', row.id, 'Members') + deleteButton('Members', row.id) + '</div>'])) + pager(rows.length);
+    const bulkDelete = user.owner && state.Members.length ? '<section class="card" style="margin-top:24px"><h2>Bulk student removal</h2><p class="muted">Move every student and all linked Attendance, Exam, Duty, Award and Enrolment records into one restorable Recycle Bin item. Activities and Catalogue options are kept.</p><button class="button danger" type="button" data-action="deleteAllMembers">Delete all students</button></section>' : '';
+    return listHead('Search name, SJAM ID or IC', 'Members', 'Add student') + table(['Name', 'SJAM ID', 'IC · private', 'Tingkatan', 'Status', 'Actions'], paginate(rows).map(row => [escape(row.name) + '<br><small>' + escape(row.id) + '</small>', escape(row.sjamId || 'Not assigned'), escape(row.ic || '—'), escape(row.form || '—'), pill(row.status), '<div class="row-tools">' + button('View', 'detail', row.id) + button('Edit', 'edit', row.id, 'Members') + deleteButton('Members', row.id) + '</div>'])) + pager(rows.length) + bulkDelete;
   }
   function activityList() {
     const rows = state.Activities.filter(row => Number(row.date.slice(0, 4)) === year() && match(row)).sort((first, second) => second.date.localeCompare(first.date));
@@ -234,6 +235,15 @@
       if (byId('editor').open) byId('editor').close();
       applySave(response);
       notice('Record moved to Recycle Bin.');
+      return;
+    }
+    if (name === 'deleteAllMembers') {
+      const preview = await call({ action: 'previewDeleteAllMembers' });
+      const included = Object.entries(preview.counts).map(([table, count]) => table + ': ' + count).join('\n');
+      const confirmation = prompt('This will move ALL ' + preview.counts.Members + ' students and their linked records to the Recycle Bin.\n\nAffected records:\n' + included + '\n\nA private backup will be created first.\n\nType DELETE ALL STUDENTS to continue.');
+      if (confirmation !== 'DELETE ALL STUDENTS') { if (confirmation !== null) notice('Delete all students cancelled: confirmation text did not match.', true); return; }
+      applySave(await call({ action: 'deleteAllMembers', revision: state.revision }));
+      notice(preview.counts.Members + ' students moved to one Recycle Bin item.');
       return;
     }
     if (name === 'restoreTrash') {

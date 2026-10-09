@@ -258,6 +258,26 @@
     state.trash.unshift({ id: 'TRASH-' + context.uuid(), deletedAt: context.now, actor: context.actor, rootTable: bundle.rootTable, rootId: bundle.rootId, label: bundle.label, records: bundle.records, counts: bundle.counts });
     return finish(state, context.actor, 'Delete to Recycle Bin: ' + table + ':' + id, context.now);
   }
+  function allMembersBundle(state) {
+    if (!state.Members.length) fail('There are no students to delete.');
+    const memberIds = new Set(state.Members.map(row => row.id));
+    const records = { Members: copy(state.Members) };
+    ['Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments'].forEach(name => {
+      const rows = state[name].filter(row => memberIds.has(row.memberId));
+      if (rows.length) records[name] = copy(rows);
+    });
+    const counts = Object.fromEntries(Object.entries(records).map(([name, rows]) => [name, rows.length]));
+    return { rootTable: 'Members', rootId: '*', label: 'All students', records, counts, total: Object.values(counts).reduce((sum, count) => sum + count, 0) };
+  }
+  function recycleDeleteAllMembers(original, context) {
+    const state = copy(original);
+    if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before deleting.');
+    const bundle = allMembersBundle(state);
+    Object.entries(bundle.records).forEach(([name, rows]) => { const ids = new Set(rows.map(row => row.id)); state[name] = state[name].filter(row => !ids.has(row.id)); });
+    state.trash = Array.isArray(state.trash) ? state.trash : [];
+    state.trash.unshift({ id: 'TRASH-' + context.uuid(), deletedAt: context.now, actor: context.actor, rootTable: bundle.rootTable, rootId: bundle.rootId, label: bundle.label, records: bundle.records, counts: bundle.counts });
+    return finish(state, context.actor, 'Delete all students to Recycle Bin: ' + bundle.counts.Members, context.now);
+  }
   function restoreTrash(original, trashId, context) {
     const state = copy(original);
     if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before restoring.');
@@ -280,7 +300,7 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
   }
-  const api = { fields, tables, categories, statuses, results, empty, normalize, validateState, mutate, summary, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, restoreTrash, purgeTrash, copy, finish, norm, icKey };
+  const api = { fields, tables, categories, statuses, results, empty, normalize, validateState, mutate, summary, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -159,6 +159,24 @@ test('Recycle Bin cascades activity and catalogue dependencies and supports perm
   assert.equal(purged.trash.length, 0);
   assert.throws(() => KPT.restoreTrash(purged, deleted.trash[0].id, { ...context(), revision: purged.revision }), /not found/);
 });
+test('Delete all students creates one restorable bundle and keeps activities and catalogue', () => {
+  const state = fixture(3, 2026, 2026);
+  const activityCount = state.Activities.length;
+  const catalogCount = state.Catalog.length;
+  const preview = KPT.allMembersBundle(state);
+  assert.equal(preview.counts.Members, 3);
+  assert.ok(preview.counts.Attendance > 0);
+  const deleted = KPT.recycleDeleteAllMembers(state, { ...context(), revision: state.revision });
+  assert.equal(deleted.Members.length, 0);
+  assert.equal(deleted.Attendance.length, 0);
+  assert.equal(deleted.Activities.length, activityCount);
+  assert.equal(deleted.Catalog.length, catalogCount);
+  assert.equal(deleted.trash.length, 1);
+  const restored = KPT.restoreTrash(deleted, deleted.trash[0].id, { ...context(), revision: deleted.revision });
+  assert.equal(restored.Members.length, 3);
+  assert.equal(restored.Attendance.length, preview.counts.Attendance);
+  KPT.validateState(restored);
+});
 test('invalid imports preserve state and pinpoint worksheet row', () => {
   const state = fixture(1, 2026, 2026);
   const prior = JSON.stringify(state);
