@@ -26,6 +26,12 @@ test('public and admin Apps Script deployments have separate scope and execution
   assert.equal(read('apps-script/public/Code.gs').includes('PRIVATE_SHEET_ID'), false);
   assert.equal(read('.github/workflows/pages.yml').includes('path: dist'), true);
 });
+test('public website uses credential-free CORS instead of JSONP', () => {
+  const source = read('src/public.js');
+  assert.match(source, /credentials:\s*'omit'/);
+  assert.match(source, /mode:\s*'cors'/);
+  assert.doesNotMatch(source, /createElement\('script'\)/);
+});
 test('source JavaScript and Apps Script compile; vendored Excel library checksum matches', () => {
   for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'demo-transport.js', 'transport.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);
   for (const project of ['admin', 'public']) assert.doesNotThrow(() => new vm.Script(read('apps-script/' + project + '/Code.gs')), project);

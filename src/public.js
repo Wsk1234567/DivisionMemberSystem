@@ -16,16 +16,9 @@
   function fetchPublic() {
     if (demo) return fetch('demo-public.json', { cache: 'no-store' }).then(response => { if (!response.ok) throw new Error('Preview data could not be loaded.'); return response.json(); });
     if (!approvedUrl(config.publicApiUrl)) return Promise.reject(new Error('The member directory is not connected yet. Please contact the division administrator.'));
-    return new Promise((resolve, reject) => {
-      const callback = 'kpt_' + crypto.getRandomValues(new Uint32Array(2)).join('_');
-      const script = document.createElement('script');
-      const cleanup = () => { clearTimeout(timer); script.remove(); delete window[callback]; };
-      const timer = setTimeout(() => { cleanup(); reject(new Error('The request timed out. Please try again.')); }, 30000);
-      window[callback] = response => { cleanup(); if (response.ok) resolve(response.data); else reject(new Error(response.error || 'The directory is temporarily unavailable.')); };
-      script.onerror = () => { cleanup(); reject(new Error('Unable to connect. Check your internet connection and retry.')); };
-      script.src = config.publicApiUrl + '?callback=' + callback + '&t=' + Date.now();
-      document.head.appendChild(script);
-    });
+    return fetch(config.publicApiUrl + '?t=' + Date.now(), { cache: 'no-store', credentials: 'omit', mode: 'cors' })
+      .then(response => { if (!response.ok) throw new Error('The directory is temporarily unavailable.'); return response.json(); })
+      .then(response => { if (response.ok) return response.data; throw new Error(response.error || 'The directory is temporarily unavailable.'); });
   }
   byId('search-form').addEventListener('submit', async event => {
     event.preventDefault();
