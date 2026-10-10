@@ -6,15 +6,15 @@ let serial = 0;
 const context = () => ({ actor: 'owner@example.test', now: '2026-10-08T03:00:00.000Z', uuid: () => 'test-' + ++serial });
 const save = (state, table, row, year = 2026) => KPT.mutate(state, { action: 'save', table, row, year, revision: state.revision }, context());
 test('new student without SJAM ID retains history after receiving it', () => {
-  let state = save(KPT.empty(), 'Members', { name: 'Same Name', ic: '000001-01-0001', sjamId: '', status: 'Active', joined: '2026-01-02', form: '1' });
+  let state = save(KPT.empty(), 'Members', { name: 'Same Name', ic: '000001-01-0001', sjamId: '', status: 'Active', joined: '2026-01-02', form: 'Form 1' });
   const member = state.Members[0];
   assert.equal(member.id, 'STU-000001');
   state = save(state, 'Duty', { memberId: member.id, year: 2026, hours: 60 });
-  state = save(state, 'Members', { ...state.Members[0], sjamId: '00123', form: '2' }, 2027);
+  state = save(state, 'Members', { ...state.Members[0], sjamId: '00123', form: 'Form 2' }, 2027);
   assert.equal(state.Duty[0].memberId, member.id);
   assert.equal(state.Members[0].sjamId, '00123');
-  assert.equal(state.Enrolments.find(row => row.year === 2026).form, '1');
-  assert.equal(state.Enrolments.find(row => row.year === 2027).form, '2');
+  assert.equal(state.Enrolments.find(row => row.year === 2026).form, 'Form 1');
+  assert.equal(state.Enrolments.find(row => row.year === 2027).form, 'Form 2');
 });
 test('same names remain distinct; normalized IC and SJAM ID duplicates are rejected', () => {
   let state = save(KPT.empty(), 'Members', { name: 'Same Name', ic: '000001-01-0001', sjamId: '00123', status: 'Active' });
@@ -136,6 +136,43 @@ test('old Phase 1 templates ignore unchanged default catalogue rows', () => {
   assert.equal(preview.changes.length, 1);
   assert.equal(preview.state.Members[0].name, 'New Student');
   assert.equal(preview.state.Catalog[0].name, 'EFA Updated');
+});
+test('recommended setup installs confirmed exams and complete award catalogue idempotently', () => {
+  const original = KPT.empty();
+  const preview = KPT.setupPreview(original);
+  assert.equal(preview.ready, false);
+  assert.deepEqual(preview.legacyExams.map(row => row.name), ['EFA', 'BFA']);
+  const configured = KPT.applyRecommendedSetup(original, { ...context(), revision: original.revision });
+  assert.equal(KPT.setupPreview(configured).ready, true);
+  assert.deepEqual(configured.Catalog.filter(row => row.kind === 'Exam' && !row.archived).sort((first, second) => first.sortOrder - second.sortOrder).map(row => row.name), ['EFA (New)', 'EFA (Recert)', 'BFA (New)', 'BFA (Recert)', 'BFA (Renew)', 'Home Nursing', 'AFA']);
+  assert.equal(configured.Catalog.filter(row => row.category === 'Probadge').length, 26);
+  assert.deepEqual(configured.Catalog.filter(row => row.category === 'Promotion').map(row => row.level), ['Lance Corporal', 'Corporal', 'Sergeant', 'Cadet Leader']);
+  assert.equal(configured.Catalog.find(row => row.code === 'SSS_1000').level, 'SSS 1000 - Emas');
+  const repeated = KPT.applyRecommendedSetup(configured, { ...context(), revision: configured.revision });
+  assert.equal(repeated.Catalog.length, configured.Catalog.length);
+});
+test('award eligibility lists every unissued SSS milestone and requires confirmation', () => {
+  let state = KPT.applyRecommendedSetup(KPT.empty(), { ...context(), revision: 0 });
+  state = save(state, 'Members', { name: 'Duty Member', status: 'Active', form: 'Form 1', race: 'Cina' });
+  const memberId = state.Members[0].id;
+  state = save(state, 'Duty', { memberId, year: 2025, hours: 200 });
+  state = save(state, 'Duty', { memberId, year: 2026, hours: 320 });
+  let eligibility = KPT.awardEligibility(state).eligible.filter(row => row.metric === 'lifetimeDutyHours');
+  assert.deepEqual(eligibility.map(row => row.threshold), [100, 200, 500]);
+  const first = eligibility[0];
+  state = save(state, 'Awards', { memberId, catalogId: first.catalogId, date: '2026-10-10', certificate: '', notes: '', archived: false });
+  eligibility = KPT.awardEligibility(state).eligible.filter(row => row.metric === 'lifetimeDutyHours');
+  assert.deepEqual(eligibility.map(row => row.threshold), [200, 500]);
+  assert.throws(() => save(state, 'Awards', { memberId, catalogId: first.catalogId, date: '2026-10-11', archived: false }), /Duplicate member award/);
+});
+test('standard member options accept configured values and preserve unchanged legacy values', () => {
+  let state = save(KPT.empty(), 'Members', { name: 'Configured', status: 'Active', form: 'Peralihan', race: 'Melayu' });
+  assert.throws(() => save(state, 'Members', { ...state.Members[0], form: 'Lower 1' }), /standard Tingkatan/);
+  const legacy = KPT.upgradeState(state);
+  legacy.Members[0].form = 'Legacy Form';
+  legacy.Members[0].version++;
+  const saved = save(legacy, 'Members', { ...legacy.Members[0], sjamId: 'LEGACY-1' });
+  assert.equal(saved.Members[0].form, 'Legacy Form');
 });
 test('Recycle Bin deletes and restores a member with all linked records', () => {
   const state = fixture(2, 2026, 2026);

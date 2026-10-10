@@ -4,13 +4,11 @@ TCCD cadet member administration and public award directory for SMJK Triang Comb
 
 Public website: https://wsk1234567.github.io/DivisionMemberSystem/
 
-## Google connection is still required
+## Live deployment
 
-The website source is ready, but real records and administrator access require two Google Apps Script deployments. Until configured, the public page displays an explicit connection message and does not contain real or fictional student data.
+The public directory and Google Apps Script administration system are deployed. Deployment details and future update steps are documented in [DEPLOYMENT.md](DEPLOYMENT.md).
 
-Use the [Chinese deployment instructions](DEPLOYMENT.md). Build with `npm run build`; copy the generated files from `build/apps-script/admin/` and `build/apps-script/public/` into separate projects in the owner's Google account.
-
-After deployment, put both Google `/exec` URLs in `config.public.json`, rebuild the administrator HTML, and commit the configuration update. Do not put passwords, access tokens, private spreadsheet IDs or student files in this repository.
+Do not put passwords, access tokens, private spreadsheet IDs, backups or student files in this repository.
 
 ## Local fictional preview
 
@@ -27,9 +25,10 @@ Open http://127.0.0.1:4173/ for the public sample directory or http://127.0.0.1:
 ## Features
 
 - Fixed internal student IDs, optional SJAM IDs, duplicate IC/SJAM checks, historical enrolments, graduation/withdrawal status.
-- Activities with multiple categories, batch attendance, linked examinations, editable examination categories.
+- Standard member options, configured examination types, activities with multiple categories, batch attendance and linked examinations.
 - Annual Duty totals with decimals and missing values; annual efficiency requires at least 60 hours, 12 DIM participations, Inspection attendance and examination participation.
-- Award catalogue and history; public fields limited to member name, SJAM ID, status, award name/date/category/level.
+- System Setup installs the confirmed Probadge, Promotion, Special Service Shield and Service Stripe & Star catalogue. Eligibility is suggested from recorded Duty/Efficient data, but an administrator must confirm each award and date.
+- Award history; public fields limited to member name, SJAM ID, status, award name/date/category/level.
 - Private Data Center, Excel templates and round trips, import preview and version checks, safety backups before imports and restores.
 - Google-authenticated administrators, owner-only authorisation/restore, daily private backup retention, retryable publication.
 

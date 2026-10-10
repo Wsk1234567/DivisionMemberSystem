@@ -23,7 +23,7 @@ Google 可能要求 OAuth consent 配置或显示尚未验证应用的提示。�
 4. 部署 Web app：**Execute as: Me**，**Who has access: Anyone（包含未登录访客）**。复制 `/exec` 地址作为 `publicApiUrl`。
 5. 无痕打开这个地址，应返回 `ok:true` 和只有允许公开字段的 JSON。公开表和私人表本身保持不公开，不设置 Anyone with the link。
 
-公开网页通过只读 JSONP 连接；接口再次筛选字段。不要把管理后台设置为匿名部署，也不要把私人表拿来代替公开表。
+公开网页通过不携带登入凭证的 CORS 请求连接；接口再次筛选字段。不要把管理后台设置为匿名部署，也不要把私人表拿来代替公开表。
 
 ## 3. 配置并发布 GitHub Pages
 
@@ -38,6 +38,7 @@ GitHub Pages 免费网址即可，不要求购买域名。项目路径使用相�
 
 ## 4. 首次验证
 
+- 先进入 **System Setup**，按 **Preview recommended setup** 检查清单，再按 **Apply recommended setup**。系统会先建立安全备份，然后加入固定 Exam、Probadge、Promotion、SSS 和 Service Stripe & Star 选项；Owner 与 Secretary 都可执行。
 - 用 Downloads template 新增 2–3 位虚构学生，保存后 export，取得自动分配的内部 ID，再添加关联记录。
 - 建立一个 DIM＋Inspection＋Exam 活动，记录参加／缺席，检查生成的考试记录。
 - 验证无 SJAM ID、同名学生、补填 ID、毕业成员，以及 59.5／60 小时、11／12 次 DIM 和 Fail／Absent。
@@ -56,6 +57,10 @@ Members 编辑会保存所选 reporting year 的 Tingkatan／状态快照。过�
 
 考试活动先点名，再更新考试结果。单独考试可直接新增，Pass／Fail 计参加，Pending 需勾选 Participation confirmed，Absent 不计参加。Duty 暂时只填写年度总数。
 
+SSS 建议按所有年度累计 Duty Hour 计算；Service Stripe & Star 建议按累计 Efficient 年数计算，年数不要求连续。系统只显示“符合资格”，不会自动颁发，管理员仍须在 Awards 确认奖项和日期。
+
+Apps Script 管理页面在同一浏览器同时登入多个 Google 账号时可能不断返回授权页面。请使用只登入一个获授权账号的无痕／InPrivate 窗口；这不是 Chrome 或 Edge 的功能差异。
+
 如看到 Public update pending，私人资料已经保存；按 Retry public update。遇到网络超时先 Reload data 再检查，不直接重复建立学生或记录。
 
 完整导出、储存表和备份仅给可信管理员。Google Drive 编辑权限本身允许秘书直接编辑其获共享文件；应用内权限不能限制绕过应用的文件编辑。恢复入口和管理员授权入口在应用内仍仅由你操作。
@@ -65,6 +70,6 @@ Members 编辑会保存所选 reporting year 的 Tingkatan／状态快照。过�
 - [GitHub Pages 静态托管](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)
 - [Apps Script Web app 的运行身份](https://developers.google.com/apps-script/guides/web)
 - [Google Session 身份限制](https://developers.google.com/apps-script/reference/base/session)
-- [只读 JSONP 与 Content Service](https://developers.google.com/apps-script/guides/content)
+- [Content Service](https://developers.google.com/apps-script/guides/content)
 - [Apps Script 配额](https://developers.google.com/apps-script/guides/services/quotas)
 - [SheetJS 官方浏览器发行版](https://docs.sheetjs.com/docs/getting-started/installation/standalone/)

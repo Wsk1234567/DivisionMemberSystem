@@ -2,11 +2,11 @@
   'use strict';
   const byId = id => document.getElementById(id);
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const nav = [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Catalog', 'Catalogue'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']];
+  const nav = [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']];
   const phases = [
     { title: '学生名单进入系统', owner: 'Secretary', goal: '先把学生名单安全地放进系统。', steps: ['在 Excel 的 Members sheet 填写 name 和 sjamId；sjamId 可以暂时留空。', 'id、version 和 status 留空，系统会自动建立内部 ID，并设为 Active。', '先按 Preview Import 检查，再按 Confirm Import 正式加入资料。'] },
     { title: '补完整学生资料', owner: 'Owner & Secretary', goal: '名单确认后，再慢慢补齐个人资料。', steps: ['补上 ic、race、form、joined 和正确的 status。', '不需要一次填完，空白资料以后仍然可以补上。', '补资料时使用系统内部 id，原本的历史记录不会断开。'] },
-    { title: '准备考试与奖项类别', owner: 'Owner & Secretary', goal: '先整理好以后会使用的选项。', steps: ['在 Catalogue 设置 Exam、Award、Promotion 和其他类别。', '确认奖项名称、类别和等级，避免之后重复输入不同写法。', '不再使用的选项可以 Archive，旧记录会继续保留。'] },
+    { title: '准备考试与奖项类别', owner: 'Owner & Secretary', goal: '先整理好以后会使用的选项。', steps: ['在 System Setup 设置 Exam、Award、Promotion 和其他类别。', '确认奖项名称、类别和等级，避免之后重复输入不同写法。', '不再使用的选项可以 Archive，旧记录会继续保留。'] },
     { title: '开始记录活动与出席', owner: 'Secretary', goal: '建立活动，并记录谁有参加。', steps: ['建立 Activity，选择 DIM、Inspection、Exam 或 Other。', '在 Attendance 批量勾选出席学生。', '同一活动可以有多个类别，但同一学生每场 DIM 最多计算一次。'] },
     { title: '记录考试、Duty 与 Efficient', owner: 'Owner & Secretary', goal: '完成每年的参与和效率资料。', steps: ['记录 Exam 结果，以及每位学生每年的 Duty Hour。', '系统会检查 Duty、DIM、Inspection 和 Exam Participation。', '资料齐全后显示 Efficient 或 Not Efficient；资料不足显示 Pending。'] },
     { title: '奖项、权限、备份与正式使用', owner: 'Owner', goal: '完成最后检查，再放入真实完整资料。', steps: ['整理 Awards，并检查公开页面没有 IC、证书编号或内部备注。', '确认 Owner 与 Secretary 权限，以及每日 Backup。', '完成手机、Excel 导入、同步失败和恢复测试后正式使用。'] }
@@ -14,14 +14,21 @@
   const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
   const titles = Object.fromEntries(nav);
   const memberOptions = () => state.Members.map(row => [row.id, row.name + ' · ' + (row.sjamId || row.id)]);
+  const standardOptions = (values, current) => ['', ...values, ...(current && !values.includes(current) ? [[current, current + ' (Legacy)']] : [])];
+  const examOptions = () => {
+    const current = dialogRecord && dialogTable === 'Exams' ? dialogRecord.type : dialogRecord && dialogTable === 'Activities' ? dialogRecord.examType : '';
+    const configured = state.Catalog.filter(row => row.kind === 'Exam' && !row.archived).sort((first, second) => first.sortOrder - second.sortOrder || first.name.localeCompare(second.name)).map(row => row.name);
+    return [...new Set([...configured, ...(current ? [current] : [])])];
+  };
+  const awardCatalogOptions = () => state.Catalog.filter(row => row.kind === 'Award' && (!row.archived || row.id === (dialogRecord && dialogRecord.catalogId))).sort((first, second) => first.sortOrder - second.sortOrder || first.name.localeCompare(second.name)).map(row => [row.id, row.category + ' · ' + row.name + (row.level ? ' · ' + row.level : '')]);
   const definitions = {
-    Members: [['name', 'Full name', 'text', true], ['ic', 'IC', 'text'], ['sjamId', 'SJAM ID (optional)', 'text'], ['race', 'Race', 'text'], ['form', 'Tingkatan', 'text'], ['joined', 'Date joined', 'date'], ['status', 'Status', KPT.statuses]],
-    Activities: [['name', 'Activity name', 'text', true], ['date', 'Date', 'date', true], ['tags', 'Categories', 'tags'], ['examType', 'Exam category (if tagged Exam)', () => ['', ...state.Catalog.filter(row => row.kind === 'Exam' && !row.archived).map(row => row.name)]]],
-    Exams: [['memberId', 'Student', memberOptions, true], ['activityId', 'Linked activity (optional)', () => [['', 'Standalone examination'], ...state.Activities.filter(row => !row.archived && row.tags.includes('Exam')).map(row => [row.id, row.name + ' · ' + row.date])]], ['type', 'Exam type', () => state.Catalog.filter(row => row.kind === 'Exam' && !row.archived).map(row => row.name), true], ['date', 'Exam date', 'date', true], ['result', 'Result', KPT.results], ['attended', 'Participation confirmed', 'checkbox'], ['certificate', 'Certificate number', 'text']],
+    Members: [['name', 'Full name', 'text', true], ['ic', 'IC', 'text'], ['sjamId', 'SJAM ID (optional)', 'text'], ['race', 'Race', () => standardOptions(KPT.races, dialogRecord && dialogRecord.race)], ['form', 'Tingkatan', () => standardOptions(KPT.forms, dialogRecord && dialogRecord.form)], ['joined', 'Date joined', 'date'], ['status', 'Status', KPT.statuses]],
+    Activities: [['name', 'Activity name', 'text', true], ['date', 'Date', 'date', true], ['tags', 'Categories', 'tags'], ['examType', 'Exam category (if tagged Exam)', () => ['', ...examOptions()]]],
+    Exams: [['memberId', 'Student', memberOptions, true], ['activityId', 'Linked activity (optional)', () => [['', 'Standalone examination'], ...state.Activities.filter(row => !row.archived && row.tags.includes('Exam')).map(row => [row.id, row.name + ' · ' + row.date])]], ['type', 'Exam type', examOptions, true], ['date', 'Exam date', 'date', true], ['result', 'Result', KPT.results], ['attended', 'Participation confirmed', 'checkbox'], ['certificate', 'Certificate number', 'text']],
     Duty: [['memberId', 'Student', memberOptions, true], ['year', 'Year', 'number', true], ['hours', 'Total hours (blank = not recorded)', 'number']],
-    Awards: [['memberId', 'Student', memberOptions, true], ['category', 'Award category', KPT.categories], ['name', 'Award / recognition', () => [...new Set(state.Catalog.filter(row => row.kind === 'Award' && !row.archived).map(row => row.name))], true], ['date', 'Award date', 'date', true], ['level', 'Level / rank', () => [...new Set(['', ...state.Catalog.filter(row => row.kind === 'Award' && !row.archived).map(row => row.level)])]], ['certificate', 'Certificate number (private)', 'text'], ['notes', 'Internal notes (private)', 'textarea']],
+    Awards: [['memberId', 'Student', memberOptions, true], ['catalogId', 'Award / recognition', awardCatalogOptions, true], ['date', 'Award date', 'date', true], ['certificate', 'Certificate number (private)', 'text'], ['notes', 'Internal notes (private)', 'textarea']],
     Catalog: [['kind', 'Type', ['Exam', 'Award']], ['category', 'Award category (awards only)', ['', ...KPT.categories]], ['name', 'Name', 'text', true], ['level', 'Level / rank (awards only)', 'text']],
-    Enrolments: [['memberId', 'Student', memberOptions, true], ['year', 'Year', 'number', true], ['form', 'Tingkatan for this year', 'text'], ['status', 'Status for this year', KPT.statuses]]
+    Enrolments: [['memberId', 'Student', memberOptions, true], ['year', 'Year', 'number', true], ['form', 'Tingkatan for this year', () => standardOptions(KPT.forms, dialogRecord && dialogRecord.form)], ['status', 'Status for this year', KPT.statuses]]
   };
   let state;
   let user;
@@ -36,13 +43,14 @@
   let dialogRevision;
   let importFile;
   let importPreview;
+  let setupDefaultsPreview;
   let backups = [];
   let busy = false;
   byId('navigation').innerHTML = nav.map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
   byId('year').value = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).slice(0, 4)) || new Date().getFullYear();
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
-  function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
+  function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming', 'Ready', 'Missing'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
   function memberName(id) { const row = state.Members.find(member => member.id === id); return row ? row.name : id; }
   function button(label, action, id, table) { return '<button class="button small" type="button" data-action="' + action + '" data-id="' + escape(id || '') + '" data-table="' + escape(table || '') + '">' + escape(label) + '</button>'; }
   function deleteButton(tableName, id) { return user.owner ? button('Delete', 'delete', id, tableName) : ''; }
@@ -88,7 +96,10 @@
   }
   function awardList() {
     const rows = state.Awards.filter(match).sort((first, second) => second.date.localeCompare(first.date));
-    return '<p class="page-intro">Saved awards appear in the public directory. Certificate numbers and internal notes remain private. Archived awards are not published.</p>' + listHead('Awards & recognition', 'Awards', 'Record award') + table(['Student', 'Award', 'Category', 'Date', 'Level', 'Actions'], paginate(rows).map(row => [escape(memberName(row.memberId)), escape(row.name) + (row.archived ? ' ' + pill('Archived') : ''), escape(row.category), escape(row.date), escape(row.level || '—'), '<div class="row-tools">' + button('Edit', 'edit', row.id, 'Awards') + button(row.archived ? 'Unarchive' : 'Archive', 'archive', row.id, 'Awards') + deleteButton('Awards', row.id) + '</div>'])) + pager(rows.length);
+    const eligibility = KPT.awardEligibility(state);
+    const eligibleRows = eligibility.eligible.map(row => [escape(memberName(row.memberId)), escape(row.level), escape(row.metric === 'lifetimeDutyHours' ? row.value + ' total Duty Hours' : row.value + ' Efficient year' + (row.value === 1 ? '' : 's')), button('Record award', 'recordEligible', row.memberId + '|' + row.catalogId)]);
+    const eligible = '<section class="card eligibility-card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Calculated from recorded data</div><h2>Eligible Awards</h2></div></div><p class="muted">These are suggestions only. An award becomes official only after an administrator records its date.</p>' + table(['Student', 'Eligible award', 'Basis', 'Action'], eligibleRows) + '</section>';
+    return '<p class="page-intro">Saved awards appear in the public directory. Certificate numbers and internal notes remain private. Archived awards are not published.</p>' + eligible + listHead('Awards & recognition', 'Awards', 'Record award') + table(['Student', 'Award', 'Category', 'Date', 'Level', 'Actions'], paginate(rows).map(row => [escape(memberName(row.memberId)), escape(row.name) + (row.archived ? ' ' + pill('Archived') : ''), escape(row.category), escape(row.date), escape(row.level || '—'), '<div class="row-tools">' + button('Edit', 'edit', row.id, 'Awards') + button(row.archived ? 'Unarchive' : 'Archive', 'archive', row.id, 'Awards') + deleteButton('Awards', row.id) + '</div>'])) + pager(rows.length);
   }
   function summaryRows() {
     return annualMembers().map(member => Object.assign({ id: member.id, name: member.name, sjamId: member.sjamId, ic: member.ic, form: member.form, status: member.annualStatus }, KPT.summary(state, member.id, year())));
@@ -97,9 +108,27 @@
     const rows = summaryRows().filter(match);
     return '<p class="page-intro">Private annual summary. Historical Tingkatan and status use the saved annual enrolment when available.</p>' + listHead('Data Center · ' + year(), null) + '<div class="toolbar" style="margin-bottom:18px">' + button('Edit annual enrolment', 'add', '', 'Enrolments') + button('Export with summary', 'exportSummary') + '</div>' + table(['Student', 'SJAM ID', 'IC · private', 'Tingkatan', 'Status', 'Duty', 'DIM', 'Inspection', 'Exam attended', 'Efficiency', 'Annual profile'], paginate(rows).map(row => { const annual = state.Enrolments.find(item => item.memberId === row.id && item.year === year()); return [escape(row.name), escape(row.sjamId || '—'), escape(row.ic || '—'), escape(row.form || '—'), pill(row.status), row.hours === null ? 'Pending' : escape(row.hours), row.dim, row.inspection ? 'Yes' : 'Not recorded', row.exam ? 'Yes' : 'Not recorded', pill(row.efficient), '<div class="row-tools">' + (annual ? button('Edit', 'edit', annual.id, 'Enrolments') + deleteButton('Enrolments', annual.id) : button('Record', 'enrolment', row.id)) + '</div>']; })) + pager(rows.length);
   }
-  function catalogList() {
-    const rows = state.Catalog.filter(match);
-    return '<p class="page-intro">Maintain examination categories and award options. Archive an option to stop new selections while keeping historical records.</p>' + listHead('Catalogue', 'Catalog', 'Add option') + table(['Type', 'Category', 'Name', 'Level', 'Status', 'Actions'], paginate(rows).map(row => [escape(row.kind), escape(row.category || '—'), escape(row.name), escape(row.level || '—'), row.archived ? 'Archived' : 'Available', '<div class="row-tools">' + button('Edit', 'edit', row.id, 'Catalog') + button(row.archived ? 'Unarchive' : 'Archive', 'archive', row.id, 'Catalog') + deleteButton('Catalog', row.id) + '</div>'])) + pager(rows.length);
+  function setupView() {
+    const preview = KPT.setupPreview(state);
+    const groups = [
+      ['Exam Types', row => row.kind === 'Exam'],
+      ['Cadet Probadge', row => row.category === 'Probadge'],
+      ['Promotion', row => row.category === 'Promotion'],
+      ['Special Service Shield', row => row.category === 'Special Service Shield'],
+      ['Service Stripe & Star', row => row.category === 'Service Stripe & Star']
+    ];
+    const recommended = groups.map(([title, test]) => {
+      const expected = KPT.recommendedCatalog.filter(test);
+      const ready = expected.every(item => state.Catalog.some(row => row.code === item.code && !row.archived));
+      const items = expected.map(item => { const saved = state.Catalog.find(row => row.code === item.code); return '<li><span>' + escape(item.name + (item.level ? ' · ' + item.level : '')) + '</span>' + pill(saved && !saved.archived ? 'Ready' : 'Missing') + '</li>'; }).join('');
+      return '<section class="setup-card"><div class="phase-card-top"><h2>' + escape(title) + '</h2>' + pill(ready ? 'Ready' : 'Needs Setup') + '</div><ul class="setup-list">' + items + '</ul></section>';
+    }).join('');
+    const memberOptions = '<section class="setup-card"><div class="phase-card-top"><h2>Member Options</h2>' + pill('Ready') + '</div><p><strong>Tingkatan</strong></p><p class="muted">' + escape(KPT.forms.join(' · ')) + '</p><p><strong>Race</strong></p><p class="muted">' + escape(KPT.races.join(' · ')) + '</p></section>';
+    const rules = '<section class="setup-card"><div class="phase-card-top"><h2>Efficiency Rules</h2>' + pill('Ready') + '</div><ul class="rule-list"><li><span>Duty</span><strong>≥ 60 hours</strong></li><li><span>DIM</span><strong>≥ 12</strong></li><li><span>Inspection</span><strong>Participated</strong></li><li><span>Exam</span><strong>Participated</strong></li></ul></section>';
+    const setupActions = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Recommended configuration</div><h2>' + (preview.ready ? 'System setup is ready' : preview.missing.length + ' options still need setup') + '</h2></div><div class="toolbar">' + button('Preview recommended setup', 'previewSetup') + (setupDefaultsPreview && !setupDefaultsPreview.ready ? button('Apply missing defaults', 'applySetup') : '') + '</div></div><p class="muted">Applying defaults adds missing options and archives the old plain EFA/BFA choices. Historical records remain available. A private backup is created first.</p>' + (setupDefaultsPreview ? '<div class="message warning">Preview: add or connect ' + setupDefaultsPreview.missing.length + ' options; archive ' + setupDefaultsPreview.legacyExams.length + ' legacy exam options. No data has changed yet.</div>' : '') + '</section>';
+    const rows = state.Catalog.filter(match).sort((first, second) => first.sortOrder - second.sortOrder || first.name.localeCompare(second.name));
+    const advanced = '<section class="card"><div class="eyebrow">Advanced catalogue</div><p class="muted">Owner and Secretary can add custom choices or archive choices that are no longer used. Recommended internal codes and eligibility rules are protected.</p>' + listHead('Filter catalogue', 'Catalog', 'Add custom option') + table(['Type', 'Category', 'Name', 'Level', 'Status', 'Actions'], paginate(rows).map(row => [escape(row.kind), escape(row.category || '—'), escape(row.name), escape(row.level || '—'), row.archived ? 'Archived' : 'Available', '<div class="row-tools">' + button('Edit', 'edit', row.id, 'Catalog') + button(row.archived ? 'Unarchive' : 'Archive', 'archive', row.id, 'Catalog') + deleteButton('Catalog', row.id) + '</div>'])) + pager(rows.length) + '</section>';
+    return '<p class="page-intro">Prepare the choices used in later phases before regular data entry begins.</p>' + setupActions + '<div class="setup-grid">' + memberOptions + rules + recommended + '</div>' + advanced;
   }
   function importView() {
     return '<div class="grid-two"><section class="card"><div class="eyebrow">Batch updates</div><h2>Import an Excel file</h2><p class="muted">Phase 1 新学生只需填写 Members sheet 的 name；sjamId 可以填写或留空。id、version、status 留空即可。</p><div class="file-input"><label for="excel-file">Choose an .xlsx file (maximum 10 MB)</label><br><input id="excel-file" type="file" accept=".xlsx"></div><div class="toolbar">' + button('Download template', 'template') + button('Preview import', 'previewImport') + '</div><p class="hint">系统会为新学生建立内部 ID，并把空白 status 设为 Active。其他 sheets 可以完全留空。Existing records 必须保留原本的 ID 和 version。</p></section><section class="card"><div class="eyebrow">Portable records</div><h2>Export & backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
@@ -115,7 +144,7 @@
     if (!state) return;
     byId('page-title').textContent = titles[view];
     document.querySelectorAll('[data-nav]').forEach(element => { element.classList.toggle('active', element.dataset.nav === view); element.setAttribute('aria-current', element.dataset.nav === view ? 'page' : 'false'); });
-    const views = { Overview: overview, Phase: phaseView, Members: memberList, Activities: activityList, Exams: examList, Duty: dutyList, Awards: awardList, Data: dataList, Catalog: catalogList, Import: importView, Trash: trashView, Settings: settingsView };
+    const views = { Overview: overview, Phase: phaseView, Members: memberList, Activities: activityList, Exams: examList, Duty: dutyList, Awards: awardList, Data: dataList, Setup: setupView, Import: importView, Trash: trashView, Settings: settingsView };
     byId('content').innerHTML = views[view]();
     byId('sync-notice').hidden = sync.ok;
     byId('sync-notice').innerHTML = sync.ok ? '' : 'Private data is saved. The public directory is awaiting an update. ' + button('Retry', 'retrySync');
@@ -143,7 +172,7 @@
     else byId('public-link').hidden = true;
     render();
   }
-  function applySave(response) { state = response.state; sync = response.sync || sync; importPreview = null; importFile = null; render(); notice(response.unchanged ? 'No changes to import.' : 'Records saved.' + (sync.ok ? ' Public directory is up to date.' : ' Public update needs a retry.')); }
+  function applySave(response) { state = response.state; sync = response.sync || sync; importPreview = null; importFile = null; setupDefaultsPreview = null; render(); notice(response.unchanged ? 'No changes to import.' : 'Records saved.' + (sync.ok ? ' Public directory is up to date.' : ' Public update needs a retry.')); }
   function options(values, selected) { return values.map(value => { const pair = Array.isArray(value) ? value : [value, value || 'None']; return '<option value="' + escape(pair[0]) + '"' + (String(pair[0]) === String(selected || '') ? ' selected' : '') + '>' + escape(pair[1]) + '</option>'; }).join(''); }
   function fieldControl(definition, row) {
     const [key, label, initialType, required] = definition;
@@ -157,21 +186,17 @@
   }
   function openEditor(tableName, id, defaults) {
     dialogTable = tableName;
-    dialogRecord = KPT.copy(state[tableName].find(row => row.id === id) || Object.assign({ status: 'Active', archived: false, tags: ['DIM'], date: year() + '-01-01', year: year(), result: 'Pending', attended: false, kind: 'Exam', category: tableName === 'Catalog' ? '' : 'Probadge' }, defaults || {}));
+    dialogRecord = KPT.copy(state[tableName].find(row => row.id === id) || Object.assign({ status: 'Active', archived: false, tags: ['DIM'], date: year() + '-01-01', year: year(), result: 'Pending', attended: false, kind: 'Exam', category: tableName === 'Catalog' ? '' : 'Probadge', sortOrder: 999, eligibilityMetric: '', eligibilityThreshold: null }, defaults || {}));
+    if (tableName === 'Awards' && !dialogRecord.catalogId) {
+      const catalog = state.Catalog.find(row => row.kind === 'Award' && row.category === dialogRecord.category && row.name === dialogRecord.name && row.level === dialogRecord.level);
+      if (catalog) dialogRecord.catalogId = catalog.id;
+    }
     dialogRevision = state.revision;
     byId('editor-title').textContent = (id ? 'Edit ' : 'Add ') + ({ Members: 'student', Activities: 'activity', Exams: 'exam record', Duty: 'annual Duty', Awards: 'award', Catalog: 'catalogue option', Enrolments: 'annual enrolment' }[tableName]);
     byId('editor-message').textContent = '';
     byId('editor-body').innerHTML = '<form id="record-form"><div class="form-grid">' + definitions[tableName].map(definition => fieldControl(definition, dialogRecord)).join('') + '</div>' + (tableName === 'Members' ? '<p class="hint">An annual Tingkatan/status snapshot will also be recorded for ' + year() + '. The internal student ID stays unchanged.</p>' : '') + (tableName === 'Exams' ? '<p class="hint">Linked exam participation, date and type follow its activity. Change attendance on the activity, then record Pass/Fail or certificate here.</p>' : '') + '<div class="dialog-actions"><button class="button" type="button" data-action="close">Cancel</button><button class="button primary" type="submit">Save record</button></div></form>';
-    if (tableName === 'Awards') updateAwardOptions();
     if (tableName === 'Exams') updateExamLink();
     byId('editor').showModal();
-  }
-  function updateAwardOptions() {
-    const category = byId('field-category').value;
-    const available = state.Catalog.filter(row => row.kind === 'Award' && row.category === category && (!row.archived || row.name === dialogRecord.name));
-    const name = byId('field-name').value || dialogRecord.name;
-    byId('field-name').innerHTML = options([...new Set(available.map(row => row.name))], name);
-    byId('field-level').innerHTML = options(available.filter(row => row.name === byId('field-name').value).map(row => row.level), byId('field-level').value || dialogRecord.level);
   }
   function updateExamLink() {
     const activity = state.Activities.find(row => row.id === byId('field-activityId').value);
@@ -220,6 +245,7 @@
     if (name === 'add' || name === 'edit') { openEditor(tableName, id); return; }
     if (name === 'attendance') { openAttendance(id); return; }
     if (name === 'detail') { openDetail(id); return; }
+    if (name === 'recordEligible') { const [memberId, catalogId] = id.split('|'); openEditor('Awards', '', { memberId, catalogId, date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }) }); return; }
     if (name === 'duty') { const existing = state.Duty.find(row => row.memberId === id && row.year === year()); openEditor('Duty', existing && existing.id, { memberId: id, year: year(), hours: '' }); return; }
     if (name === 'enrolment') { openEditor('Enrolments', '', { memberId: id, year: year() }); return; }
     if (name === 'previous') { page = Math.max(0, page - 1); render(); return; }
@@ -265,6 +291,20 @@
       currentPhase = result.currentPhase;
       render();
       notice('Current Phase updated to Phase ' + currentPhase + '.');
+      return;
+    }
+    if (name === 'previewSetup') {
+      setupDefaultsPreview = await call({ action: 'previewSetupDefaults' });
+      render();
+      notice(setupDefaultsPreview.ready ? 'Recommended system setup is already complete.' : 'Setup preview ready. Review it, then apply the missing defaults.');
+      return;
+    }
+    if (name === 'applySetup') {
+      if (!setupDefaultsPreview || setupDefaultsPreview.ready) throw new Error('Preview the recommended setup first.');
+      if (!confirm('Apply the recommended Exam and Award setup? A private backup will be created first.')) return;
+      applySave(await call({ action: 'applySetupDefaults', revision: state.revision }));
+      setupDefaultsPreview = null;
+      notice('Recommended system setup applied.');
       return;
     }
     if (name === 'archive') {
@@ -317,7 +357,6 @@
     if (event.target.id === 'filter') { const cursor = event.target.selectionStart; query = event.target.value; page = 0; render(); byId('filter').focus(); byId('filter').setSelectionRange(cursor, cursor); }
   });
   document.addEventListener('change', event => {
-    if (dialogTable === 'Awards' && ['field-category', 'field-name'].includes(event.target.id)) updateAwardOptions();
     if (dialogTable === 'Exams' && ['field-activityId', 'field-memberId'].includes(event.target.id)) updateExamLink();
     if (event.target.id === 'excel-file') { importPreview = null; importFile = null; if (byId('import-preview')) byId('import-preview').innerHTML = ''; }
   });

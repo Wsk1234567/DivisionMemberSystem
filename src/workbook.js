@@ -20,7 +20,9 @@
         const cell = sheet[library.utils.encode_cell({ r: 0, c: column })];
         headers.push(String(cell && cell.v || '').trim());
       }
-      if (headers.length !== allowed.length || new Set(headers).size !== headers.length || headers.some(header => !allowed.includes(header))) { errors.push({ sheet: name, row: 1, message: 'Headers must match the template; their order may change.' }); return; }
+      const newOptional = new Set(['catalogId', 'code', 'sortOrder', 'eligibilityMetric', 'eligibilityThreshold']);
+      const requiredHeaders = allowed.filter(header => !newOptional.has(header));
+      if (new Set(headers).size !== headers.length || headers.some(header => !allowed.includes(header)) || requiredHeaders.some(header => !headers.includes(header))) { errors.push({ sheet: name, row: 1, message: 'Headers must match the template; their order may change. Older files may omit the newer setup columns.' }); return; }
       output[name] = [];
       for (let rowIndex = 1; rowIndex <= range.e.r; rowIndex++) {
         const row = {};
@@ -47,7 +49,7 @@
   function create(state, template, summaryRows) {
     const library = requireLibrary();
     const book = library.utils.book_new();
-    const instructions = [['TCCD Excel import template'], ['Use exact sheet names and column headers. Header order may change.'], ['Phase 1 member import: enter name and SJAM ID only. SJAM ID may be blank.'], ['For new members, leave id, version and status blank. The system creates IDs and uses Active status.'], ['Keep id and version unchanged when editing exported records.'], ['IC, SJAM ID and certificate numbers must be text.'], ['Dates: YYYY-MM-DD. Activity tags: DIM|Inspection|Exam|Other.'], ['TRUE/FALSE fields: present, attended, archived.'], ['Other sheets may remain empty. Missing rows are never deleted.'], ['Import preview is required. A stale version must be re-exported.'], ['New students receive an internal ID after saving. Export them before adding related records.'], ['Linked examinations must match the activity date, type and attendance.'], ['An activity tagged Exam creates Pending/Absent exam records when attendance is saved.']];
+    const instructions = [['TCCD Excel import template'], ['Use exact sheet names and column headers. Header order may change.'], ['Phase 1 member import: enter name and SJAM ID only. SJAM ID may be blank.'], ['For new members, leave id, version and status blank. The system creates IDs and uses Active status.'], ['Keep id and version unchanged when editing exported records.'], ['IC, SJAM ID and certificate numbers must be text.'], ['Dates: YYYY-MM-DD. Activity tags: DIM|Inspection|Exam|Other.'], ['TRUE/FALSE fields: present, attended, archived.'], ['Other sheets may remain empty. Missing rows are never deleted.'], ['Import preview is required. A stale version must be re-exported.'], ['New students receive an internal ID after saving. Export them before adding related records.'], ['Linked examinations must match the activity date, type and attendance.'], ['An activity tagged Exam creates Pending/Absent exam records when attendance is saved.'], ['Use System Setup to maintain Exam and Award options. Do not change catalogue codes or eligibility fields in Excel.']];
     library.utils.book_append_sheet(book, library.utils.aoa_to_sheet(instructions), 'Instructions');
     root.KPT.tables.forEach(table => {
       const headers = root.KPT.fields[table];

@@ -52,7 +52,7 @@ function readSlot_(book, slot) {
 }
 function loadState_() {
   const config = configuration_();
-  return readSlot_(book_(config.privateId), properties_().getProperty('CURRENT_SLOT') || '0');
+  return KPT.upgradeState(readSlot_(book_(config.privateId), properties_().getProperty('CURRENT_SLOT') || '0'));
 }
 function commit_(state) {
   const slot = properties_().getProperty('CURRENT_SLOT') === '0' ? '1' : '0';
@@ -131,6 +131,14 @@ function rpc(request) {
         const preview = KPT.importRows(state, request.workbook, context);
         return { ok: true, data: { changes: preview.changes, errors: preview.errors, revision: preview.revision } };
       }
+      if (request.action === 'previewSetupDefaults') return { ok: true, data: KPT.setupPreview(state) };
+      if (request.action === 'applySetupDefaults') {
+        if (request.revision !== state.revision) throw new Error('Conflict: reload before applying setup.');
+        backup_(state, 'Before applying recommended system setup');
+        const next = KPT.applyRecommendedSetup(state, Object.assign({}, context, { revision: request.revision }));
+        commit_(next);
+        return { ok: true, data: { state: next, sync: sync_(next) } };
+      }
       if (request.action === 'commitImport') {
         if (request.revision !== state.revision) throw new Error('Conflict: data changed since preview. Preview the file again.');
         const preview = KPT.importRows(state, request.workbook, context);
@@ -151,7 +159,7 @@ function rpc(request) {
         if (!allowed || !/^(KPT|TCCD)-/.test(file.getName())) throw new Error('Select a backup from the private backup folder.');
         const payload = JSON.parse(file.getBlob().getDataAsString());
         if (payload.schema !== 1 || !payload.state) throw new Error('Invalid backup format.');
-        const restored = KPT.copy(payload.state);
+        const restored = KPT.upgradeState(payload.state);
         KPT.validateState(restored);
         restored.revision = state.revision;
         restored.sequence = Math.max(restored.sequence, state.sequence);

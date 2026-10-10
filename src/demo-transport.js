@@ -13,7 +13,7 @@
     demo: true,
     publicUrl: 'index.html',
     async call(request) {
-      if (!state) { const response = await fetch('demo-private.json'); if (!response.ok) throw new Error('Preview data could not be loaded.'); state = await response.json(); }
+      if (!state) { const response = await fetch('demo-private.json'); if (!response.ok) throw new Error('Preview data could not be loaded.'); state = KPT.upgradeState(await response.json()); }
       await new Promise(resolve => setTimeout(resolve, 30));
       if (request.action === 'bootstrap') return { state: copy(state), user: identity, sync: { ok: true, revision: state.revision }, admins: copy(admins), currentPhase };
       if (['save', 'attendance'].includes(request.action)) { state = KPT.mutate(state, request, context()); return { state: copy(state), sync: { ok: true, revision: state.revision } }; }
@@ -32,6 +32,12 @@
         if (preview.errors.length) throw new Error('Import has validation errors.');
         if (preview.changes.length) { backup('Before import'); state = preview.state; }
         return { state: copy(state), sync: { ok: true }, unchanged: !preview.changes.length };
+      }
+      if (request.action === 'previewSetupDefaults') return KPT.setupPreview(state);
+      if (request.action === 'applySetupDefaults') {
+        backup('Before recommended setup');
+        state = KPT.applyRecommendedSetup(state, Object.assign(context(), { revision: request.revision }));
+        return { state: copy(state), sync: { ok: true, revision: state.revision } };
       }
       if (request.action === 'retrySync') return { state: copy(state), sync: { ok: true } };
       if (request.action === 'backup') { const item = backup('Manual'); return { id: item.id, name: item.name }; }

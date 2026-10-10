@@ -6,13 +6,29 @@
     Attendance: ['id', 'version', 'activityId', 'memberId', 'present'],
     Exams: ['id', 'version', 'memberId', 'activityId', 'type', 'date', 'result', 'attended', 'certificate', 'archived'],
     Duty: ['id', 'version', 'memberId', 'year', 'hours'],
-    Awards: ['id', 'version', 'memberId', 'category', 'name', 'date', 'level', 'certificate', 'notes', 'archived'],
+    Awards: ['id', 'version', 'memberId', 'catalogId', 'category', 'name', 'date', 'level', 'certificate', 'notes', 'archived'],
     Enrolments: ['id', 'version', 'memberId', 'year', 'form', 'status'],
-    Catalog: ['id', 'version', 'kind', 'category', 'name', 'level', 'archived']
+    Catalog: ['id', 'version', 'code', 'sortOrder', 'kind', 'category', 'name', 'level', 'eligibilityMetric', 'eligibilityThreshold', 'archived']
   };
   const categories = ['Probadge', 'Promotion', 'Special Service Shield', 'Service Stripe & Star'];
   const statuses = ['Active', 'Graduated', 'Withdrawn'];
   const results = ['Pass', 'Fail', 'Pending', 'Absent'];
+  const forms = ['Peralihan', 'Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Adult'];
+  const races = ['Melayu', 'India', 'Cina', 'Other'];
+  const recommendedCatalog = [];
+  const addRecommended = (code, sortOrder, kind, category, name, level, eligibilityMetric, eligibilityThreshold) => recommendedCatalog.push({ code, sortOrder, kind, category, name, level: level || '', eligibilityMetric: eligibilityMetric || '', eligibilityThreshold: eligibilityThreshold == null ? null : eligibilityThreshold, archived: false });
+  ['EFA (New)', 'EFA (Recert)', 'BFA (New)', 'BFA (Recert)', 'BFA (Renew)', 'Home Nursing', 'AFA'].forEach((name, index) => addRecommended('EXAM_' + name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase(), index + 1, 'Exam', '', name));
+  [
+    [0, 'Knowledge of the Order of St. John'],
+    [1, 'Combating Drugs & Substance Abuse'], [1, 'Caring for Animals'], [1, 'Caring for the Community'], [1, 'Caring for the Sick'], [1, 'Caring for the Children'],
+    [2, 'Road Safety & Accident Prevention'], [2, 'Civil Defence'], [2, 'Fire Fighting & Prevention'], [2, 'Casualty Simulation'], [2, 'Survival Technique & Life Saving'],
+    [3, 'Outdoor Pursuits'], [3, 'Physical Health & Fitness'], [3, 'Crafts'], [3, 'Map Reading & Navigation'], [3, 'Musician'],
+    [4, 'Communication with People with Disabilities'], [4, 'Administrative & Management Skills'], [4, 'International St. John Friendship'], [4, 'Computer Technology & Social Media Skills'], [4, 'Signaling & Radio Communication'],
+    [5, 'Citizenship'], [5, 'Living Skills'], [5, 'Cookery and Nutrition'], [5, 'Do-It-Yourself'], [5, 'Cadet Leadership & Training Course']
+  ].forEach(([category, name], index) => addRecommended('PROBADGE_' + String(index + 1).padStart(2, '0'), 100 + index, 'Award', 'Probadge', name, 'Category ' + category));
+  ['Lance Corporal', 'Corporal', 'Sergeant', 'Cadet Leader'].forEach((level, index) => addRecommended('PROMOTION_' + String(index + 1), 200 + index, 'Award', 'Promotion', 'Promotion', level));
+  [[100, 'Green'], [200, 'Blue'], [500, 'Purple'], [700, 'Silver'], [1000, 'Emas']].forEach(([hours, colour], index) => addRecommended('SSS_' + hours, 300 + index, 'Award', 'Special Service Shield', 'Special Service Shield', 'SSS ' + hours + ' - ' + colour, 'lifetimeDutyHours', hours));
+  ['1st Year - 1 Black-and-White Stripe', '2nd Year - 2 Black-and-White Stripes', '3rd Year - 1 Service Star', '4th Year - 1 Service Star + 1 Black-and-White Stripe', '5th Year - 2 Service Stars'].forEach((level, index) => addRecommended('SERVICE_YEAR_' + (index + 1), 400 + index, 'Award', 'Service Stripe & Star', 'Service Stripe & Star', level, 'efficientYears', index + 1));
   const copy = value => JSON.parse(JSON.stringify(value));
   const str = value => String(value == null ? '' : value).trim();
   const norm = value => str(value).toLowerCase();
@@ -25,7 +41,18 @@
   function empty() {
     const state = { schema: 1, revision: 0, sequence: 0, updatedAt: '', publishedRevision: -1, audit: [] };
     tables.forEach(table => { state[table] = []; });
-    ['EFA', 'BFA', 'Home Nursing', 'AFA'].forEach((name, index) => state.Catalog.push({ id: 'CAT-' + (index + 1), version: 1, kind: 'Exam', category: '', name, level: '', archived: false }));
+    ['EFA', 'BFA', 'Home Nursing', 'AFA'].forEach((name, index) => state.Catalog.push({ id: 'CAT-' + (index + 1), version: 1, code: '', sortOrder: index + 1, kind: 'Exam', category: '', name, level: '', eligibilityMetric: '', eligibilityThreshold: null, archived: false }));
+    return state;
+  }
+  function upgradeState(input) {
+    const state = copy(input);
+    state.trash = Array.isArray(state.trash) ? state.trash : [];
+    state.Catalog = (state.Catalog || []).map((row, index) => Object.assign({ code: '', sortOrder: index + 1, eligibilityMetric: '', eligibilityThreshold: null }, row));
+    state.Awards = (state.Awards || []).map(row => {
+      if (row.catalogId) return row;
+      const catalog = state.Catalog.find(item => item.kind === 'Award' && item.category === row.category && item.name === row.name && item.level === row.level);
+      return Object.assign({ catalogId: catalog ? catalog.id : '' }, row);
+    });
     return state;
   }
   function normalize(table, input) {
@@ -43,6 +70,10 @@
     });
     if (fields[table].includes('year')) row.year = Number(input.year);
     if (table === 'Duty') row.hours = str(input.hours) === '' ? null : Number(input.hours);
+    if (table === 'Catalog') {
+      row.sortOrder = str(input.sortOrder) === '' ? 0 : Number(input.sortOrder);
+      row.eligibilityThreshold = str(input.eligibilityThreshold) === '' ? null : Number(input.eligibilityThreshold);
+    }
     return row;
   }
   function validateState(state) {
@@ -87,9 +118,21 @@
           }
         }
         if (table === 'Duty' && row.hours !== null && (!Number.isFinite(row.hours) || row.hours < 0 || row.hours > 8784)) fail('Duty hours must be between 0 and 8784, or blank.');
-        if (table === 'Awards' && (!categories.includes(row.category) || !state.Catalog.some(item => item.kind === 'Award' && item.category === row.category && item.name === row.name && item.level === row.level))) fail('Choose an award and level from the catalogue.');
+        if (table === 'Awards') {
+          const catalog = row.catalogId && state.Catalog.find(item => item.id === row.catalogId && item.kind === 'Award');
+          if (!categories.includes(row.category) || (!catalog && !state.Catalog.some(item => item.kind === 'Award' && item.category === row.category && item.name === row.name && item.level === row.level))) fail('Choose an award and level from the catalogue.');
+        }
         if (table === 'Enrolments' && !statuses.includes(row.status)) fail('Invalid annual member status.');
-        if (table === 'Catalog' && (!['Exam', 'Award'].includes(row.kind) || !row.name || (row.kind === 'Award' && !categories.includes(row.category)))) fail('Invalid catalogue entry.');
+        if (table === 'Catalog') {
+          if (!['Exam', 'Award'].includes(row.kind) || !row.name || (row.kind === 'Award' && !categories.includes(row.category))) fail('Invalid catalogue entry.');
+          if (row.code && !/^[A-Z0-9_]{1,80}$/.test(row.code)) fail('Invalid catalogue code.');
+          const sortOrder = row.sortOrder == null || row.sortOrder === '' ? 0 : Number(row.sortOrder);
+          const metric = row.eligibilityMetric || '';
+          const threshold = row.eligibilityThreshold == null || row.eligibilityThreshold === '' ? null : Number(row.eligibilityThreshold);
+          if (!Number.isInteger(sortOrder) || sortOrder < 0) fail('Catalogue order must be a non-negative integer.');
+          if (!['', 'lifetimeDutyHours', 'efficientYears'].includes(metric)) fail('Invalid eligibility rule.');
+          if (metric && (!Number.isFinite(threshold) || threshold <= 0)) fail('Eligibility threshold must be positive.');
+        }
         } catch (error) { error.table = table; error.recordId = row.id; throw error; }
       });
     });
@@ -100,6 +143,8 @@
     unique(state.Enrolments, row => row.memberId + ':' + row.year, 'annual enrolment');
     unique(state.Exams.filter(row => row.activityId), row => row.activityId + ':' + row.memberId, 'linked exam');
     unique(state.Catalog, row => [row.kind, row.category, norm(row.name), norm(row.level)].join(':'), 'catalogue entry');
+    unique(state.Catalog, row => row.code, 'catalogue code');
+    unique(state.Awards.filter(row => row.catalogId), row => row.memberId + ':' + row.catalogId, 'member award');
     if (state.Members.some(row => /^STU-\d+$/.test(row.id) && Number(row.id.slice(4)) > state.sequence)) fail('Student sequence is behind existing IDs.');
     return state;
   }
@@ -113,6 +158,19 @@
     }
     if (previous && row.version !== previous.version) fail('Conflict: this record changed. Reload current data before saving.');
     if (!previous && row.version) fail('New records must have a blank or zero version.');
+    if (table === 'Members') {
+      if (row.form && !forms.includes(row.form) && (!previous || row.form !== previous.form)) fail('Choose a standard Tingkatan option.');
+      if (row.race && !races.includes(row.race) && (!previous || row.race !== previous.race)) fail('Choose a standard Race option.');
+    }
+    if (table === 'Enrolments' && row.form && !forms.includes(row.form)) {
+      const member = state.Members.find(item => item.id === row.memberId);
+      if ((!previous || row.form !== previous.form) && (!member || row.form !== member.form)) fail('Choose a standard Tingkatan option.');
+    }
+    if (table === 'Awards' && row.catalogId) {
+      const catalog = state.Catalog.find(item => item.id === row.catalogId && item.kind === 'Award');
+      if (!catalog || (catalog.archived && (!previous || previous.catalogId !== catalog.id))) fail('Choose an available award from System Setup.');
+      row.category = catalog.category; row.name = catalog.name; row.level = catalog.level;
+    }
     row.id = previous ? previous.id : table === 'Members' ? 'STU-' + String(++state.sequence).padStart(6, '0') : table.slice(0, 3).toUpperCase() + '-' + uuid();
     row.version = previous ? previous.version + 1 : 1;
     if (previous) state[table][state[table].indexOf(previous)] = row; else state[table].push(row);
@@ -178,6 +236,49 @@
     const examKnown = exam || state.Exams.some(row => !row.archived && row.memberId === memberId && yearOf(row.date) === Number(year) && row.result === 'Absent');
     const efficient = hours === null || !dimKnown || !inspectionKnown || !examKnown ? 'Pending' : hours >= 60 && dim >= 12 && inspection && exam ? 'Efficient' : 'Not efficient';
     return { memberId, year: Number(year), hours, dim, inspection, exam, efficient };
+  }
+  function setupPreview(state) {
+    const missing = recommendedCatalog.filter(recommended => !state.Catalog.some(row => row.code === recommended.code || (row.kind === recommended.kind && row.category === recommended.category && row.name === recommended.name && row.level === recommended.level)));
+    const legacyExams = state.Catalog.filter(row => row.kind === 'Exam' && !row.archived && ['EFA', 'BFA'].includes(row.name));
+    return { missing: copy(missing), legacyExams: legacyExams.map(row => ({ id: row.id, name: row.name })), ready: missing.length === 0 && legacyExams.length === 0 };
+  }
+  function applyRecommendedSetup(original, context) {
+    const state = upgradeState(original);
+    if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before applying setup.');
+    recommendedCatalog.forEach(recommended => {
+      let row = state.Catalog.find(item => item.code === recommended.code);
+      if (!row) row = state.Catalog.find(item => item.kind === recommended.kind && item.category === recommended.category && item.name === recommended.name && item.level === recommended.level);
+      if (row) {
+        const changed = !row.code || row.sortOrder !== recommended.sortOrder || row.eligibilityMetric !== recommended.eligibilityMetric || row.eligibilityThreshold !== recommended.eligibilityThreshold;
+        if (changed) Object.assign(row, recommended, { id: row.id, version: row.version + 1, archived: false });
+      } else state.Catalog.push(Object.assign({ id: 'CAT-' + context.uuid(), version: 1 }, recommended));
+    });
+    state.Catalog.filter(row => row.kind === 'Exam' && ['EFA', 'BFA'].includes(row.name) && !row.code && !row.archived).forEach(row => { row.archived = true; row.version++; });
+    state.Awards.forEach(row => {
+      if (row.catalogId) return;
+      const catalog = state.Catalog.find(item => item.kind === 'Award' && item.category === row.category && item.name === row.name && item.level === row.level);
+      if (catalog) { row.catalogId = catalog.id; row.version++; }
+    });
+    return finish(state, context.actor, 'Apply recommended system setup', context.now);
+  }
+  function awardEligibility(state) {
+    const years = new Set();
+    state.Duty.forEach(row => years.add(row.year));
+    state.Enrolments.forEach(row => years.add(row.year));
+    state.Activities.forEach(row => years.add(yearOf(row.date)));
+    state.Exams.forEach(row => years.add(yearOf(row.date)));
+    const eligible = [];
+    const members = state.Members.map(member => {
+      const lifetimeDutyHours = state.Duty.filter(row => row.memberId === member.id && row.hours !== null).reduce((total, row) => total + row.hours, 0);
+      const efficientYears = [...years].filter(year => year && summary(state, member.id, year).efficient === 'Efficient').length;
+      const issued = new Set(state.Awards.filter(row => row.memberId === member.id).map(row => row.catalogId).filter(Boolean));
+      state.Catalog.filter(row => row.kind === 'Award' && !row.archived && row.eligibilityMetric && !issued.has(row.id)).sort((first, second) => first.sortOrder - second.sortOrder).forEach(catalog => {
+        const value = catalog.eligibilityMetric === 'lifetimeDutyHours' ? lifetimeDutyHours : efficientYears;
+        if (value >= catalog.eligibilityThreshold) eligible.push({ memberId: member.id, catalogId: catalog.id, category: catalog.category, name: catalog.name, level: catalog.level, metric: catalog.eligibilityMetric, value, threshold: catalog.eligibilityThreshold });
+      });
+      return { memberId: member.id, lifetimeDutyHours, efficientYears };
+    });
+    return { eligible, members };
   }
   function projectPublic(state) {
     return { schema: 1, revision: state.revision, updatedAt: state.updatedAt, members: state.Members.map(member => ({ name: member.name, sjamId: member.sjamId, status: member.status, awards: state.Awards.filter(award => award.memberId === member.id && !award.archived).map(award => ({ name: award.name, date: award.date, category: award.category, level: award.level })) })) };
@@ -304,7 +405,7 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
   }
-  const api = { fields, tables, categories, statuses, results, empty, normalize, validateState, mutate, summary, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey };
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

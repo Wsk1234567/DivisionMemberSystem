@@ -50,7 +50,7 @@ function environment() {
 test('unknown and blank Google identities cannot read or mutate data', () => {
   for (const actor of ['stranger@gmail.com', '']) {
     const { env, sandbox } = environment(); env.actor = actor;
-    for (const action of ['bootstrap', 'save', 'attendance', 'previewImport', 'commitImport', 'retrySync', 'backup', 'listBackups', 'restore', 'setAdmins', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash']) {
+    for (const action of ['bootstrap', 'save', 'attendance', 'previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults', 'retrySync', 'backup', 'listBackups', 'restore', 'setAdmins', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash']) {
       const response = sandbox.rpc({ action });
       assert.equal(response.ok, false, action);
     }
@@ -64,6 +64,17 @@ test('secretary can read and save but cannot authorise administrators, restore o
   assert.equal(saved.ok, true);
   assert.equal(saved.data.state.Members[0].name, 'Secretary edit');
   for (const action of ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
+});
+test('secretary can preview and apply recommended system setup with a safety backup', () => {
+  const { env, sandbox, privateBook, files } = environment(); env.actor = 'secretary@gmail.com';
+  sandbox.writeSlot_(privateBook, '0', KPT.empty());
+  const preview = sandbox.rpc({ action: 'previewSetupDefaults' });
+  assert.equal(preview.ok, true);
+  assert.equal(preview.data.ready, false);
+  const applied = sandbox.rpc({ action: 'applySetupDefaults', revision: 0 });
+  assert.equal(applied.ok, true);
+  assert.equal(KPT.setupPreview(applied.data.state).ready, true);
+  assert.ok([...files.values()].some(file => JSON.parse(file.getBlob().getDataAsString()).reason === 'Before applying recommended system setup'));
 });
 test('owner can set phase 1 to 6 without changing or restoring member data', () => {
   const { sandbox, properties, initial } = environment();
