@@ -1,18 +1,18 @@
 # TCCD Member System
 
-TCCD cadet member administration and public award directory for SMJK Triang Combined Cadet Division.
+SMJK Triang Combined Cadet Division 的学员成员管理与公开奖项目录。
 
-Public website: https://wsk1234567.github.io/DivisionMemberSystem/
+公开网站：https://wsk1234567.github.io/DivisionMemberSystem/
 
-## Live deployment
+## 线上部署
 
-The public directory and Google Apps Script administration system are deployed. Deployment details and future update steps are documented in [DEPLOYMENT.md](DEPLOYMENT.md).
+公开目录与 Google Apps Script 管理系统均已部署。部署细节与后续更新步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
-Do not put passwords, access tokens, private spreadsheet IDs, backups or student files in this repository.
+**不要**把密码、访问 token、私人 spreadsheet ID、备份或学生文件放进本仓库。
 
-## Local fictional preview
+## 本地虚构预览
 
-Requires Node.js 22 or newer; build and unit tests need no package installation.
+需要 Node.js 22 或更新；构建与单元测试**无需**安装任何包。
 
 ```sh
 npm test
@@ -20,36 +20,36 @@ npm run build
 npm start
 ```
 
-Open http://127.0.0.1:4173/ for the public sample directory or http://127.0.0.1:4173/admin.html for administration. Search `Sample Member 001` or `010001`. Preview data is fictional, includes 500 students with five years of records, and edits reset on reload. Never publish the `preview/` folder.
+打开 http://127.0.0.1:4173/ 查看公开示例目录，或 http://127.0.0.1:4173/admin.html 进入管理端。可搜索 `Sample Member 001` 或 `010001`。预览数据虚构，含 500 名学员、五年记录，改动在刷新后重置。**永远不要发布 `preview/` 文件夹。**
 
-## Features
+## 功能
 
-- Fixed internal student IDs, optional SJAM IDs, duplicate IC/SJAM checks, historical enrolments, graduation/withdrawal status.
-- Standard member options, configured examination types, activities with multiple categories, batch attendance and linked examinations.
-- Annual Duty totals with decimals and missing values; annual efficiency requires at least 60 hours, 12 DIM participations, Inspection attendance and examination participation.
-- System Setup installs the confirmed Probadge, Promotion, Special Service Shield and Service Stripe & Star catalogue. Eligibility is suggested from recorded Duty/Efficient data, but an administrator must confirm each award and date.
-- Award history; public fields limited to member name, SJAM ID, status, award name/date/category/level.
-- Private Data Center, Excel templates and round trips, import preview and version checks, safety backups before imports and restores.
-- Google-authenticated administrators, owner-only authorisation/restore, daily private backup retention, retryable publication.
+- 固定内部学员 ID、可选 SJAM ID、IC/SJAM 查重、历史入队记录、毕业/退出状态。
+- 标准成员选项、可配置考试类型、多类别活动、批量考勤与关联考试。
+- 年度 Duty 合计支持小数与缺失值；年度 Efficient 需至少 60 小时、12 次 DIM、Inspection 参与以及 examination 参与。
+- System Setup 安装已确认的 Probadge、Promotion、Special Service Shield 与 Service Stripe & Star 目录。系统会根据 Duty/Efficient 数据建议资格，但**必须由管理员确认**每项奖项与日期。
+- 奖项历史；公开字段仅限成员姓名、SJAM ID、状态、奖项名称/日期/类别/等级。
+- 私有 Data Center、Excel 模板与往返导入导出、导入预览与版本冲突检查、导入/恢复前安全备份。
+- Google 身份验证的管理员、Owner 专属授权/恢复、每日私人备份保留、可重试的公开同步。
 
-BF1, BFC4 and per-event Duty records are deferred.
+BF1、BFC4 与按次 Duty 记录暂缓实现。
 
-## Hosting and storage
+## 托管与存储
 
-GitHub Actions runs the tests and builds the public site. It publishes **only `dist/`** to GitHub Pages. In repository Settings → Pages, select **GitHub Actions** as Source.
+GitHub Actions 运行测试并构建公开站点，**只把 `dist/` 发布**到 GitHub Pages。仓库 Settings → Pages 请选择 **GitHub Actions** 作为 Source。
 
-Admin runs as the Google user accessing the web app; each server operation checks the authorised administrator list. Private Sheets use alternating text-encoded snapshot slots and verified writes before changing the active pointer. Do not edit the storage tabs manually.
+Admin 以「访问 web app 的用户」身份运行；每次服务端操作都会检查授权管理员名单。私人 Sheet 使用交替文本编码快照槽，校验写入成功后才切换活动指针。**不要手动编辑存储分页。**
 
-Public data lives in a separate Sheets file and is served by a separate, read-only Apps Script project with a second field allowlist. It has no private-sheet identifier. The public site's resource paths support the repository subpath.
+公开数据存放在独立的 Sheets 文件中，由独立的只读 Apps Script 项目提供服务，并再次执行字段白名单。它不含私人表标识。公开站点的资源路径支持仓库子路径。
 
-The secretary needs editor access to the storage files because Admin runs as the accessing user. Owner-only controls apply inside the app; Google Drive editors can still directly edit files they are granted. Only share files with trusted administrators, and keep Apps Script source editing limited to the owner.
+秘书需要存储文件的编辑权限，因为 Admin 以访问用户身份运行。Owner 专属控件只约束应用内操作；Google Drive 编辑者仍可直接改他们被共享的文件。只与可信管理员共享文件，并把 Apps Script 源码编辑权限限制给 Owner。
 
-## Verification
+## 验证
 
-`npm test` covers the domain, real Excel round trips and backend behaviours using mocked Google services. Browser checks also operate forms, downloads, imports, public searches and mobile layouts. Real Google login/consent, Sheet permissions and Pages deployment must be tested in the owner's account before importing real data.
+`npm test` 覆盖业务域、真实 Excel 往返，以及使用 mock Google 服务的后端行为。浏览器测试还会操作表单、下载、导入、公开搜索与移动端布局。真实 Google 登录/授权、Sheet 权限与 Pages 部署必须先在 Owner 账号中验证，再导入真实资料。
 
-For browser tests, install Playwright locally, build, and run `npm run test:browser`. The suite starts its own local preview server on port 4174. Screenshots are stored in `test-results/`.
+浏览器测试请在本地安装 Playwright，先构建，再运行 `npm run test:browser`。该套件会在端口 4174 启动自己的本地预览服务器。截图存放在 `test-results/`。
 
-## Dependencies
+## 依赖
 
-Excel support uses vendored SheetJS Community Edition 0.20.3 from its official CDN. The build verifies `vendor/SHA256.txt`; licensing is preserved in `vendor/SHEETJS-LICENSE.txt`. Administrator scripts are included inline, with no external script download at runtime.
+Excel 支持使用自官方 CDN vendor 的 SheetJS Community Edition 0.20.3。构建会校验 `vendor/SHA256.txt`；许可证保留在 `vendor/SHEETJS-LICENSE.txt`。管理员脚本内联打包，运行时不下载外部脚本。

@@ -50,6 +50,7 @@
   byId('year').value = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).slice(0, 4)) || new Date().getFullYear();
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
+  function busyNotice(message) { byId('notice').className = 'message working'; byId('notice').innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + escape(message); }
   function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming', 'Ready', 'Missing'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
   function memberName(id) { const row = state.Members.find(member => member.id === id); return row ? row.name : id; }
   function button(label, action, id, table) { return '<button class="button small" type="button" data-action="' + action + '" data-id="' + escape(id || '') + '" data-table="' + escape(table || '') + '">' + escape(label) + '</button>'; }
@@ -151,14 +152,16 @@
     if (view === 'Settings' && backups.length) renderBackups();
     if (view === 'Import' && importPreview) renderImport();
   }
-  async function call(request) {
+  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…' };
+  async function call(request, label) {
     if (busy) throw new Error('Please wait for the current operation.');
     busy = true;
     document.body.setAttribute('aria-busy', 'true');
+    busyNotice(label || busyLabels[request.action] || 'Working…');
     try { return await window.KPTTransport.call(request); } finally { busy = false; document.body.removeAttribute('aria-busy'); }
   }
   async function refresh() {
-    const response = await call({ action: 'bootstrap' });
+    const response = await call({ action: 'bootstrap' }, 'Loading records…');
     state = response.state;
     user = response.user;
     sync = response.sync;
@@ -254,7 +257,7 @@
     if (name === 'template') { KPTWorkbook.download(state, true); return; }
     if (name === 'export' || name === 'exportSummary') { KPTWorkbook.download(state, false, name === 'exportSummary' ? summaryRows() : null); return; }
     if (name === 'delete') {
-      const preview = await call({ action: 'previewDelete', table: tableName, id });
+      const preview = KPT.recycleBundle(state, tableName, id);
       const included = Object.entries(preview.counts).map(([table, count]) => table + ': ' + count).join('\n');
       if (!confirm('Move ' + preview.rootTable + ' · ' + preview.label + ' to Recycle Bin?\n\nAffected records:\n' + included + '\n\nA private backup will be created first.')) return;
       const response = await call({ action: 'deleteRecord', table: tableName, id, revision: state.revision });
@@ -264,7 +267,7 @@
       return;
     }
     if (name === 'deleteAllMembers') {
-      const preview = await call({ action: 'previewDeleteAllMembers' });
+      const preview = KPT.allMembersBundle(state);
       const included = Object.entries(preview.counts).map(([table, count]) => table + ': ' + count).join('\n');
       const confirmation = prompt('This will move ALL ' + preview.counts.Members + ' students and their linked records to the Recycle Bin.\n\nAffected records:\n' + included + '\n\nA private backup will be created first.\n\nType DELETE ALL STUDENTS to continue.');
       if (confirmation !== 'DELETE ALL STUDENTS') { if (confirmation !== null) notice('Delete all students cancelled: confirmation text did not match.', true); return; }
@@ -294,7 +297,7 @@
       return;
     }
     if (name === 'previewSetup') {
-      setupDefaultsPreview = await call({ action: 'previewSetupDefaults' });
+      setupDefaultsPreview = KPT.setupPreview(state);
       render();
       notice(setupDefaultsPreview.ready ? 'Recommended system setup is already complete.' : 'Setup preview ready. Review it, then apply the missing defaults.');
       return;

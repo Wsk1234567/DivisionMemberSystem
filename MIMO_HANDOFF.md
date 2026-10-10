@@ -1,120 +1,119 @@
-# TCCD Data System — Xiaomi Mimo Handoff
+# TCCD Data System — Xiaomi Mimo 交接说明
 
-Updated: 2026-10-10  
-Repository: https://github.com/Wsk1234567/DivisionMemberSystem  
-Public directory: https://wsk1234567.github.io/DivisionMemberSystem/  
-Admin web app: https://script.google.com/macros/s/AKfycbyEkEYW1DVIB6qYCzfx_hWL0sL6WWJacvn14T_VIUkcRzmVA0TLT6vNtFkHJeTRwrNi/exec
+更新日期：2026-10-10  
+仓库：https://github.com/Wsk1234567/DivisionMemberSystem  
+公开目录：https://wsk1234567.github.io/DivisionMemberSystem/  
+Admin web app：https://script.google.com/macros/s/AKfycbyEkEYW1DVIB6qYCzfx_hWL0sL6WWJacvn14T_VIUkcRzmVA0TLT6vNtFkHJeTRwrNi/exec
 
-## Start here
+## 从这里开始
 
-This repository is the source of truth for a TCCD member data system. It contains:
+本仓库是 TCCD 成员数据系统的权威来源，包含：
 
-- A public GitHub Pages member directory.
-- A private Google Apps Script administration web app.
-- Private Google Sheets storage and a separate public projection.
-- Excel import/export, backups, version conflict protection and a recycle bin.
+- 公开的 GitHub Pages 成员目录。
+- 私有的 Google Apps Script 管理后台。
+- 私有 Google Sheets 存储与独立的公开投影。
+- Excel 导入/导出、备份、版本冲突保护与回收站。
 
-Read `README.md` and `DEPLOYMENT.md` before changing anything. Do not redesign the architecture unless the owner explicitly requests it.
+改动任何东西之前，先读 `README.md` 与 `DEPLOYMENT.md`。**除非 owner 明确要求，不要重新设计架构。**
 
-## Current deployed state
+## 当前部署状态
 
-- Git branch: `main`
-- Handoff commit: `0103091` (`Add TCCD system setup and award eligibility`)
-- Admin Apps Script deployment: Version 7
-- Current rollout phase: Phase 1
-- The confirmed Exam and Award catalogue was applied through System Setup.
-- Old bulk-imported students were deliberately moved to Recycle Bin. Do not restore or permanently delete them unless the owner explicitly asks.
-- At handoff time, the active database contains one manually added member.
+- Git 分支：`main`
+- 交接 commit：`0103091`（`Add TCCD system setup and award eligibility`）
+- Admin Apps Script 部署：Version 7
+- 当前推进阶段：Phase 1
+- 已确认的 Exam 与 Award 目录已通过 System Setup 应用。
+- 旧的批量导入学员已**有意**移入 Recycle Bin。除非 owner 明确要求，不要恢复或永久删除。
+- 交接时，活动数据库中有一位手动添加的成员。
 
-These are a dated snapshot, not permanent assumptions. Reload the live Admin state before making data decisions.
+以上是有日期的快照，不是永久假设。做数据决策前请重新加载线上 Admin 状态。
 
-## Non-negotiable privacy and access rules
+## 不可协商的隐私与访问规则
 
-- Never commit IC numbers, student Excel files, private exports, backups, Sheet IDs, passwords, tokens or OAuth credentials.
-- Public results may contain only member name, SJAM ID, status and public award name/date/category/level.
-- IC, attendance, exams, Duty, certificate numbers and notes must remain private.
-- Admin must run as **User accessing the web app** and allow **Anyone with Google account**. Server-side identity checks are mandatory.
-- Public Apps Script must remain a separate read-only deployment that has no private Sheet ID.
-- Owner-only operations include administrator access, restore, phase switching, Recycle Bin deletion/restoration and Delete All Students.
-- Owner and Secretary may maintain normal records and apply System Setup defaults.
-- Do not restore, purge or delete live records without a direct owner request and a clear preview.
+- **绝不**提交 IC 号码、学生 Excel、私有导出、备份、Sheet ID、密码、token 或 OAuth 凭证。
+- 公开结果只允许包含：成员姓名、SJAM ID、状态，以及公开奖项的名称/日期/类别/等级。
+- IC、考勤、考试、Duty、证书编号与备注必须保持私有。
+- Admin 必须以 **User accessing the web app** 运行，并允许 **Anyone with Google account**。服务端身份校验是强制的。
+- Public Apps Script 必须保持为独立的只读部署，**不含**私人 Sheet ID。
+- Owner 专属操作：管理员授权、恢复、Phase 切换、Recycle Bin 删除/恢复、Delete All Students。
+- Owner 与 Secretary 可维护普通记录并应用 System Setup 默认项。
+- 未经 owner 直接指示与清晰预览，**不要**恢复、清空或删除线上记录。
 
-## Business rules
+## 业务规则
 
-- A member has a permanent internal ID. SJAM ID may be blank and added later.
-- New Phase 1 imports require only `name`; `sjamId` is optional. The system generates `id` and `version`, and defaults status to `Active`.
-- Names are not merge keys. Duplicate names are allowed; duplicate normalized IC or SJAM ID is rejected.
-- Efficient for one calendar year requires Duty at least 60 hours, DIM at least 12, Inspection participation and at least one examination participation.
-- Pass and Fail count as examination participation. Pending counts only when participation is confirmed. Absent does not count.
-- Missing evidence produces Pending rather than a false Efficient result.
-- SSS eligibility uses cumulative Duty hours across all years and shows every reached, unissued milestone.
-- Service Stripe & Star eligibility uses cumulative Efficient years; years do not need to be consecutive.
-- Eligibility is only a suggestion. An administrator must record the award and award date.
+- 成员拥有永久内部 ID。SJAM ID 可留空、稍后补填。
+- 新的 Phase 1 导入只需 `name`；`sjamId` 可选。系统生成 `id` 与 `version`，状态默认 `Active`。
+- **姓名不是关联键。** 允许同名；规范化后 IC 或 SJAM ID 重复则拒绝。
+- 单一日历年的 Efficient 需要：Duty ≥ 60 小时、DIM ≥ 12 次、Inspection 参与，以及至少一次 examination 参与。
+- Pass 与 Fail 计入 examination 参与。Pending 仅在确认参与后计入。Absent 不计。
+- 证据缺失产生 Pending，而不是假的 Efficient 结果。
+- SSS 资格使用跨所有年度的累计 Duty 小时，并显示每一个已达到但未颁发的里程碑。
+- Service Stripe & Star 资格使用累计 Efficient 年数；年数**不要求连续**。
+- 资格只是建议。管理员必须录入奖项与奖项日期。
 
-## Confirmed setup options
+## 已确认的设置选项
 
-- Tingkatan: Peralihan, Form 1, Form 2, Form 3, Form 4, Form 5, Adult.
-- Race: Melayu, India, Cina, Other.
-- Exams: EFA (New), EFA (Recert), BFA (New), BFA (Recert), BFA (Renew), Home Nursing, AFA.
-- Awards: the complete confirmed Probadge, Promotion, SSS and Service Stripe & Star list is defined in `src/domain.js` as `recommendedCatalog`.
+- Tingkatan：Peralihan, Form 1, Form 2, Form 3, Form 4, Form 5, Adult.
+- Race：Melayu, India, Cina, Other.
+- Exams：EFA (New), EFA (Recert), BFA (New), BFA (Recert), BFA (Renew), Home Nursing, AFA.
+- Awards：完整的已确认 Probadge、Promotion、SSS 与 Service Stripe & Star 列表定义在 `src/domain.js` 的 `recommendedCatalog`。
 
-Do not silently rename stable catalogue entries or their internal `code` values. Old Excel files and historical awards must remain compatible.
+**不要**悄悄改名稳定 catalogue 条目或其内部 `code` 值。旧 Excel 文件与历史奖项必须保持兼容。
 
-## Source layout
+## 源码布局
 
-- `src/domain.js`: data schema, validation, business rules, setup defaults and public projection.
-- `src/admin.js`: Admin UI and interactions.
-- `src/public.js`: public member search.
-- `src/workbook.js`: Excel template/import/export rules.
-- `apps-script/admin/Code.gs`: authenticated Admin backend.
-- `apps-script/public/Code.gs`: anonymous read-only public endpoint.
-- `scripts/build.mjs`: generates deployable output.
-- `tests/`: domain, backend and workbook tests.
-- `config.public.json`: public URLs and organisation labels only.
-- `build/`, `dist/` and `preview/`: generated output; do not hand-edit.
+- `src/domain.js`：数据 schema、校验、业务规则、setup 默认项与公开投影。
+- `src/admin.js`：Admin 界面与交互。
+- `src/public.js`：公开成员搜索。
+- `src/workbook.js`：Excel 模板/导入/导出规则。
+- `apps-script/admin/Code.gs`：需身份验证的 Admin 后端。
+- `apps-script/public/Code.gs`：匿名只读公开接口。
+- `scripts/build.mjs`：生成可部署产物。
+- `tests/`：domain、backend 与 workbook 测试。
+- `config.public.json`：仅公开 URL 与机构标签。
+- `build/`、`dist/`、`preview/`：生成产物；**不要手改**。
 
-## Required workflow for every change
+## 每次改动的必备流程
 
-1. Inspect the relevant source and tests first.
-2. Make focused changes in source files, not generated files.
-3. Run `npm test`.
-4. Run `npm run build`.
-5. Run `git diff --check` and review the diff.
-6. Commit and push to `main` only when the owner asked for deployment.
-7. If Admin code changed, update `Code.gs`, `Domain.gs` and `Admin.html` from `build/apps-script/admin/`, then deploy a **new version** of the existing web app so the URL stays unchanged.
-8. If public backend code changed, update and redeploy the separate public Apps Script project.
-9. Verify the live Admin, public search and Apps Script execution log.
+1. 先检查相关源码与测试。
+2. 在源码文件做聚焦修改，不要改生成文件。
+3. 运行 `npm test`。
+4. 运行 `npm run build`。
+5. 运行 `git diff --check` 并审阅 diff。
+6. **仅当 owner 要求部署时**才 commit 并 push 到 `main`。
+7. 若 Admin 代码有变，从 `build/apps-script/admin/` 更新 `Code.gs`、`Domain.gs`、`Admin.html`，然后为现有 web app 部署**新版本**，以保持 URL 不变。
+8. 若公开后端代码有变，更新并重新部署独立的 Public Apps Script 项目。
+9. 验证线上 Admin、公开搜索与 Apps Script 执行日志。
 
-The local browser test command is `npm run test:browser`, but it requires Playwright to be installed. Do not add or upgrade dependencies without checking with the owner.
+本地浏览器测试命令是 `npm run test:browser`，但需要已安装 Playwright。**未经与 owner 确认，不要增删依赖。**
 
-## Google deployment cautions
+## Google 部署注意事项
 
-- Keep the existing Admin deployment URL. Editing the deployment with a new version is preferred over creating a new deployment.
-- Keep the existing public API URL in `config.public.json` unless the public deployment is intentionally replaced.
-- Apps Script Admin login can loop when several Google accounts are active in one browser. Test in an Incognito/InPrivate session containing only the authorised account.
-- A successful code save is not a deployment. Verify the deployed version number and execution status.
-- Applying System Setup creates a private safety backup before changing catalogue data.
+- 保持现有 Admin 部署 URL。优先对现有部署「编辑并发布新版本」，而不是新建部署。
+- 除非有意更换公开部署，否则保持 `config.public.json` 中的现有公开 API URL。
+- 浏览器同时登录多个 Google 账号时，Apps Script Admin 登录可能死循环。请在只含授权账号的无痕/InPrivate 会话中测试。
+- 代码保存成功 **≠** 已部署。请核对已部署版本号与执行状态。
+- 应用 System Setup 会在修改 catalogue 数据前建立私人安全备份。
 
-## Suggested first task for Mimo
+## 给 Mimo 的建议起步任务
 
-Do not start by writing code. First:
+不要一上来就写代码。先：
 
-1. Clone/pull the repository.
-2. Read `README.md`, `DEPLOYMENT.md`, `MIMO_HANDOFF.md`, `src/domain.js` and the tests.
-3. Run `npm test` and `npm run build` without modifying files.
-4. Summarise your understanding of the architecture, privacy boundary, business rules and deployment process.
-5. Ask the owner what the next phase or requested change is.
+1. Clone/pull 仓库。
+2. 阅读 `README.md`、`DEPLOYMENT.md`、`MIMO_HANDOFF.md`、`src/domain.js` 与测试。
+3. **不修改文件**的前提下运行 `npm test` 与 `npm run build`。
+4. 向 owner 概述你对架构、隐私边界、业务规则与部署流程的理解。
+5. 询问 owner 下一阶段或下一步要改什么。
 
-## Prompt to paste into Xiaomi Mimo
+## 可粘贴给 Xiaomi Mimo 的提示词
 
 ```text
-You are taking over the TCCD Data System project.
+你正在接手 TCCD Data System 项目。
 
-Repository: https://github.com/Wsk1234567/DivisionMemberSystem
-Read MIMO_HANDOFF.md, README.md and DEPLOYMENT.md before making changes. Treat the repository as the source of truth. Preserve the existing GitHub Pages + separate Google Apps Script Admin/Public architecture and all privacy boundaries.
+仓库：https://github.com/Wsk1234567/DivisionMemberSystem
+改动前先读 MIMO_HANDOFF.md、README.md 与 DEPLOYMENT.md。以仓库为权威来源。保留现有 GitHub Pages + 独立 Google Apps Script Admin/Public 架构，以及全部隐私边界。
 
-Before coding, pull main, run npm test and npm run build, then explain your understanding to me. Do not restore or permanently delete Recycle Bin data. Do not place student data, IC, Sheet IDs, exports, backups, credentials or tokens in GitHub. Do not deploy or change live Google data unless I directly ask you to do so.
+写代码之前，pull main，运行 npm test 与 npm run build，然后向我说明你的理解。不要恢复或永久删除 Recycle Bin 数据。不要把学生数据、IC、Sheet ID、导出、备份、凭证或 token 放进 GitHub。除非我直接要求，不要部署或改动线上 Google 数据。
 
-When I request a change, update source files rather than build/dist/preview, add or update tests, run the full test/build workflow, and tell me exactly what must be deployed.
+当我要求改动时，更新源码文件而不是 build/dist/preview，补充或更新测试，跑完整 test/build 流程，并准确告诉我需要部署什么。
 ```
-
