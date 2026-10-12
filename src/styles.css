@@ -40,6 +40,8 @@ body[data-mode="owner"] label{color:#e8e8e8;font-weight:600}
 body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{background:#161616;border-color:#333}
 @media(prefers-reduced-motion:reduce){body[aria-busy="true"]::before{animation:none;background:var(--accent)}.spinner{animation:none}}
 .portal-top{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}
+.mode-switcher{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.mode-switcher .button{min-height:36px;padding:6px 12px;font-size:.8rem}
 .portal-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .portal-nav a{text-decoration:none;color:var(--ink);font-weight:600;font-size:.88rem;padding:10px 12px;border-radius:9px}
 .portal-nav a:hover{background:var(--surface)}

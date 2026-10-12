@@ -15,10 +15,11 @@
     if (approvedUrl(config.adminUrl)) return config.adminUrl;
     return '';
   };
-  function bindWorkspaceLink(element, hash, disabledTitle) {
+  function bindWorkspaceLink(element, mode, disabledTitle) {
     const base = workspaceBase();
     if (base) {
-      element.href = base + hash;
+      // Apps Script often drops #hash on redirect; use ?mode= which survives better.
+      element.href = base + (base.includes('?') ? '&' : '?') + 'mode=' + mode;
       element.removeAttribute('aria-disabled');
       element.title = '';
     } else {
@@ -27,8 +28,8 @@
       element.title = disabledTitle;
     }
   }
-  bindWorkspaceLink(adminLink, '#admin', 'Admin access is not configured yet.');
-  bindWorkspaceLink(treasurerLink, '#treasurer', 'Treasurer access is not configured yet.');
+  bindWorkspaceLink(adminLink, 'admin', 'Admin access is not configured yet.');
+  bindWorkspaceLink(treasurerLink, 'treasurer', 'Treasurer access is not configured yet.');
   byId('search-mode').addEventListener('change', () => { byId('query').placeholder = byId('search-mode').value === 'name' ? 'Enter a name' : 'Enter the complete SJAM ID'; });
   function fetchPublic() {
     if (demo) return fetch('demo-public.json', { cache: 'no-store' }).then(response => { if (!response.ok) throw new Error('Preview data could not be loaded.'); return response.json(); });

@@ -61,13 +61,24 @@
   function preferredMode() {
     if (!user) return 'admin';
     const hash = String(location.hash || '').replace('#', '').toLowerCase();
-    if (hash === 'treasurer' && (user.treasurer || user.owner)) return 'treasurer';
-    if (hash === 'owner' && user.owner) return 'owner';
-    if (hash === 'admin' && (user.admin || user.owner)) return 'admin';
+    const queryMode = String(new URLSearchParams(location.search).get('mode') || '').toLowerCase();
+    const requested = queryMode || hash;
+    if (requested === 'treasurer' && (user.treasurer || user.owner)) return 'treasurer';
+    if (requested === 'owner' && user.owner) return 'owner';
+    if (requested === 'admin' && (user.admin || user.owner)) return 'admin';
     if (user.owner) return 'owner';
     if (user.treasurer && !user.admin) return 'treasurer';
     if (user.admin) return 'admin';
     return 'treasurer';
+  }
+  function modeSwitcher() {
+    if (!user) return '';
+    const items = [];
+    if (user.owner || user.treasurer) items.push(['treasurer', 'Treasurer Work']);
+    if (user.owner || user.admin) items.push(['admin', 'Admin Work']);
+    if (user.owner) items.push(['owner', 'Owner']);
+    if (items.length < 2) return '';
+    return '<div class="mode-switcher" role="navigation" aria-label="Workspace">' + items.map(([mode, label]) => '<button type="button" class="button small' + (workspaceMode === mode ? ' primary' : '') + '" data-action="setMode" data-id="' + mode + '">' + escape(label) + '</button>').join('') + '</div>';
   }
   function roleLabel() {
     if (!user) return '';
@@ -238,7 +249,8 @@
     renderNavigation();
     applyWorkspaceTheme();
     const modeTitles = workspaceTitles(workspaceMode);
-    byId('page-title').textContent = modeTitles[view] || titles[view] || view;
+    byId('page-title').innerHTML = escape(modeTitles[view] || titles[view] || view);
+    byId('mode-switcher-slot').innerHTML = modeSwitcher();
     document.querySelectorAll('[data-nav]').forEach(element => { element.classList.toggle('active', element.dataset.nav === view); element.setAttribute('aria-current', element.dataset.nav === view ? 'page' : 'false'); });
     const views = {
       Overview: overview,
@@ -371,6 +383,21 @@
     if (name === 'detail') { openDetail(id); return; }
     if (name === 'recordEligible') { const [memberId, catalogId] = id.split('|'); openEditor('Awards', '', { memberId, catalogId, date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }) }); return; }
     if (name === 'duty') { const existing = state.Duty.find(row => row.memberId === id && row.year === year()); openEditor('Duty', existing && existing.id, { memberId: id, year: year(), hours: '' }); return; }
+    if (name === 'setMode') {
+      if (id === 'treasurer' && !(user.treasurer || user.owner)) throw new Error('No Treasurer access.');
+      if (id === 'admin' && !(user.admin || user.owner)) throw new Error('No Admin access.');
+      if (id === 'owner' && !user.owner) throw new Error('Owner only.');
+      workspaceMode = id;
+      view = id === 'treasurer' ? 'Finance' : id === 'owner' ? 'Owner' : 'Overview';
+      try {
+        const url = new URL(location.href);
+        url.searchParams.set('mode', id);
+        history.replaceState({}, '', url);
+      } catch (error) { /* ignore */ }
+      render();
+      notice('Switched to ' + id + ' workspace.');
+      return;
+    }
     if (name === 'demoRole') {
       if (!window.KPTTransport.demo) return;
       await window.KPTTransport.setDemoRole(id);
