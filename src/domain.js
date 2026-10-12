@@ -8,7 +8,18 @@
     Duty: ['id', 'version', 'memberId', 'year', 'hours'],
     Awards: ['id', 'version', 'memberId', 'catalogId', 'category', 'name', 'date', 'level', 'certificate', 'notes', 'archived'],
     Enrolments: ['id', 'version', 'memberId', 'year', 'form', 'status'],
-    Catalog: ['id', 'version', 'code', 'sortOrder', 'kind', 'category', 'name', 'level', 'eligibilityMetric', 'eligibilityThreshold', 'archived']
+    Catalog: ['id', 'version', 'code', 'sortOrder', 'kind', 'category', 'name', 'level', 'eligibilityMetric', 'eligibilityThreshold', 'archived'],
+    FinBooks: ['id', 'version', 'activityName'],
+    FinIncomes: ['id', 'version', 'bookId', 'date', 'description', 'amount'],
+    FinExpenses: ['id', 'version', 'bookId', 'date', 'item', 'description', 'quantity', 'unitCost', 'amount'],
+    FinReimbursements: ['id', 'version', 'bookId', 'formSeq', 'treasurerName', 'formDate', 'purpose', 'chequeNo', 'amount'],
+    FinReimburseLines: ['id', 'version', 'reimbursementId', 'lineNo', 'date', 'invoiceNo', 'particular', 'total']
+  };
+  const money = value => {
+    if (value === '' || value == null) return null;
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0 || number > 1e8) return NaN;
+    return Math.round(number * 100) / 100;
   };
   const categories = ['Probadge', 'Promotion', 'Special Service Shield', 'Service Stripe & Star'];
   const statuses = ['Active', 'Graduated', 'Withdrawn'];
@@ -47,6 +58,7 @@
   function upgradeState(input) {
     const state = copy(input);
     state.trash = Array.isArray(state.trash) ? state.trash : [];
+    tables.forEach(table => { if (!Array.isArray(state[table])) state[table] = []; });
     state.Catalog = (state.Catalog || []).map((row, index) => Object.assign({ code: '', sortOrder: index + 1, eligibilityMetric: '', eligibilityThreshold: null }, row));
     state.Awards = (state.Awards || []).map(row => {
       if (row.catalogId) return row;
@@ -70,6 +82,12 @@
     });
     if (fields[table].includes('year')) row.year = Number(input.year);
     if (table === 'Duty') row.hours = str(input.hours) === '' ? null : Number(input.hours);
+    if (table === 'FinIncomes' || table === 'FinExpenses' || table === 'FinReimbursements') row.amount = money(input.amount);
+    if (table === 'FinReimburseLines') {
+      row.total = money(input.total);
+      row.lineNo = str(input.lineNo) === '' ? 0 : Number(input.lineNo);
+    }
+    if (table === 'FinReimbursements') row.formSeq = str(input.formSeq) === '' ? 0 : Number(input.formSeq);
     if (table === 'Catalog') {
       row.sortOrder = str(input.sortOrder) === '' ? 0 : Number(input.sortOrder);
       row.eligibilityThreshold = str(input.eligibilityThreshold) === '' ? null : Number(input.eligibilityThreshold);
@@ -123,6 +141,36 @@
           if (!categories.includes(row.category) || (!catalog && !state.Catalog.some(item => item.kind === 'Award' && item.category === row.category && item.name === row.name && item.level === row.level))) fail('Choose an award and level from the catalogue.');
         }
         if (table === 'Enrolments' && !statuses.includes(row.status)) fail('Invalid annual member status.');
+        if (table === 'FinBooks') {
+          if (!row.activityName) fail('Activity name is required.');
+        }
+        if (table === 'FinIncomes') {
+          if (!row.bookId || !state.FinBooks.some(item => item.id === row.bookId)) fail('Unknown finance book.');
+          if (!row.date) fail('Income date is required.');
+          if (!row.description) fail('Income description is required.');
+          if (row.amount === null || Number.isNaN(row.amount) || row.amount < 0) fail('Income amount must be between 0 and 100000000.');
+        }
+        if (table === 'FinExpenses') {
+          if (!row.bookId || !state.FinBooks.some(item => item.id === row.bookId)) fail('Unknown finance book.');
+          if (!row.date) fail('Expense date is required.');
+          if (!row.description && !row.item) fail('Expense needs an item or description.');
+          if (row.amount === null || Number.isNaN(row.amount) || row.amount < 0) fail('Expense amount must be between 0 and 100000000.');
+        }
+        if (table === 'FinReimbursements') {
+          if (!row.bookId || !state.FinBooks.some(item => item.id === row.bookId)) fail('Unknown finance book.');
+          if (!Number.isInteger(row.formSeq) || row.formSeq < 1) fail('Form number must be 1 or higher.');
+          if (!row.treasurerName) fail('Treasurer name is required.');
+          if (!row.formDate) fail('Form date is required.');
+          if (row.amount !== null && (Number.isNaN(row.amount) || row.amount < 0)) fail('Invalid form total.');
+        }
+        if (table === 'FinReimburseLines') {
+          const form = state.FinReimbursements.find(item => item.id === row.reimbursementId);
+          if (!form) fail('Unknown reimbursement form.');
+          if (!Number.isInteger(row.lineNo) || row.lineNo < 1 || row.lineNo > 11) fail('Each form allows line numbers 1 to 11.');
+          if (!row.date) fail('Line date is required.');
+          if (!row.particular) fail('Particular is required.');
+          if (row.total === null || Number.isNaN(row.total) || row.total < 0) fail('Line total must be between 0 and 100000000.');
+        }
         if (table === 'Catalog') {
           if (!['Exam', 'Award'].includes(row.kind) || !row.name || (row.kind === 'Award' && !categories.includes(row.category))) fail('Invalid catalogue entry.');
           if (row.code && !/^[A-Z0-9_]{1,80}$/.test(row.code)) fail('Invalid catalogue code.');
@@ -145,6 +193,8 @@
     unique(state.Catalog, row => [row.kind, row.category, norm(row.name), norm(row.level)].join(':'), 'catalogue entry');
     unique(state.Catalog, row => row.code, 'catalogue code');
     unique(state.Awards.filter(row => row.catalogId), row => row.memberId + ':' + row.catalogId, 'member award');
+    unique(state.FinReimbursements, row => row.bookId + ':' + row.formSeq, 'finance form number');
+    unique(state.FinReimburseLines, row => row.reimbursementId + ':' + row.lineNo, 'finance line number');
     if (state.Members.some(row => /^STU-\d+$/.test(row.id) && Number(row.id.slice(4)) > state.sequence)) fail('Student sequence is behind existing IDs.');
     return state;
   }
@@ -219,8 +269,44 @@
         upsert(state, 'Attendance', Object.assign({}, previous || {}, { memberId, activityId: activity.id, present: present.has(memberId) }), context.uuid);
       });
       reconcileExams(state, activity, context.uuid);
+    } else if (request.action === 'saveFinanceBook') {
+      saveFinanceBook(state, request, context);
     } else fail('Unsupported action.');
-    return finish(state, context.actor, request.action + ':' + (table || request.activityId), context.now);
+    return finish(state, context.actor, request.action + ':' + (table || request.activityId || (request.book && request.book.id) || 'finance'), context.now);
+  }
+  function saveFinanceBook(state, request, context) {
+    const payload = request.book;
+    if (!payload || typeof payload !== 'object') fail('Finance book payload is required.');
+    const book = upsert(state, 'FinBooks', payload, context.uuid);
+    const syncChildren = (table, rows, key) => {
+      const keep = new Set();
+      rows.forEach(input => {
+        const row = upsert(state, table, Object.assign({}, input, { [key]: book.id }), context.uuid);
+        keep.add(row.id);
+      });
+      state[table] = state[table].filter(row => !(row[key] === book.id && !keep.has(row.id)));
+    };
+    syncChildren('FinIncomes', payload.incomes || [], 'bookId');
+    syncChildren('FinExpenses', payload.expenses || [], 'bookId');
+    const keepForms = new Set();
+    const keepLines = new Set();
+    (payload.reimbursements || []).forEach(formInput => {
+      const form = upsert(state, 'FinReimbursements', Object.assign({}, formInput, { bookId: book.id }), context.uuid);
+      keepForms.add(form.id);
+      (formInput.lines || []).forEach(lineInput => {
+        const line = upsert(state, 'FinReimburseLines', Object.assign({}, lineInput, { reimbursementId: form.id }), context.uuid);
+        keepLines.add(line.id);
+      });
+    });
+    state.FinReimbursements = state.FinReimbursements.filter(row => !(row.bookId === book.id && !keepForms.has(row.id)));
+    const formBooks = new Map(state.FinReimbursements.map(row => [row.id, row.bookId]));
+    state.FinReimburseLines = state.FinReimburseLines.filter(row => {
+      const formBook = formBooks.get(row.reimbursementId);
+      if (!formBook) return false;
+      if (formBook !== book.id) return true;
+      return keepLines.has(row.id);
+    });
+    return book;
   }
   function summary(state, memberId, year) {
     const activities = new Map(state.Activities.filter(row => !row.archived && yearOf(row.date) === Number(year)).map(row => [row.id, row]));
@@ -339,6 +425,13 @@
         add('Exams', state.Exams.filter(row => activityIds.has(row.activityId)));
       }
       if (selected.Attendance.size) add('Exams', state.Exams.filter(exam => exam.activityId && state.Attendance.some(attendance => selected.Attendance.has(attendance.id) && attendance.activityId === exam.activityId && attendance.memberId === exam.memberId)));
+      const bookIds = selected.FinBooks;
+      if (bookIds.size) {
+        add('FinIncomes', state.FinIncomes.filter(row => bookIds.has(row.bookId)));
+        add('FinExpenses', state.FinExpenses.filter(row => bookIds.has(row.bookId)));
+        add('FinReimbursements', state.FinReimbursements.filter(row => bookIds.has(row.bookId)));
+      }
+      if (selected.FinReimbursements.size) add('FinReimburseLines', state.FinReimburseLines.filter(row => selected.FinReimbursements.has(row.reimbursementId)));
       selected.Catalog.forEach(catalogId => {
         const catalog = state.Catalog.find(row => row.id === catalogId);
         if (!catalog) return;
@@ -351,7 +444,7 @@
     const records = {};
     tables.forEach(name => { const rows = state[name].filter(row => selected[name].has(row.id)); if (rows.length) records[name] = copy(rows); });
     const counts = Object.fromEntries(Object.entries(records).map(([name, rows]) => [name, rows.length]));
-    const label = table === 'Members' ? root.name : table === 'Activities' ? root.name : table === 'Catalog' ? root.name : root.id;
+    const label = table === 'Members' ? root.name : table === 'Activities' ? root.name : table === 'Catalog' ? root.name : table === 'FinBooks' ? root.activityName : root.id;
     return { rootTable: table, rootId: id, label, records, counts, total: Object.values(counts).reduce((sum, count) => sum + count, 0) };
   }
   function recycleDelete(original, table, id, context) {
@@ -405,7 +498,7 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey };
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

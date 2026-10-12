@@ -7,7 +7,7 @@ const { fixture } = require('../src/demo-data.js');
 function environment() {
   let serial = 0;
   const env = { actor: 'owner@gmail.com', effective: null, publicFailure: false, privateFailure: false, backupFailure: false, failWrites: false, actorCalls: 0 };
-  const values = new Map(Object.entries({ OWNER_EMAIL: 'owner@gmail.com', ADMINS: '["secretary@gmail.com"]', PRIVATE_SHEET_ID: 'private', PUBLIC_SHEET_ID: 'public', BACKUP_FOLDER_ID: 'backups', CURRENT_SLOT: '0', PUBLISHED_REVISION: '1' }));
+  const values = new Map(Object.entries({ OWNER_EMAIL: 'owner@gmail.com', ADMINS: '["secretary@gmail.com"]', ADMIN_EMAILS: '["secretary@gmail.com"]', TREASURER_EMAILS: '["treasurer@gmail.com"]', PRIVATE_SHEET_ID: 'private', PUBLIC_SHEET_ID: 'public', BACKUP_FOLDER_ID: 'backups', CURRENT_SLOT: '0', PUBLISHED_REVISION: '1' }));
   const properties = { getProperty: key => values.has(key) ? values.get(key) : null, setProperty: (key, value) => values.set(key, String(value)), deleteProperty: key => values.delete(key), setProperties: data => Object.entries(data).forEach(([key, value]) => values.set(key, String(value))) };
   const sheet = () => {
     let rows = [];
@@ -63,7 +63,38 @@ test('secretary can read and save but cannot authorise administrators, restore o
   const saved = sandbox.rpc({ action: 'save', table: 'Members', row: { ...initial.Members[0], name: 'Secretary edit' }, year: 2026, revision: 1 });
   assert.equal(saved.ok, true);
   assert.equal(saved.data.state.Members[0].name, 'Secretary edit');
-  for (const action of ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
+  for (const action of ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash']) assert.match(sandbox.rpc({ action }).error, /Only the owner/);
+});
+test('treasurer can bootstrap and save finance but cannot edit members or list backups', () => {
+  const { env, sandbox, initial } = environment(); env.actor = 'treasurer@gmail.com';
+  const boot = sandbox.rpc({ action: 'bootstrap' });
+  assert.equal(boot.ok, true);
+  assert.equal(boot.data.user.treasurer, true);
+  assert.equal(boot.data.user.admin, false);
+  const finance = sandbox.rpc({
+    action: 'saveFinanceBook',
+    revision: boot.data.state.revision,
+    book: { id: '', version: 0, activityName: 'Chess 2026', incomes: [], expenses: [], reimbursements: [] }
+  });
+  assert.equal(finance.ok, true);
+  assert.ok(finance.data.state.FinBooks.some(row => row.activityName === 'Chess 2026'));
+  const memberSave = sandbox.rpc({ action: 'save', table: 'Members', row: { ...initial.Members[0], name: 'Nope' }, year: 2026, revision: finance.data.state.revision });
+  assert.equal(memberSave.ok, false);
+  assert.match(memberSave.error, /Administrator access/);
+  assert.equal(sandbox.rpc({ action: 'listBackups' }).ok, false);
+});
+test('secretary cannot open finance workspace actions', () => {
+  const { env, sandbox } = environment(); env.actor = 'secretary@gmail.com';
+  const boot = sandbox.rpc({ action: 'bootstrap' });
+  const finance = sandbox.rpc({ action: 'saveFinanceBook', revision: boot.data.state.revision, book: { id: '', version: 0, activityName: 'Nope', incomes: [], expenses: [], reimbursements: [] } });
+  assert.equal(finance.ok, false);
+  assert.match(finance.error, /Treasurer access/);
+});
+test('stranger still cannot access the workspace', () => {
+  const { env, sandbox } = environment(); env.actor = 'stranger@gmail.com';
+  const response = sandbox.rpc({ action: 'bootstrap' });
+  assert.equal(response.ok, false);
+  assert.match(response.error, /not an administrator or treasurer/i);
 });
 test('secretary can preview and apply recommended system setup with a safety backup', () => {
   const { env, sandbox, privateBook, files } = environment(); env.actor = 'secretary@gmail.com';

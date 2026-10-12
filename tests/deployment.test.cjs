@@ -10,9 +10,9 @@ const read = name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
 test('built admin page embeds literal scripts without unresolved placeholders', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: path.join(__dirname, '..') });
   const html = read('build/apps-script/admin/Admin.html');
-  assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|TRANSPORT|ADMIN)__/.test(html), false);
+  assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|FINANCETPL|FINANCEWB|FINANCEPDF|TRANSPORT|ADMIN)__/.test(html), false);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-  assert.equal(scripts.length, 5);
+  assert.equal(scripts.length, 8);
   for (const script of scripts) assert.doesNotThrow(() => new vm.Script(script));
   assert.equal(scripts[0], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
 });
@@ -33,7 +33,7 @@ test('public website uses credential-free CORS instead of JSONP', () => {
   assert.doesNotMatch(source, /createElement\('script'\)/);
 });
 test('source JavaScript and Apps Script compile; vendored Excel library checksum matches', () => {
-  for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'demo-transport.js', 'transport.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);
+  for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'demo-transport.js', 'transport.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);
   for (const project of ['admin', 'public']) assert.doesNotThrow(() => new vm.Script(read('apps-script/' + project + '/Code.gs')), project);
   assert.equal(crypto.createHash('sha256').update(read('vendor/xlsx.full.min.js')).digest('hex'), read('vendor/SHA256.txt').trim());
 });

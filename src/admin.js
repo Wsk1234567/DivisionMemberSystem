@@ -2,7 +2,14 @@
   'use strict';
   const byId = id => document.getElementById(id);
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const nav = [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']];
+  const nav = {
+    treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
+    admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
+    owner: [['Owner', 'Owner access'], ['Settings', 'General settings']]
+  };
+  const workspaceNav = mode => nav[mode] || nav.admin;
+  const titles = Object.fromEntries(Object.values(nav).flat().map(([key, label]) => [key, label]));
+  const workspaceTitles = mode => Object.fromEntries(workspaceNav(mode));
   const phases = [
     { title: '学生名单进入系统', owner: 'Secretary', goal: '先把学生名单安全地放进系统。', steps: ['在 Excel 的 Members sheet 填写 name 和 sjamId；sjamId 可以暂时留空。', 'id、version 和 status 留空，系统会自动建立内部 ID，并设为 Active。', '先按 Preview Import 检查，再按 Confirm Import 正式加入资料。'] },
     { title: '补完整学生资料', owner: 'Owner & Secretary', goal: '名单确认后，再慢慢补齐个人资料。', steps: ['补上 ic、race、form、joined 和正确的 status。', '不需要一次填完，空白资料以后仍然可以补上。', '补资料时使用系统内部 id，原本的历史记录不会断开。'] },
@@ -12,7 +19,6 @@
     { title: '奖项、权限、备份与正式使用', owner: 'Owner', goal: '完成最后检查，再放入真实完整资料。', steps: ['整理 Awards，并检查公开页面没有 IC、证书编号或内部备注。', '确认 Owner 与 Secretary 权限，以及每日 Backup。', '完成手机、Excel 导入、同步失败和恢复测试后正式使用。'] }
   ];
   const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
-  const titles = Object.fromEntries(nav);
   const memberOptions = () => state.Members.map(row => [row.id, row.name + ' · ' + (row.sjamId || row.id)]);
   const standardOptions = (values, current) => ['', ...values, ...(current && !values.includes(current) ? [[current, current + ' (Legacy)']] : [])];
   const examOptions = () => {
@@ -33,6 +39,8 @@
   let state;
   let user;
   let admins = [];
+  let treasurers = [];
+  let workspaceMode = 'admin';
   let currentPhase = 1;
   let sync = { ok: true };
   let view = 'Overview';
@@ -46,8 +54,35 @@
   let setupDefaultsPreview;
   let backups = [];
   let busy = false;
-  byId('navigation').innerHTML = nav.map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
+  let financeDraft = null;
+  let financeReceiptFiles = [];
+  byId('navigation').innerHTML = '';
   byId('year').value = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).slice(0, 4)) || new Date().getFullYear();
+  function preferredMode() {
+    if (!user) return 'admin';
+    const hash = String(location.hash || '').replace('#', '').toLowerCase();
+    if (hash === 'treasurer' && (user.treasurer || user.owner)) return 'treasurer';
+    if (hash === 'owner' && user.owner) return 'owner';
+    if (hash === 'admin' && (user.admin || user.owner)) return 'admin';
+    if (user.owner) return 'owner';
+    if (user.treasurer && !user.admin) return 'treasurer';
+    if (user.admin) return 'admin';
+    return 'treasurer';
+  }
+  function roleLabel() {
+    if (!user) return '';
+    if (user.owner) return 'Owner';
+    if (user.admin && user.treasurer) return 'Admin · Treasurer';
+    if (user.admin) return 'Administrator';
+    if (user.treasurer) return 'Treasurer';
+    return 'Guest';
+  }
+  function renderNavigation() {
+    byId('navigation').innerHTML = workspaceNav(workspaceMode).map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
+  }
+  function applyWorkspaceTheme() {
+    document.body.dataset.mode = workspaceMode;
+  }
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
   function busyNotice(message) { byId('notice').className = 'message working'; byId('notice').innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + escape(message); }
@@ -95,6 +130,57 @@
     const rows = annualMembers().filter(match);
     return '<p class="page-intro">Enter each member’s total hours for ' + year() + '. Leave blank when the total is not known. Individual duty events will be added in a later version.</p>' + listHead('Annual Duty hours', null) + table(['Student', 'SJAM ID', 'Hours', 'Threshold', 'Actions'], paginate(rows).map(member => { const duty = state.Duty.find(row => row.memberId === member.id && row.year === year()); const hours = duty ? duty.hours : null; return [escape(member.name), escape(member.sjamId || '—'), hours === null ? '<span class="muted">Not recorded</span>' : escape(hours), pill(hours === null ? 'Pending' : hours >= 60 ? 'Efficient' : 'Below 60'), '<div class="row-tools">' + button('Enter hours', 'duty', member.id) + (duty ? deleteButton('Duty', duty.id) : '') + '</div>']; })) + pager(rows.length);
   }
+  const moneyText = value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(2) : '0.00';
+  };
+  const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' });
+  function financeList() {
+    const books = state.FinBooks.filter(match).slice().sort((first, second) => first.activityName.localeCompare(second.activityName));
+    const how = '<section class="card how-card"><h2>How to use this page</h2><ol><li><strong>Income &amp; Expenses</strong> — type all money in and money out for the activity.</li><li><strong>Reimbursement forms</strong> — each form holds up to 11 lines. A full form automatically continues on a new form.</li><li><strong>Receipts</strong> — photograph every slip, then download one PDF.</li></ol></section>';
+    return '<p class="page-intro">Enter an activity name to start a new finance record. Anyone signed in here can fill these tables; downloads match the official formats.</p>' + how + listHead('Activity finance records', null) + '<div class="section-heading"><span></span><button class="button primary" type="button" data-action="financeAddBook">Add activity</button></div>' + table(['Activity', 'Income lines', 'Expense lines', 'Reimbursement forms', 'Actions'], books.map(book => {
+      const incomes = state.FinIncomes.filter(row => row.bookId === book.id).length;
+      const expenses = state.FinExpenses.filter(row => row.bookId === book.id).length;
+      const forms = state.FinReimbursements.filter(row => row.bookId === book.id).length;
+      return [escape(book.activityName), incomes, expenses, forms, '<div class="row-tools">' + button('Open', 'financeOpenBook', book.id) + deleteButton('FinBooks', book.id) + '</div>'];
+    })) + pager(books.length);
+  }
+  function financeInput(kind, index, key, value, type, attrs) {
+    return '<input type="' + type + '" data-fin="' + kind + '" data-index="' + index + '" data-key="' + key + '" value="' + escape(value == null ? '' : value) + '" ' + (attrs || '') + '>';
+  }
+  function financeRows(kind, rows, columns) {
+    if (!rows.length) return '<p class="muted finance-empty">No rows yet. Use Add row.</p>';
+    return rows.map((row, index) => '<div class="finance-row" data-finance-row="' + kind + '" data-index="' + index + '">' + columns.map(column => '<label><span>' + escape(column.label) + '</span>' + financeInput(kind, index, column.key, row[column.key], column.type || 'text', column.attrs || '') + '</label>').join('') + '<button class="button small danger finance-remove" type="button" data-action="financeRemoveRow" data-id="' + kind + '" data-index="' + index + '" aria-label="Remove row">Remove</button></div>').join('');
+  }
+  function financeFormBlock(form, formIndex) {
+    const lines = form.lines || [];
+    const total = lines.reduce((sum, line) => sum + (Number(line.total) || 0), 0);
+    return '<section class="card finance-form-card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Form ' + form.formSeq + '</div><h2>Reimbursement ' + escape(form.purpose || 'Line items') + '</h2></div><div class="toolbar">' + button('Download form', 'financeDownloadForm', String(formIndex)) + button('Remove form', 'financeRemoveForm', String(formIndex), '') + '</div></div><div class="form-grid finance-form-meta">' + '<div class="field"><label>Treasurer name</label>' + financeInput('form' + formIndex, 0, 'treasurerName', form.treasurerName, 'text', 'required') + '</div>' + '<div class="field"><label>Form date</label>' + financeInput('form' + formIndex, 0, 'formDate', form.formDate, 'date') + '</div>' + '<div class="field"><label>Purpose / Event</label>' + financeInput('form' + formIndex, 0, 'purpose', form.purpose, 'text') + '</div>' + '<div class="field"><label>Cheque No (optional)</label>' + financeInput('form' + formIndex, 0, 'chequeNo', form.chequeNo, 'text') + '</div>' + '</div><p class="hint">Up to 11 lines per form. When the 11th line is filled, use <strong>Add form</strong> for the rest.</p><div class="section-heading"><h3 style="margin:0">Lines · ' + lines.length + '/11 · Total RM ' + moneyText(total) + '</h3><button class="button small" type="button" data-action="financeAddLine" data-id="' + formIndex + '">Add line</button></div>' + financeRows('line' + formIndex, lines, [
+      { label: 'Date', key: 'date', type: 'date' },
+      { label: 'Invoice No', key: 'invoiceNo', type: 'text' },
+      { label: 'Particular', key: 'particular', type: 'text' },
+      { label: 'Total (MYR)', key: 'total', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' }
+    ]) + '</section>';
+  }
+  function financeEditor() {
+    const book = financeDraft;
+    const incomeTotal = book.incomes.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+    const expenseTotal = book.expenses.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+    const files = financeReceiptFiles;
+    const how = '<section class="card how-card"><h2>How to do this</h2><ol><li>Type the activity name, then save.</li><li>Fill Income &amp; Expenses — one row per receipt or payment.</li><li>Create a reimbursement form in your name as Organizing Treasurer; add invoice lines (max 11 per form).</li><li>Photograph slips and download the receipt PDF.</li></ol></section>';
+    return '<div class="section-heading"><div><div class="eyebrow">Organizing Treasurer</div><h2 style="margin:0">' + escape(book.activityName || 'New activity') + '</h2></div><div class="toolbar">' + button('Back to list', 'financeBack') + '<button class="button primary" type="button" data-action="financeSave">Save</button></div></div>' + how + '<section class="card"><div class="field full"><label for="finance-activity-name">Activity name</label><input id="finance-activity-name" type="text" data-fin="book" data-index="0" data-key="activityName" value="' + escape(book.activityName) + '" maxlength="200" placeholder="e.g. Badminton Competition 2026"></div></section>' +
+      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 1</div><h2 style="margin:0">Income &amp; Expenses</h2></div><div class="toolbar"><button class="button small" type="button" data-action="financeAddIncome">Add income</button><button class="button small" type="button" data-action="financeAddExpense">Add expense</button>' + button('Download Excel', 'financeDownloadIE') + '</div></div>' +
+      '<h3>Income · RM ' + moneyText(incomeTotal) + '</h3>' + financeRows('income', book.incomes, [{ label: 'Date', key: 'date', type: 'date' }, { label: 'Description', key: 'description', type: 'text' }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' }]) +
+      '<h3 style="margin-top:20px">Expenditure · RM ' + moneyText(expenseTotal) + '</h3>' + financeRows('expense', book.expenses, [{ label: 'Date', key: 'date', type: 'date' }, { label: 'Item', key: 'item', type: 'text' }, { label: 'Description', key: 'description', type: 'text' }, { label: 'Quantity', key: 'quantity', type: 'text' }, { label: 'Cost per unit (RM)', key: 'unitCost', type: 'text' }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' }]) +
+      '</section>' +
+      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 2</div><h2 style="margin:0">Reimbursement forms</h2></div><button class="button small" type="button" data-action="financeAddForm">Add form</button></div>' +
+      (book.reimbursements.length ? book.reimbursements.map((form, index) => financeFormBlock(form, index)).join('') : '<p class="muted">No forms yet.</p>') +
+      '</section>' +
+      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 3</div><h2 style="margin:0">Soft copy receipts</h2></div><div class="toolbar"><label class="button" for="finance-receipts">Add photos<input id="finance-receipts" type="file" accept="image/*" multiple hidden></label><button class="button primary" type="button" data-action="financeDownloadReceipts"' + (files.length ? '' : ' disabled') + '>Download PDF</button></div></div>' +
+      '<p class="hint">' + files.length + ' photo(s) selected. Photos are used only to build the PDF on this device; they are not uploaded to the public site.</p>' +
+      (files.length ? '<div class="receipt-grid">' + files.map((file, index) => '<figure><img alt="' + escape(file.name) + '" src="' + escape(file.preview || '') + '"><figcaption>' + escape(file.name) + '</figcaption><button class="button small" type="button" data-action="financeRemoveReceipt" data-id="' + index + '">Remove</button></figure>').join('') + '</div>' : '') +
+      '</section>';
+  }
   function awardList() {
     const rows = state.Awards.filter(match).sort((first, second) => second.date.localeCompare(first.date));
     const eligibility = KPT.awardEligibility(state);
@@ -139,20 +225,48 @@
     return '<p class="page-intro">Owner 删除的资料会先放在这里。Restore 会恢复整组关联资料；Permanently delete 无法从系统恢复，但执行前会自动建立私人 Backup。</p>' + (user.owner ? table(['Deleted record', 'Deleted at', 'Deleted by', 'Included records', 'Actions'], rows.map(row => [escape(row.rootTable + ' · ' + row.label), escape(new Date(row.deletedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(Object.entries(row.counts || {}).map(([name, count]) => name + ': ' + count).join(' · ')), '<div class="row-tools">' + button('Restore', 'restoreTrash', row.id) + button('Permanently delete', 'purgeTrash', row.id) + '</div>'])) : '<div class="card"><p class="muted">Only the Owner can view and manage deleted records.</p></div>');
   }
   function settingsView() {
-    return '<div class="grid-two"><section class="card"><h2>Your administrator access</h2><p><strong>' + escape(user.email) + '</strong><br><small>' + (user.owner ? 'Owner' : 'Administrator') + '</small></p><p class="muted">Both administrators can maintain everyday records. Only the owner can authorise administrators and restore a full backup.</p>' + (user.owner ? '<form id="admin-access-form"><div class="field"><label for="admin-emails">Administrator Gmail addresses, one per line</label><textarea id="admin-emails">' + escape(admins.join('\n')) + '</textarea></div><button class="button primary" type="submit" style="margin-top:12px">Save administrator access</button></form>' : '') + '</section><section class="card"><h2>Private backups</h2><p class="muted">Daily backups keep the latest 30 copies. Import and restore create an additional safety copy before changing data.</p><div class="toolbar">' + button('Back up now', 'backup') + button('Refresh backup list', 'listBackups') + (user.owner ? button('Enable daily backup', 'installBackup') : '') + '</div><div id="backup-list" style="margin-top:18px"></div></section></div><section class="card" style="margin-top:24px"><h2>Public directory sync</h2><p class="muted">Only the approved public fields are copied to the member directory. If a publish fails, private records remain saved and you can retry.</p>' + button('Retry public update', 'retrySync') + '<p class="sync-line">Private revision: ' + state.revision + ' · Last saved: ' + escape(state.updatedAt ? new Date(state.updatedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'No changes yet') + '</p></section>';
+    const demoSwitch = window.KPTTransport.demo && user && user.owner ? '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Preview role switch</div><h2>Try another workspace</h2><p class="muted">Preview only. Helps you see Treasurer / Admin / Owner shells.</p><div class="toolbar">' + button('Owner shell', 'demoRole', 'owner') + button('Admin shell', 'demoRole', 'admin') + button('Treasurer shell', 'demoRole', 'treasurer') + '</div></section>' : '';
+    const accessCard = user.owner ? '' : '<section class="card"><h2>Access</h2><p class="muted">You are signed in as ' + escape(roleLabel()) + '. Ask the Owner if a workspace is missing.</p></section>';
+    return demoSwitch + accessCard + '<div class="grid-two"><section class="card"><h2>Your account</h2><p><strong>' + escape(user.email) + '</strong><br><small>' + escape(roleLabel()) + '</small></p><p class="muted">Treasurer work and Admin work use separate allow lists maintained by the Owner.</p></section><section class="card"><h2>Private backups</h2><p class="muted">Daily backups keep the latest 30 copies. Import and restore create an additional safety copy before changing data.</p><div class="toolbar">' + (user.admin || user.owner ? button('Back up now', 'backup') + button('Refresh backup list', 'listBackups') : '') + (user.owner ? button('Enable daily backup', 'installBackup') : '') + '</div><div id="backup-list" style="margin-top:18px"></div></section></div>' + (user.admin || user.owner ? '<section class="card" style="margin-top:24px"><h2>Public directory sync</h2><p class="muted">Only the approved public fields are copied to the member directory. If a publish fails, private records remain saved and you can retry.</p>' + (user.admin || user.owner ? button('Retry public update', 'retrySync') : '') + '<p class="sync-line">Private revision: ' + state.revision + ' · Last saved: ' + escape(state.updatedAt ? new Date(state.updatedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'No changes yet') + '</p></section>' : '');
+  }
+  function ownerAccessView() {
+    if (!user.owner) return '<div class="card"><p class="muted">Only the Owner can manage access.</p></div>';
+    return '<p class="page-intro">Set who works as Secretary (Admin Work) and who works as Organizing Treasurer (Treasurer Work). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
   }
   function render() {
     if (!state) return;
-    byId('page-title').textContent = titles[view];
+    renderNavigation();
+    applyWorkspaceTheme();
+    const modeTitles = workspaceTitles(workspaceMode);
+    byId('page-title').textContent = modeTitles[view] || titles[view] || view;
     document.querySelectorAll('[data-nav]').forEach(element => { element.classList.toggle('active', element.dataset.nav === view); element.setAttribute('aria-current', element.dataset.nav === view ? 'page' : 'false'); });
-    const views = { Overview: overview, Phase: phaseView, Members: memberList, Activities: activityList, Exams: examList, Duty: dutyList, Awards: awardList, Data: dataList, Setup: setupView, Import: importView, Trash: trashView, Settings: settingsView };
-    byId('content').innerHTML = views[view]();
+    const views = {
+      Overview: overview,
+      Phase: phaseView,
+      Members: memberList,
+      Activities: activityList,
+      Finance: () => (financeDraft ? financeEditor() : financeList()),
+      Exams: examList,
+      Duty: dutyList,
+      Awards: awardList,
+      Data: dataList,
+      Setup: setupView,
+      Import: importView,
+      Trash: trashView,
+      Owner: ownerAccessView,
+      Settings: settingsView
+    };
+    if (!workspaceNav(workspaceMode).some(([key]) => key === view)) {
+      view = workspaceNav(workspaceMode)[0][0];
+      byId('page-title').textContent = workspaceTitles(workspaceMode)[view];
+    }
+    byId('content').innerHTML = views[view] ? views[view]() : '';
     byId('sync-notice').hidden = sync.ok;
     byId('sync-notice').innerHTML = sync.ok ? '' : 'Private data is saved. The public directory is awaiting an update. ' + button('Retry', 'retrySync');
     if (view === 'Settings' && backups.length) renderBackups();
     if (view === 'Import' && importPreview) renderImport();
   }
-  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…' };
+  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…' };
   async function call(request, label) {
     if (busy) throw new Error('Please wait for the current operation.');
     busy = true;
@@ -164,18 +278,25 @@
     const response = await call({ action: 'bootstrap' }, 'Loading records…');
     state = response.state;
     user = response.user;
+    user.admin = user.admin != null ? !!user.admin : !!user.owner;
+    user.treasurer = user.treasurer != null ? !!user.treasurer : !!user.owner;
+    user.roles = user.roles || [user.owner ? 'owner' : null, user.admin ? 'admin' : null, user.treasurer ? 'treasurer' : null].filter(Boolean);
     sync = response.sync;
     admins = response.admins || [];
+    treasurers = response.treasurers || [];
     currentPhase = response.currentPhase || 1;
+    workspaceMode = preferredMode();
+    if (workspaceMode === 'treasurer') view = 'Finance';
+    else if (workspaceMode === 'owner') view = 'Owner';
     byId('account').textContent = user.email;
-    byId('role').textContent = user.owner ? 'Owner' : 'Administrator';
+    byId('role').textContent = roleLabel();
     byId('demo-banner').hidden = !window.KPTTransport.demo;
     const publicUrl = window.KPTTransport.publicUrl || '';
     if (/^https:\/\/[\w.-]+\.github\.io\//.test(publicUrl) || window.KPTTransport.demo) byId('public-link').href = publicUrl || 'index.html';
     else byId('public-link').hidden = true;
     render();
   }
-  function applySave(response) { state = response.state; sync = response.sync || sync; importPreview = null; importFile = null; setupDefaultsPreview = null; render(); notice(response.unchanged ? 'No changes to import.' : 'Records saved.' + (sync.ok ? ' Public directory is up to date.' : ' Public update needs a retry.')); }
+  function applySave(response) { state = response.state; sync = response.sync || sync; importPreview = null; importFile = null; setupDefaultsPreview = null; if (financeDraft && financeDraft.id) { const saved = state.FinBooks.find(row => row.id === financeDraft.id); if (saved) financeDraft.id = saved.id; } render(); notice(response.unchanged ? 'No changes to import.' : 'Records saved.' + (sync.ok ? ' Public directory is up to date.' : ' Public update needs a retry.')); }
   function options(values, selected) { return values.map(value => { const pair = Array.isArray(value) ? value : [value, value || 'None']; return '<option value="' + escape(pair[0]) + '"' + (String(pair[0]) === String(selected || '') ? ' selected' : '') + '>' + escape(pair[1]) + '</option>'; }).join(''); }
   function fieldControl(definition, row) {
     const [key, label, initialType, required] = definition;
@@ -250,7 +371,127 @@
     if (name === 'detail') { openDetail(id); return; }
     if (name === 'recordEligible') { const [memberId, catalogId] = id.split('|'); openEditor('Awards', '', { memberId, catalogId, date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }) }); return; }
     if (name === 'duty') { const existing = state.Duty.find(row => row.memberId === id && row.year === year()); openEditor('Duty', existing && existing.id, { memberId: id, year: year(), hours: '' }); return; }
+    if (name === 'demoRole') {
+      if (!window.KPTTransport.demo) return;
+      await window.KPTTransport.setDemoRole(id);
+      await refresh();
+      notice('Preview role: ' + id);
+      return;
+    }
     if (name === 'enrolment') { openEditor('Enrolments', '', { memberId: id, year: year() }); return; }
+    if (name === 'financeAddBook') {
+      financeDraft = { id: '', version: 0, activityName: '', incomes: [], expenses: [], reimbursements: [] };
+      financeReceiptFiles = [];
+      view = 'Finance';
+      render();
+      notice('Enter the activity name, then Save.');
+      return;
+    }
+    if (name === 'financeOpenBook') {
+      const book = state.FinBooks.find(row => row.id === id);
+      if (!book) throw new Error('Finance record not found. Reload data.');
+      financeDraft = {
+        id: book.id,
+        version: book.version,
+        activityName: book.activityName,
+        incomes: state.FinIncomes.filter(row => row.bookId === id).map(row => KPT.copy(row)),
+        expenses: state.FinExpenses.filter(row => row.bookId === id).map(row => KPT.copy(row)),
+        reimbursements: state.FinReimbursements.filter(row => row.bookId === id).map(row => Object.assign(KPT.copy(row), { lines: state.FinReimburseLines.filter(line => line.reimbursementId === row.id).map(line => KPT.copy(line)) }))
+      };
+      financeReceiptFiles = [];
+      view = 'Finance';
+      render();
+      notice('Finance record loaded. Edits stay local until you press Save.');
+      return;
+    }
+    if (name === 'financeBack') { financeDraft = null; financeReceiptFiles = []; render(); return; }
+    if (name === 'financeSave') {
+      if (!financeDraft) return;
+      if (!financeDraft.activityName) throw new Error('Enter an activity name before saving.');
+      financeDraft.reimbursements.forEach((form, index) => {
+        form.formSeq = index + 1;
+        if (!form.treasurerName) throw new Error('Form ' + form.formSeq + ': treasurer name is required.');
+        if (!form.formDate) form.formDate = today();
+        if (!form.purpose) form.purpose = financeDraft.activityName;
+        form.amount = form.lines.reduce((sum, line) => sum + (Number(line.total) || 0), 0);
+        form.lines.forEach((line, lineIndex) => {
+          line.lineNo = lineIndex + 1;
+          if (!line.date) throw new Error('Form ' + form.formSeq + ': every line needs a date.');
+          if (!line.particular) throw new Error('Form ' + form.formSeq + ': every line needs a particular.');
+        });
+      });
+      financeDraft.incomes.forEach(row => { if (!row.date) row.date = today(); if (!row.description) throw new Error('Each income row needs a description.'); });
+      financeDraft.expenses.forEach(row => { if (!row.date) row.date = today(); if (!row.item && !row.description) throw new Error('Each expense row needs an item or description.'); });
+      const knownIds = new Set(state.FinBooks.map(row => row.id));
+      const response = await call({ action: 'saveFinanceBook', revision: state.revision, book: financeDraft });
+      state = response.state;
+      sync = response.sync || sync;
+      const saved = (financeDraft.id && state.FinBooks.find(row => row.id === financeDraft.id))
+        || state.FinBooks.find(row => !knownIds.has(row.id) && row.activityName === financeDraft.activityName)
+        || state.FinBooks.find(row => row.activityName === financeDraft.activityName);
+      if (saved) {
+        financeDraft.id = saved.id;
+        financeDraft.version = saved.version;
+        financeDraft.incomes = state.FinIncomes.filter(row => row.bookId === saved.id).map(row => KPT.copy(row));
+        financeDraft.expenses = state.FinExpenses.filter(row => row.bookId === saved.id).map(row => KPT.copy(row));
+        financeDraft.reimbursements = state.FinReimbursements.filter(row => row.bookId === saved.id).map(row => Object.assign(KPT.copy(row), { lines: state.FinReimburseLines.filter(line => line.reimbursementId === row.id).map(line => KPT.copy(line)) }));
+      }
+      render();
+      notice('Finance record saved.');
+      return;
+    }
+    if (name === 'financeAddIncome') { financeDraft.incomes.push({ id: '', version: 0, date: today(), description: '', amount: '' }); render(); return; }
+    if (name === 'financeAddExpense') { financeDraft.expenses.push({ id: '', version: 0, date: today(), item: '', description: '', quantity: '', unitCost: '', amount: '' }); render(); return; }
+    if (name === 'financeAddForm') {
+      financeDraft.reimbursements.push({
+        id: '', version: 0, formSeq: financeDraft.reimbursements.length + 1,
+        treasurerName: financeDraft.reimbursements[financeDraft.reimbursements.length - 1]?.treasurerName || '',
+        formDate: today(), purpose: financeDraft.activityName, chequeNo: '', amount: '', lines: []
+      });
+      render();
+      notice('New form added. Each form holds up to 11 lines.');
+      return;
+    }
+    if (name === 'financeAddLine') {
+      const form = financeDraft.reimbursements[Number(id)];
+      if (!form) return;
+      if (form.lines.length >= 11) { notice('This form is full (11 lines). Use Add form for the rest.', true); return; }
+      form.lines.push({ id: '', version: 0, lineNo: form.lines.length + 1, date: today(), invoiceNo: '', particular: '', total: '' });
+      render();
+      return;
+    }
+    if (name === 'financeRemoveRow') {
+      const kind = id;
+      const index = Number(element.dataset.index);
+      if (kind === 'income') financeDraft.incomes.splice(index, 1);
+      else if (kind === 'expense') financeDraft.expenses.splice(index, 1);
+      else if (kind.startsWith('line')) financeDraft.reimbursements[Number(kind.slice(4))].lines.splice(index, 1);
+      render();
+      return;
+    }
+    if (name === 'financeRemoveForm') { financeDraft.reimbursements.splice(Number(id), 1); financeDraft.reimbursements.forEach((form, index) => { form.formSeq = index + 1; }); render(); return; }
+    if (name === 'financeDownloadIE') {
+      if (!financeDraft.activityName) throw new Error('Enter an activity name first.');
+      await KPTFinanceWorkbook.downloadIncomeExpenses(financeDraft);
+      notice('Income & Expenses Excel downloaded.');
+      return;
+    }
+    if (name === 'financeDownloadForm') {
+      const form = financeDraft.reimbursements[Number(id)];
+      if (!form) return;
+      if (!form.treasurerName) throw new Error('Enter the treasurer name on this form first.');
+      await KPTFinanceWorkbook.downloadReimbursement(Object.assign({}, form, { formSeq: Number(id) + 1 }), financeDraft.activityName);
+      notice('Reimbursement form downloaded.');
+      return;
+    }
+    if (name === 'financeDownloadReceipts') {
+      const files = financeReceiptFiles.map(row => row.file);
+      if (!files.length) throw new Error('Add receipt photos first.');
+      await KPTFinancePdf.downloadReceiptPdf(files, financeDraft.activityName);
+      notice('Receipt PDF downloaded.');
+      return;
+    }
+    if (name === 'financeRemoveReceipt') { financeReceiptFiles.splice(Number(id), 1); render(); return; }
     if (name === 'previous') { page = Math.max(0, page - 1); render(); return; }
     if (name === 'next') { if ((page + 1) * 40 < Number(id)) page++; render(); return; }
     if (name === 'selectAll' || name === 'clearAll') { document.querySelectorAll('#attendance-form input[name="present"]').forEach(input => { input.checked = name === 'selectAll'; }); return; }
@@ -358,13 +599,42 @@
   byId('year').addEventListener('change', () => { if (!Number.isInteger(year()) || year() < 1900 || year() > 2200) { notice('Choose a year between 1900 and 2200.', true); return; } page = 0; render(); });
   document.addEventListener('input', event => {
     if (event.target.id === 'filter') { const cursor = event.target.selectionStart; query = event.target.value; page = 0; render(); byId('filter').focus(); byId('filter').setSelectionRange(cursor, cursor); }
+    const fin = event.target.dataset && event.target.dataset.fin;
+    if (!fin || !financeDraft) return;
+    const key = event.target.dataset.key;
+    const value = event.target.value;
+    if (fin === 'book') { financeDraft[key] = value; return; }
+    if (fin === 'income') { financeDraft.incomes[Number(event.target.dataset.index)][key] = value; return; }
+    if (fin === 'expense') { financeDraft.expenses[Number(event.target.dataset.index)][key] = value; return; }
+    if (fin.startsWith('form')) {
+      const form = financeDraft.reimbursements[Number(fin.slice(4))];
+      if (form) form[key] = value;
+      return;
+    }
+    if (fin.startsWith('line')) {
+      const form = financeDraft.reimbursements[Number(fin.slice(4))];
+      if (form) form.lines[Number(event.target.dataset.index)][key] = value;
+    }
   });
   document.addEventListener('change', event => {
     if (dialogTable === 'Exams' && ['field-activityId', 'field-memberId'].includes(event.target.id)) updateExamLink();
     if (event.target.id === 'excel-file') { importPreview = null; importFile = null; if (byId('import-preview')) byId('import-preview').innerHTML = ''; }
+    if (event.target.id === 'finance-receipts') {
+      const chosen = [...event.target.files];
+      Promise.all(chosen.map(file => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ file, name: file.name, preview: reader.result });
+        reader.onerror = () => reject(new Error('Could not read ' + file.name));
+        reader.readAsDataURL(file);
+      }))).then(items => {
+        financeReceiptFiles = financeReceiptFiles.concat(items);
+        render();
+        notice(items.length + ' receipt photo(s) added.');
+      }).catch(error => notice(error.message, true));
+    }
   });
   document.addEventListener('submit', async event => {
-    if (!['record-form', 'attendance-form', 'admin-access-form'].includes(event.target.id)) return;
+    if (!['record-form', 'attendance-form', 'admin-access-form', 'access-form'].includes(event.target.id)) return;
     event.preventDefault();
     if (busy) return;
     const submit = event.target.querySelector('button[type="submit"]');
@@ -386,8 +656,19 @@
         const all = [...event.target.querySelectorAll('[name="present"]')];
         const response = await call({ action: 'attendance', activityId: event.target.dataset.id, rosterIds: all.map(input => input.value), presentIds: all.filter(input => input.checked).map(input => input.value), revision: dialogRevision });
         byId('editor').close(); applySave(response);
+      } else if (event.target.id === 'access-form') {
+        const result = await call({
+          action: 'setAccess',
+          admins: byId('admin-emails').value.split(/\s+/).filter(Boolean),
+          treasurers: byId('treasurer-emails').value.split(/\s+/).filter(Boolean)
+        });
+        admins = result.admins || [];
+        treasurers = result.treasurers || [];
+        render();
+        notice('Access lists saved.');
       } else {
-        admins = await call({ action: 'setAdmins', emails: byId('admin-emails').value.split(/\s+/).filter(Boolean) });
+        const result = await call({ action: 'setAdmins', emails: byId('admin-emails').value.split(/\s+/).filter(Boolean) });
+        admins = Array.isArray(result) ? result : (result.admins || []);
         render(); notice('Administrator access updated.');
       }
     } catch (error) { if (byId('editor').open) byId('editor-message').textContent = error.message; else notice(error.message, true); }

@@ -3,23 +3,34 @@ function configuration_() {
   const props = properties_();
   const owner = String(props.getProperty('OWNER_EMAIL') || '').trim().toLowerCase();
   if (!owner) throw new Error('Owner has not configured the application.');
-  return { owner, admins: JSON.parse(props.getProperty('ADMINS') || '[]'), privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID') };
+  const admins = JSON.parse(props.getProperty('ADMINS') || props.getProperty('ADMIN_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
+  const treasurers = JSON.parse(props.getProperty('TREASURER_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
+  return { owner, admins, treasurers, privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID') };
 }
-function identity_(ownerOnly) {
+function identity_(ownerOnly, requireAccess) {
   const config = configuration_();
-  const email = String(Session.getActiveUser().getEmail() || '').toLowerCase();
-  const effective = String(Session.getEffectiveUser().getEmail() || '').toLowerCase();
+  const email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  const effective = String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
   if (!email || email !== effective) throw new Error('Sign in using the authorised Google account. Deploy Admin as User accessing the web app.');
-  if (email !== config.owner && !config.admins.includes(email)) throw new Error('Access denied. This Google account is not an administrator.');
-  if (ownerOnly && email !== config.owner) throw new Error('Only the owner can perform this action.');
-  return { email, owner: email === config.owner, config };
+  const isOwner = email === config.owner;
+  const isAdmin = config.admins.includes(email);
+  const isTreasurer = config.treasurers.includes(email);
+  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer) throw new Error('Access denied. This Google account is not an administrator or treasurer.');
+  if (ownerOnly && !isOwner) throw new Error('Only the owner can perform this action.');
+  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, config };
+}
+function requireFinance_(actor) {
+  if (!actor.owner && !actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
+}
+function requireAdmin_(actor) {
+  if (!actor.owner && !actor.admin) throw new Error('Access denied. Administrator access is required.');
 }
 function doGet() {
   try {
-    identity_(false);
+    identity_(false, true);
     return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
-    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised administrator account. If this is your first visit, complete the Google authorisation.</p>');
+    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised Google account. You need Treasurer, Administrator, or Owner access.</p>');
   }
 }
 function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
@@ -98,20 +109,42 @@ function listBackups_() {
 function bootstrap_(actor) {
   const state = loadState_();
   const currentPhase = Number(properties_().getProperty('CURRENT_PHASE') || 1);
-  return { state, user: { email: actor.email, owner: actor.owner }, sync: { ok: properties_().getProperty('SYNC_PENDING') === null, revision: Number(properties_().getProperty('PUBLISHED_REVISION') || -1) }, admins: actor.owner ? actor.config.admins : [], currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1 };
+  return {
+    state,
+    user: {
+      email: actor.email,
+      owner: actor.owner,
+      admin: actor.admin,
+      treasurer: actor.treasurer,
+      roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null].filter(Boolean)
+    },
+    sync: { ok: properties_().getProperty('SYNC_PENDING') === null, revision: Number(properties_().getProperty('PUBLISHED_REVISION') || -1) },
+    admins: actor.owner ? actor.config.admins : [],
+    treasurers: actor.owner ? actor.config.treasurers : [],
+    currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1
+  };
 }
 function rpc(request) {
   try {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
-    const ownerActions = ['restore', 'setAdmins', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash'];
-    let actor = identity_(ownerActions.includes(request.action));
-    if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false)) }));
-    if (request.action === 'listBackups') return { ok: true, data: listBackups_() };
+    const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash'];
+    const adminOnlyActions = ['previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults'];
+    const financeActions = ['saveFinanceBook'];
+    const memberDataActions = ['save', 'attendance'];
+    if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false, true)) }));
+    if (request.action === 'listBackups') {
+      const listActor = identity_(false, true);
+      requireAdmin_(listActor);
+      return { ok: true, data: listBackups_() };
+    }
     return withLock_(() => {
-      actor = identity_(ownerActions.includes(request.action));
+      const actor = identity_(ownerOnlyActions.includes(request.action), true);
+      if (adminOnlyActions.includes(request.action)) requireAdmin_(actor);
+      if (financeActions.includes(request.action)) requireFinance_(actor);
+      if (memberDataActions.includes(request.action)) requireAdmin_(actor);
       const state = loadState_();
       const context = context_(actor.email);
-      if (['save', 'attendance'].includes(request.action)) {
+      if (['save', 'attendance', 'saveFinanceBook'].includes(request.action)) {
         const next = KPT.mutate(state, request, context);
         commit_(next);
         const sync = sync_(next);
@@ -169,17 +202,22 @@ function rpc(request) {
         commit_(restored);
         return { ok: true, data: { state: restored, sync: sync_(restored) } };
       }
-      if (request.action === 'setAdmins') {
-        const emails = [...new Set(request.emails.map(value => String(value).trim().toLowerCase()))].filter(value => value !== actor.config.owner);
-        if (emails.length > 5 || emails.some(value => !/^[^\s@]+@gmail\.com$/.test(value))) throw new Error('Use at most five personal Gmail accounts.');
-        const previous = actor.config.admins;
+      if (request.action === 'setAdmins' || request.action === 'setAccess') {
+        const normalizeList = list => [...new Set((list || []).map(value => String(value).trim().toLowerCase()))].filter(value => value && value !== actor.config.owner && /^[^\s@]+@gmail\.com$/.test(value));
+        const admins = normalizeList(request.action === 'setAccess' ? request.admins : request.emails);
+        const treasurers = normalizeList(request.action === 'setAccess' ? request.treasurers : []);
+        if (admins.length > 5 || treasurers.length > 8) throw new Error('Use at most five admin Gmail accounts and eight treasurer Gmail accounts.');
+        const previous = new Set([...actor.config.admins, ...actor.config.treasurers]);
+        const nextSet = new Set([...admins, ...treasurers]);
         const privateFile = DriveApp.getFileById(actor.config.privateId);
         const publicFile = DriveApp.getFileById(actor.config.publicId);
         const folder = DriveApp.getFolderById(actor.config.backupsId);
-        previous.filter(email => !emails.includes(email)).forEach(email => { privateFile.removeEditor(email); publicFile.removeEditor(email); folder.removeEditor(email); });
-        emails.forEach(email => { privateFile.addEditor(email); publicFile.addEditor(email); folder.addEditor(email); });
-        properties_().setProperty('ADMINS', JSON.stringify(emails));
-        return { ok: true, data: emails };
+        [...previous].filter(email => !nextSet.has(email)).forEach(email => { privateFile.removeEditor(email); publicFile.removeEditor(email); folder.removeEditor(email); });
+        nextSet.forEach(email => { if (!previous.has(email)) { privateFile.addEditor(email); publicFile.addEditor(email); folder.addEditor(email); } });
+        properties_().setProperty('ADMINS', JSON.stringify(admins));
+        properties_().setProperty('ADMIN_EMAILS', JSON.stringify(admins));
+        properties_().setProperty('TREASURER_EMAILS', JSON.stringify(treasurers));
+        return { ok: true, data: { admins, treasurers } };
       }
       if (request.action === 'setCurrentPhase') {
         const phase = Number(request.phase);

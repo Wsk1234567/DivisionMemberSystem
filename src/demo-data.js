@@ -32,6 +32,21 @@
     state.revision = 1;
     state.updatedAt = endYear + '-10-01T02:00:00.000Z';
     state.audit = [{ at: state.updatedAt, actor: 'preview-owner@example.test', action: 'Fictional preview dataset', revision: 1 }];
+    state.FinBooks.push({ id: 'FIN-DEMO-1', version: 1, activityName: 'Badminton Competition ' + endYear });
+    state.FinIncomes.push(
+      { id: 'FIN-INC-1', version: 1, bookId: 'FIN-DEMO-1', date: endYear + '-08-23', description: 'Registration Fee', amount: 1075 },
+      { id: 'FIN-INC-2', version: 1, bookId: 'FIN-DEMO-1', date: endYear + '-08-24', description: 'Kedai Runcit Huat Hing', amount: 100 }
+    );
+    state.FinExpenses.push(
+      { id: 'FIN-EXP-1', version: 1, bookId: 'FIN-DEMO-1', date: endYear + '-01-12', item: 'Shuttlecock', description: 'Sea Lion', quantity: '4', unitCost: '58/tubes', amount: 232 },
+      { id: 'FIN-EXP-2', version: 1, bookId: 'FIN-DEMO-1', date: endYear + '-05-10', item: 'Food', description: 'Nasi Lemak Ayam', quantity: '29', unitCost: '6/packet', amount: 174 }
+    );
+    state.FinReimbursements.push({ id: 'FIN-RFM-1', version: 1, bookId: 'FIN-DEMO-1', formSeq: 1, treasurerName: 'Preview Treasurer', formDate: endYear + '-08-25', purpose: 'Badminton Competition ' + endYear, chequeNo: '', amount: 643.2 });
+    state.FinReimburseLines.push(
+      { id: 'FIN-RFL-1', version: 1, reimbursementId: 'FIN-RFM-1', lineNo: 1, date: endYear + '-08-20', invoiceNo: '00043194', particular: 'Printing Fee', total: 18.2 },
+      { id: 'FIN-RFL-2', version: 1, reimbursementId: 'FIN-RFM-1', lineNo: 2, date: endYear + '-08-21', invoiceNo: '665407', particular: 'Lunch', total: 525 },
+      { id: 'FIN-RFL-3', version: 1, reimbursementId: 'FIN-RFM-1', lineNo: 3, date: endYear + '-08-21', invoiceNo: '06108', particular: 'Karipap', total: 100 }
+    );
     return state;
   }
   root.KPTDemo = { fixture };
