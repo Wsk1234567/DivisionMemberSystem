@@ -284,7 +284,17 @@
     busy = true;
     document.body.setAttribute('aria-busy', 'true');
     busyNotice(label || busyLabels[request.action] || 'Working…');
-    try { return await window.KPTTransport.call(request); } finally { busy = false; document.body.removeAttribute('aria-busy'); }
+    try {
+      const result = await window.KPTTransport.call(request);
+      if (request.action === 'bootstrap') notice('Records loaded.');
+      return result;
+    } catch (error) {
+      if (!byId('editor').open) notice(error.message, true);
+      throw error;
+    } finally {
+      busy = false;
+      document.body.removeAttribute('aria-busy');
+    }
   }
   async function refresh() {
     const response = await call({ action: 'bootstrap' }, 'Loading records…');
