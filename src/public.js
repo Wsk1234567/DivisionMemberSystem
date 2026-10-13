@@ -10,6 +10,7 @@
   byId('demo-banner').hidden = !demo;
   const adminLink = byId('admin-link');
   const treasurerLink = byId('treasurer-link');
+  const loginLink = byId('login-link');
   const workspaceBase = () => {
     if (demo) return 'admin.html';
     if (approvedUrl(config.adminUrl)) return config.adminUrl;
@@ -30,6 +31,14 @@
   }
   bindWorkspaceLink(adminLink, 'admin', 'Admin access is not configured yet.');
   bindWorkspaceLink(treasurerLink, 'treasurer', 'Treasurer access is not configured yet.');
+  (function bindLogin() {
+    const base = workspaceBase();
+    if (base && loginLink) {
+      // Login goes to the signed-in workspace; OC then sees their activity (e.g. AGM (2027)) in the navbar.
+      loginLink.href = base + (base.includes('?') ? '&' : '?') + 'mode=oc';
+      loginLink.title = 'Sign in with your Gmail account';
+    }
+  })();
   byId('search-mode').addEventListener('change', () => { byId('query').placeholder = byId('search-mode').value === 'name' ? 'Enter a name' : 'Enter the complete SJAM ID'; });
   function fetchPublic() {
     if (demo) return fetch('demo-public.json', { cache: 'no-store' }).then(response => { if (!response.ok) throw new Error('Preview data could not be loaded.'); return response.json(); });

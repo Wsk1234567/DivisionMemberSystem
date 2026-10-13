@@ -4,24 +4,42 @@
   let backups = [];
   let admins = ['preview-secretary@example.test'];
   let treasurers = ['preview-treasurer@example.test'];
+  let ocs = ['preview-oc@example.test'];
   let currentPhase = 1;
   let counter = 0;
   let demoRole = 'owner';
-  const context = () => ({ actor: 'preview-owner@example.test', now: new Date().toISOString(), uuid: () => 'demo-' + ++counter });
+  let docFolders = { templates: 'demo-templates', submissions: 'demo-submissions' };
+  const demoFiles = new Map();
+  const emails = {
+    owner: 'preview-owner@example.test',
+    admin: 'preview-secretary@example.test',
+    treasurer: 'preview-treasurer@example.test',
+    oc: 'preview-oc@example.test'
+  };
+  const context = () => ({ actor: identity().email, now: new Date().toISOString(), uuid: () => 'demo-' + ++counter });
   const identity = () => ({
-    email: demoRole === 'treasurer' ? 'preview-treasurer@example.test' : demoRole === 'admin' ? 'preview-secretary@example.test' : 'preview-owner@example.test',
+    email: emails[demoRole] || emails.owner,
     owner: demoRole === 'owner',
     admin: demoRole === 'owner' || demoRole === 'admin',
     treasurer: demoRole === 'owner' || demoRole === 'treasurer',
-    roles: demoRole === 'owner' ? ['owner', 'admin', 'treasurer'] : [demoRole]
+    oc: demoRole === 'owner' || demoRole === 'admin' || demoRole === 'oc',
+    roles: demoRole === 'owner' ? ['owner', 'admin', 'treasurer', 'oc'] : [demoRole]
   });
   const copy = value => KPT.copy(value);
+  const requireDocuments = actor => { if (!(actor.owner || actor.admin || actor.oc)) throw new Error('Access denied. Documents access is required.'); };
+  const requireApprover = actor => { if (!(actor.owner || actor.admin)) throw new Error('Access denied. Only Owner or Secretary can approve documents.'); };
+  const requireOwner = actor => { if (!actor.owner) throw new Error('Only the owner can perform this action.'); };
+  function storeFile(fileName, base64) {
+    const id = 'demo-file-' + ++counter;
+    demoFiles.set(id, { fileName, contentBase64: String(base64 || 'demo'), mime: 'application/octet-stream' });
+    return id;
+  }
   function backup(reason) { const item = { id: 'backup-' + ++counter, name: 'Preview backup · ' + reason + ' · r' + state.revision, at: new Date().toISOString(), state: copy(state) }; backups.unshift(item); return item; }
   window.KPTTransport = {
     demo: true,
     publicUrl: 'index.html',
     async setDemoRole(role) {
-      if (!['owner', 'admin', 'treasurer'].includes(role)) throw new Error('Unknown demo role.');
+      if (!['owner', 'admin', 'treasurer', 'oc'].includes(role)) throw new Error('Unknown demo role.');
       demoRole = role;
       return identity();
     },
@@ -29,7 +47,9 @@
       if (!state) { const response = await fetch('demo-private.json'); if (!response.ok) throw new Error('Preview data could not be loaded.'); state = KPT.upgradeState(await response.json()); }
       await new Promise(resolve => setTimeout(resolve, 30));
       const actor = identity();
-      if (request.action === 'bootstrap') return { state: copy(state), user: actor, sync: { ok: true, revision: state.revision }, admins: copy(admins), treasurers: copy(treasurers), currentPhase };
+      if (request.action === 'bootstrap') {
+        return { state: copy(state), user: actor, sync: { ok: true, revision: state.revision }, admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs), currentPhase, docFolders: copy(docFolders) };
+      }
       if (['save', 'attendance', 'saveFinanceBook'].includes(request.action)) {
         if (request.action === 'saveFinanceBook') {
           if (!actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
@@ -37,12 +57,62 @@
         state = KPT.mutate(state, request, context());
         return { state: copy(state), sync: { ok: true, revision: state.revision } };
       }
+      const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload', 'docItemReview'];
+      if (documentActions.includes(request.action)) {
+        requireDocuments(actor);
+        if (request.action === 'docItemReview') requireApprover(actor);
+        if (request.action === 'saveDocTemplate' && !actor.owner) throw new Error('Access denied. Only the owner can manage templates.');
+        if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
+        const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload'];
+        if (packageScoped.includes(request.action)) {
+          let packageId = request.packageId || '';
+          if (!packageId && request.itemId) {
+            const item = state.DocItems.find(row => row.id === request.itemId);
+            if (item) packageId = item.packageId;
+          }
+          const pkg = packageId && state.DocPackages.find(row => row.id === packageId);
+          if (!pkg) throw new Error('Document package not found.');
+          if (!(actor.owner || actor.admin || (pkg.ocEmail && String(pkg.ocEmail).toLowerCase() === String(actor.email).toLowerCase()))) {
+            throw new Error('Access denied. You are not the Organizing Chairman for this activity.');
+          }
+        }
+        if (request.action === 'docDownload') {
+          const item = request.itemId ? state.DocItems.find(row => row.id === request.itemId) : null;
+          const template = request.templateId ? state.DocTemplates.find(row => row.id === request.templateId) : request.source === 'template' && item && item.templateId ? state.DocTemplates.find(row => row.id === item.templateId) : null;
+          const fileId = request.fileId || (template && template.fileId) || (item && item.fileId) || '';
+          const stored = demoFiles.get(fileId);
+          if (!fileId || !stored) throw new Error('No file available to download.');
+          return { fileName: stored.fileName, contentBase64: stored.contentBase64 };
+        }
+        if (request.action === 'docItemUpload' && request.fileBase64 && !request.fileId) {
+          request = Object.assign({}, request, { fileId: storeFile(request.fileName, request.fileBase64) });
+        }
+        if (request.action === 'saveDocTemplate' && request.fileBase64) {
+          request = Object.assign({}, request, { row: Object.assign({}, request.row, { fileId: storeFile(request.row.fileName, request.fileBase64) }) });
+        }
+        if (request.action === 'createDocPackage' && !request.revision) request = Object.assign({}, request, { revision: state.revision });
+        state = KPT.mutate(state, request, context());
+        if (request.action === 'createDocPackage') {
+          const created = state.DocPackages[state.DocPackages.length - 1];
+          return { state: copy(state), sync: { ok: true, revision: state.revision }, packageId: created.id };
+        }
+        if (request.action === 'saveDocTemplate') {
+          const saved = state.DocTemplates[state.DocTemplates.length - 1];
+          return { state: copy(state), sync: { ok: true, revision: state.revision }, template: copy(saved) };
+        }
+        return { state: copy(state), sync: { ok: true, revision: state.revision } };
+      }
+      if (request.action === 'initDocFolders') {
+        requireOwner(actor);
+        docFolders = { templates: 'demo-templates', submissions: 'demo-submissions' };
+        return copy(docFolders);
+      }
       if (['previewDelete', 'previewDeleteAllMembers'].includes(request.action)) {
-        if (!actor.owner) throw new Error('Only the owner can perform this action.');
+        requireOwner(actor);
         return request.action === 'previewDelete' ? KPT.recycleBundle(state, request.table, request.id) : KPT.allMembersBundle(state);
       }
       if (['deleteRecord', 'deleteAllMembers', 'restoreTrash', 'purgeTrash', 'restore', 'setAdmins', 'setAccess', 'setCurrentPhase', 'installBackup'].includes(request.action)) {
-        if (!actor.owner) throw new Error('Only the owner can perform this action.');
+        requireOwner(actor);
       }
       if (['previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults'].includes(request.action) && !actor.admin && !actor.owner) {
         throw new Error('Access denied. Administrator access is required.');
@@ -83,7 +153,8 @@
         if (request.action === 'setAccess') {
           admins = request.admins || [];
           treasurers = request.treasurers || [];
-          return { admins: copy(admins), treasurers: copy(treasurers) };
+          ocs = request.ocs || [];
+          return { admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs) };
         }
         admins = request.emails;
         return copy(admins);

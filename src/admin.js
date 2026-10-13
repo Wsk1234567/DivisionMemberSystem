@@ -4,10 +4,30 @@
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
-    admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
+    admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Documents', 'Document Packages'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
     owner: [['Owner', 'Owner access'], ['Settings', 'General settings']]
   };
-  const workspaceNav = mode => nav[mode] || nav.admin;
+  const ocNav = [];
+  const workspaceNav = mode => {
+    if (mode === 'oc') return ocNav;
+    if (mode === 'admin' && user && !user.admin && user.oc && !user.owner && !user.treasurer) return ocNav;
+    return nav[mode] || nav.admin;
+  };
+  const isOcOnly = () => !!(user && user.oc && !user.admin && !user.owner && !user.treasurer);
+  const ocPackages = () => {
+    if (!user || !state || !state.DocPackages) return [];
+    const email = String(user.email || '').toLowerCase();
+    return state.DocPackages.filter(pkg => {
+      if (pkg.archived || pkg.status === 'Archived') return false;
+      if (user.owner || user.admin) return true;
+      return String(pkg.ocEmail || '').toLowerCase() === email;
+    }).sort((a, b) => b.year - a.year || String(a.activityType).localeCompare(String(b.activityType)));
+  };
+  const canOpenPackage = pkg => {
+    if (!pkg || !user) return false;
+    if (user.owner || user.admin) return true;
+    return user.oc && String(pkg.ocEmail || '').toLowerCase() === String(user.email || '').toLowerCase();
+  };
   const titles = Object.fromEntries(Object.values(nav).flat().map(([key, label]) => [key, label]));
   const workspaceTitles = mode => Object.fromEntries(workspaceNav(mode));
   const phases = [
@@ -40,6 +60,9 @@
   let user;
   let admins = [];
   let treasurers = [];
+  let ocs = [];
+  let docFolders = { templates: '', submissions: '' };
+  let openDocPackageId = null;
   let workspaceMode = 'admin';
   let currentPhase = 1;
   let sync = { ok: true };
@@ -66,14 +89,17 @@
     if (requested === 'treasurer' && (user.treasurer || user.owner)) return 'treasurer';
     if (requested === 'owner' && user.owner) return 'owner';
     if (requested === 'admin' && (user.admin || user.owner)) return 'admin';
+    if (requested === 'oc' && user.oc) return 'oc';
     if (user.owner) return 'owner';
     if (user.treasurer && !user.admin) return 'treasurer';
     if (user.admin) return 'admin';
-    return 'treasurer';
+    if (user.oc) return 'oc';
+    return 'oc';
   }
   function modeSwitcher() {
     if (!user) return '';
     const items = [];
+    if (isOcOnly()) return '';
     if (user.owner || user.treasurer) items.push(['treasurer', 'Treasurer Work']);
     if (user.owner || user.admin) items.push(['admin', 'Admin Work']);
     if (user.owner) items.push(['owner', 'Owner']);
@@ -85,17 +111,55 @@
     if (user.owner) return 'Owner';
     if (user.admin && user.treasurer) return 'Admin · Treasurer';
     if (user.admin) return 'Administrator';
+    if (isOcOnly()) {
+      const mine = ocPackages()[0];
+      return 'Organizing Chairman' + (mine ? ' · ' + mine.activityType + ' (' + mine.year + ')' : '');
+    }
+    if (user.oc) return 'Organizing Chairman';
     if (user.treasurer) return 'Treasurer';
     return 'Guest';
   }
   function renderNavigation() {
-    byId('navigation').innerHTML = workspaceNav(workspaceMode).map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
+    const links = isOcOnly() ? '' : workspaceNav(workspaceMode).map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
+    const packageLinks = ocPackages().map(pkg => {
+      const label = pkg.activityType + ' (' + pkg.year + ')';
+      return '<button type="button" class="doc-package-link" data-action="docOpen" data-id="' + escape(pkg.id) + '" data-package="' + escape(pkg.id) + '">' + icon + escape(label) + '</button>';
+    }).join('');
+    byId('navigation').innerHTML = links + packageLinks;
+    document.querySelectorAll('[data-package]').forEach(element => {
+      element.classList.toggle('active', !!openDocPackageId && element.dataset.package === openDocPackageId);
+    });
   }
   function applyWorkspaceTheme() {
     document.body.dataset.mode = workspaceMode;
   }
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
+  function openGoogleAccountUrl(url) {
+    // HtmlService runs inside a Google iframe; accounts.google.com refuses framing.
+    // Navigate the top window, or fall back to a new tab.
+    try {
+      if (window.top && window.top !== window) window.top.location.href = url;
+      else location.href = url;
+    } catch (error) {
+      window.open(url, '_blank', 'noopener');
+    }
+  }
+  function adminSelfUrl() {
+    return /^https:\/\/script\.google\.com\//.test(location.href) ? location.href.split('?')[0] : location.href.split('#')[0];
+  }
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const data = String(reader.result || '');
+        const comma = data.indexOf(',');
+        resolve(comma >= 0 ? data.slice(comma + 1) : data);
+      };
+      reader.onerror = () => reject(new Error('Could not read ' + file.name));
+      reader.readAsDataURL(file);
+    });
+  }
   function busyNotice(message) { byId('notice').className = 'message working'; byId('notice').innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + escape(message); }
   function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming', 'Ready', 'Missing'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
   function memberName(id) { const row = state.Members.find(member => member.id === id); return row ? row.name : id; }
@@ -118,7 +182,12 @@
     const summaries = members.map(member => KPT.summary(state, member.id, year()));
     const metrics = [['Members on record', state.Members.length, 'Current & former members'], ['Active members', members.filter(row => row.annualStatus === 'Active').length, 'For the selected reporting year'], ['Efficient', summaries.filter(row => row.efficient === 'Efficient').length, 'All four conditions met'], ['Duty awaiting entry', summaries.filter(row => row.hours === null).length, 'Annual hours not yet recorded']];
     const activities = state.Activities.filter(row => !row.archived && Number(row.date.slice(0, 4)) === year()).sort((first, second) => second.date.localeCompare(first.date)).slice(0, 5);
-    return '<p class="page-intro">Your division’s records, connected in one place. Select a year to review annual participation and efficiency.</p><div class="metrics">' + metrics.map(([label, value, caption]) => '<div class="metric"><div class="label">' + label + '</div><div class="value">' + value + '</div><small>' + caption + '</small></div>').join('') + '</div><div class="grid-two"><section class="card"><div class="section-heading" style="margin-top:0"><h2>Recent activities</h2>' + button('Manage', 'navigate', 'Activities') + '</div>' + (activities.length ? activities.map(row => '<div class="activity-line"><div><strong>' + escape(row.name) + '</strong><small>' + escape(row.date + ' · ' + row.tags.join(' / ')) + '</small></div>' + button('Attendance', 'attendance', row.id) + '</div>').join('') : '<p class="muted">No activities recorded for this year.</p>') + '</section><section class="card"><h2>Annual efficiency</h2><p class="muted">All conditions must be met within ' + year() + '.</p><ul class="rule-list"><li><span>Duty service</span><strong>≥ 60 hours</strong></li><li><span>DIM participation</span><strong>≥ 12 activities</strong></li><li><span>Inspection</span><strong>Participated</strong></li><li><span>Examination</span><strong>Participated</strong></li></ul><p class="inline-help">Pass or Fail both count as participation. Absent does not. Pending results count only when participation is confirmed.</p></section></div><section class="card" style="margin-top:24px"><h2>Recent changes</h2>' + table(['When', 'Administrator', 'Change'], (state.audit || []).slice(-5).reverse().map(row => [escape(new Date(row.at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(row.action)])) + '</section>';
+    const packages = ocPackages();
+    const packageCard = packages.length ? '<section class="card" style="margin-top:24px"><div class="section-heading" style="margin-top:0"><h2>Activity packages</h2>' + button('Documents', 'navigate', 'Documents') + '</div><div class="activity-line-wrap">' + packages.map(pkg => {
+      const progress = docProgress(pkg);
+      return '<div class="activity-line"><div><strong>' + escape(pkg.activityType + ' (' + pkg.year + ')') + '</strong><small>' + escape((pkg.eventDate || 'Date TBC') + ' · ' + (progress.total ? progress.approved + '/' + progress.total + ' approved' : pkg.status)) + '</small></div>' + button('Open', 'docOpen', pkg.id) + '</div>';
+    }).join('') + '</div></section>' : '';
+    return '<p class="page-intro">Your division’s records, connected in one place. Select a year to review annual participation and efficiency.</p><div class="metrics">' + metrics.map(([label, value, caption]) => '<div class="metric"><div class="label">' + label + '</div><div class="value">' + value + '</div><small>' + caption + '</small></div>').join('') + '</div><div class="grid-two"><section class="card"><div class="section-heading" style="margin-top:0"><h2>Recent activities</h2>' + button('Manage', 'navigate', 'Activities') + '</div>' + (activities.length ? activities.map(row => '<div class="activity-line"><div><strong>' + escape(row.name) + '</strong><small>' + escape(row.date + ' · ' + row.tags.join(' / ')) + '</small></div>' + button('Attendance', 'attendance', row.id) + '</div>').join('') : '<p class="muted">No activities recorded for this year.</p>') + '</section><section class="card"><h2>Annual efficiency</h2><p class="muted">All conditions must be met within ' + year() + '.</p><ul class="rule-list"><li><span>Duty service</span><strong>≥ 60 hours</strong></li><li><span>DIM participation</span><strong>≥ 12 activities</strong></li><li><span>Inspection</span><strong>Participated</strong></li><li><span>Examination</span><strong>Participated</strong></li></ul><p class="inline-help">Pass or Fail both count as participation. Absent does not. Pending results count only when participation is confirmed.</p></section></div>' + packageCard + '<section class="card" style="margin-top:24px"><h2>Recent changes</h2>' + table(['When', 'Administrator', 'Change'], (state.audit || []).slice(-5).reverse().map(row => [escape(new Date(row.at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(row.action)])) + '</section>';
   }
   function phaseView() {
     const controls = user.owner ? '<div class="phase-owner"><div><strong>Owner control</strong><small>选择目前正在进行的阶段。这个选择不会自动改变，也不会跟着资料备份恢复。</small></div><div class="phase-buttons">' + phases.map((phase, index) => '<button class="button small' + (currentPhase === index + 1 ? ' primary' : '') + '" type="button" data-action="setPhase" data-id="' + (index + 1) + '">Phase ' + (index + 1) + '</button>').join('') + '</div></div>' : '<div class="message warning">目前是 Phase ' + currentPhase + '。只有 Owner 可以更改 Current Phase；Secretary 可以查看所有说明。</div>';
@@ -231,18 +300,99 @@
   function importView() {
     return '<div class="grid-two"><section class="card"><div class="eyebrow">Batch updates</div><h2>Import an Excel file</h2><p class="muted">Phase 1 新学生只需填写 Members sheet 的 name；sjamId 可以填写或留空。id、version、status 留空即可。</p><div class="file-input"><label for="excel-file">Choose an .xlsx file (maximum 10 MB)</label><br><input id="excel-file" type="file" accept=".xlsx"></div><div class="toolbar">' + button('Download template', 'template') + button('Preview import', 'previewImport') + '</div><p class="hint">系统会为新学生建立内部 ID，并把空白 status 设为 Active。其他 sheets 可以完全留空。Existing records 必须保留原本的 ID 和 version。</p></section><section class="card"><div class="eyebrow">Portable records</div><h2>Export & backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
   }
+  function docProgress(pkg) {
+    const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived);
+    const required = items.filter(row => row.required && row.status !== 'NotRequired');
+    const approved = required.filter(row => row.status === 'Approved').length;
+    return { items, required, approved, total: required.length };
+  }
+  function docDueLabel(pkg, item) {
+    if (pkg.eventDate) {
+      const due = new Date(pkg.eventDate + 'T00:00:00');
+      due.setDate(due.getDate() + Number(item.dueOffsetDays || 0));
+      return due.toISOString().slice(0, 10);
+    }
+    return 'T' + (Number(item.dueOffsetDays) < 0 ? '' : '+') + item.dueOffsetDays;
+  }
+  function downloadBase64(fileName, contentBase64) {
+    const binary = atob(contentBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    const url = URL.createObjectURL(new Blob([bytes]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || 'download';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  function docActionsFor(item) {
+    const tools = [];
+    if (item.fileId) tools.push(button('Download', 'docDownload', item.id));
+    if (item.status === 'Approved') {
+      if (user.owner || user.admin) tools.push(button('Reopen', 'docReopen', item.id));
+    } else if (item.status === 'Submitted') {
+      if (user.owner || user.admin) {
+        tools.push(button('Approve', 'docApprove', item.id));
+        tools.push(button('Reject', 'docReject', item.id));
+      }
+    } else {
+      tools.push('<label class="button small" for="doc-upload-' + escape(item.id) + '">Upload<input id="doc-upload-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
+      if (item.status === 'Draft' || item.status === 'Rejected') tools.push(button('Submit', 'docSubmit', item.id));
+    }
+    if (item.templateId) tools.push(button('Template', 'docDownloadTemplate', item.id));
+    return tools.join(' ');
+  }
+  function documentsView() {
+    if (isOcOnly() && openDocPackageId) {
+      const minePkg = state.DocPackages.find(row => row.id === openDocPackageId);
+      if (!canOpenPackage(minePkg)) openDocPackageId = null;
+    }
+    if (!openDocPackageId) {
+      const packages = ocPackages();
+      if (isOcOnly()) {
+        return packages.length ? '' : '<section class="card"><h2>No activity package yet</h2><p class="muted">When the Owner assigns you as Organizing Chairman for an activity, it will appear in the left navbar (for example AGM (2027)).</p></section>';
+      }
+      const guide = '<section class="card" style="margin-bottom:20px"><div class="eyebrow">How it works</div><h2>Document packages</h2><ol class="rule-list"><li><span>1</span><strong>Owner opens a package for the year (optional: clone last year structure)</strong></li><li><span>2</span><strong>Download templates, edit locally, upload, then Submit</strong></li><li><span>3</span><strong>Owner or Secretary Approves · Organizing Chairman edits due dates</strong></li></ol><p class="hint">Treasurer accounts cannot open Documents. Each OC only sees their own activity (e.g. AGM 2027) on the navbar.</p></section>';
+      const create = user.owner ? '<section class="card"><div class="section-heading" style="margin-top:0"><h2>Start new package</h2></div><form id="doc-package-form" class="form-grid"><div class="field"><label for="doc-activity">Activity</label><select id="doc-activity">' + options(KPT.docActivityTypes.map(value => [value, value === 'AGM' ? 'AGM (Annual General Meeting)' : value]), 'AGM') + '</select></div><div class="field"><label for="doc-year">Year</label><input id="doc-year" type="number" min="1900" max="2200" value="' + year() + '" required></div><div class="field"><label for="doc-event-date">Event date (optional)</label><input id="doc-event-date" type="date"></div><div class="field"><label for="doc-oc-email">Organizing Chairman (OC) email</label><input id="doc-oc-email" type="email" placeholder="organizer@gmail.com"></div><div class="field"><label for="doc-base">Base structure</label><select id="doc-base"><option value="">First package (default checklist)</option>' + packages.filter(row => !row.archived).map(row => '<option value="' + escape(row.id) + '">' + escape(row.activityType + ' ' + row.year) + '</option>').join('') + '</select></div><div class="field"><button class="button primary" type="submit">Create package</button></div></form></section>' : '';
+      const list = packages.length ? table(['Activity', 'Year', 'OC', 'Event date', 'Progress', 'Status', 'Actions'], packages.map(pkg => {
+        const progress = docProgress(pkg);
+        return [escape(pkg.activityType), escape(String(pkg.year)), escape(pkg.ocEmail || '—'), escape(pkg.eventDate || '—'), progress.total ? progress.approved + '/' + progress.total : '—', pill(pkg.archived ? 'Archived' : pkg.status), '<div class="row-tools">' + button('Open', 'docOpen', pkg.id) + (user.owner ? button(pkg.archived ? 'Unarchive' : 'Archive', 'docArchive', pkg.id) : '') + '</div>'];
+      })) : '';
+      return guide + create + '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Packages</h2></div>' + (list || '<p class="muted">No document packages yet. Owner creates the first one.</p>') + '</section>';
+    }
+    const pkg = state.DocPackages.find(row => row.id === openDocPackageId);
+    if (!pkg) { openDocPackageId = null; return documentsView(); }
+    const progress = docProgress(pkg);
+    const items = progress.items.slice().sort((a, b) => a.sortOrder - b.sortOrder);
+    const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
+    const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Next step</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? 'Download the template and upload your file' : nextItem.status === 'Draft' ? 'Ready to Submit' : nextItem.status === 'Rejected' ? 'Revise, re-upload, then Submit' : nextItem.status === 'Submitted' ? 'Waiting for Owner / Secretary approval' : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Completed</div><p>All required documents are approved.</p></section>' : '');
+    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + (isOcOnly() ? '' : button('Back to list', 'docBack')) + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
+    const rows = items.map(item => [
+      String(item.sortOrder),
+      escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : ''),
+      escape(docDueLabel(pkg, item)),
+      pill(item.status) + (item.remarks ? '<br><small style="color:#852b3d">' + escape(item.remarks) + '</small>' : ''),
+      escape(item.fileName || '—'),
+      '<div class="row-tools">' + docActionsFor(item) + '</div>'
+    ]);
+    const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
+    const templateSection = user.owner ? '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Official templates · ' + escape(pkg.activityType) + '</h2></div><p class="hint">Owner uploads master templates. Checklist items link when titles match.</p>' + (templates.length ? table(['Title', 'File', 'Version', 'Actions'], templates.map(row => [escape(row.title), escape(row.fileName), escape(row.versionLabel || '—'), '<label class="button small" for="tpl-' + escape(row.id) + '">Replace<input id="tpl-' + escape(row.id) + '" type="file" data-tpl-upload="' + escape(row.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>'])) : '<p class="muted">No templates yet for this activity.</p>') + '<form id="tpl-new-form" class="form-grid" style="margin-top:12px"><div class="field"><label for="tpl-new-title">New template title</label><input id="tpl-new-title" type="text" required placeholder="Match checklist title"></div><div class="field"><label for="tpl-new-file">File</label><input id="tpl-new-file" type="file" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" required></div><div class="field"><button class="button" type="submit">Add template</button></div></form></section>' : '';
+    const folders = user.owner && !docFolders.templates ? '<section class="card" style="margin-top:16px"><h2>Document folders</h2><p class="muted">Drive folders are not initialised yet.</p><button class="button primary" type="button" data-action="initDocFolders">Initialize document folders</button></section>' : '';
+    return nextCard + meta + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+  }
   function trashView() {
     const rows = state.trash || [];
     return '<p class="page-intro">Owner 删除的资料会先放在这里。Restore 会恢复整组关联资料；Permanently delete 无法从系统恢复，但执行前会自动建立私人 Backup。</p>' + (user.owner ? table(['Deleted record', 'Deleted at', 'Deleted by', 'Included records', 'Actions'], rows.map(row => [escape(row.rootTable + ' · ' + row.label), escape(new Date(row.deletedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(Object.entries(row.counts || {}).map(([name, count]) => name + ': ' + count).join(' · ')), '<div class="row-tools">' + button('Restore', 'restoreTrash', row.id) + button('Permanently delete', 'purgeTrash', row.id) + '</div>'])) : '<div class="card"><p class="muted">Only the Owner can view and manage deleted records.</p></div>');
   }
   function settingsView() {
-    const demoSwitch = window.KPTTransport.demo && user && user.owner ? '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Preview role switch</div><h2>Try another workspace</h2><p class="muted">Preview only. Helps you see Treasurer / Admin / Owner shells.</p><div class="toolbar">' + button('Owner shell', 'demoRole', 'owner') + button('Admin shell', 'demoRole', 'admin') + button('Treasurer shell', 'demoRole', 'treasurer') + '</div></section>' : '';
+    const demoSwitch = window.KPTTransport.demo && user && user.owner ? '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Preview role switch</div><h2>Try another workspace</h2><p class="muted">Preview only. Helps you see Treasurer / Admin / Owner / OC shells.</p><div class="toolbar">' + button('Owner shell', 'demoRole', 'owner') + button('Admin shell', 'demoRole', 'admin') + button('Treasurer shell', 'demoRole', 'treasurer') + button('OC shell', 'demoRole', 'oc') + '</div></section>' : '';
     const accessCard = user.owner ? '' : '<section class="card"><h2>Access</h2><p class="muted">You are signed in as ' + escape(roleLabel()) + '. Ask the Owner if a workspace is missing.</p></section>';
-    return demoSwitch + accessCard + '<div class="grid-two"><section class="card"><h2>Your account</h2><p><strong>' + escape(user.email) + '</strong><br><small>' + escape(roleLabel()) + '</small></p><p class="muted">Treasurer work and Admin work use separate allow lists maintained by the Owner.</p></section><section class="card"><h2>Private backups</h2><p class="muted">Daily backups keep the latest 30 copies. Import and restore create an additional safety copy before changing data.</p><div class="toolbar">' + (user.admin || user.owner ? button('Back up now', 'backup') + button('Refresh backup list', 'listBackups') : '') + (user.owner ? button('Enable daily backup', 'installBackup') : '') + '</div><div id="backup-list" style="margin-top:18px"></div></section></div>' + (user.admin || user.owner ? '<section class="card" style="margin-top:24px"><h2>Public directory sync</h2><p class="muted">Only the approved public fields are copied to the member directory. If a publish fails, private records remain saved and you can retry.</p>' + (user.admin || user.owner ? button('Retry public update', 'retrySync') : '') + '<p class="sync-line">Private revision: ' + state.revision + ' · Last saved: ' + escape(state.updatedAt ? new Date(state.updatedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'No changes yet') + '</p></section>' : '');
+    const switchCard = '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Signed in as</div><h2>Switch Google account</h2><p><strong>' + escape(user.email) + '</strong> · ' + escape(roleLabel()) + '</p><p class="muted">This app uses the Google account signed into this browser. Use <strong>Sign out of Google</strong>, pick the next account (or press Back if Google lands on an error page), then <strong>Open Admin</strong>.</p><div class="toolbar">' + button('Sign out of Google', 'signOutGoogle') + button('Open Admin', 'openAdmin') + button('Reload data', 'reloadNow') + '</div><p class="hint">Tip: keep an incognito window on Owner to test two accounts side by side.</p></section>';
+    return demoSwitch + switchCard + accessCard + '<div class="grid-two"><section class="card"><h2>Your account</h2><p><strong>' + escape(user.email) + '</strong><br><small>' + escape(roleLabel()) + '</small></p><p class="muted">Treasurer work and Admin work use separate allow lists maintained by the Owner.</p></section><section class="card"><h2>Private backups</h2><p class="muted">Daily backups keep the latest 30 copies. Import and restore create an additional safety copy before changing data.</p><div class="toolbar">' + (user.admin || user.owner ? button('Back up now', 'backup') + button('Refresh backup list', 'listBackups') : '') + (user.owner ? button('Enable daily backup', 'installBackup') : '') + '</div><div id="backup-list" style="margin-top:18px"></div></section></div>' + (user.admin || user.owner ? '<section class="card" style="margin-top:24px"><h2>Public directory sync</h2><p class="muted">Only the approved public fields are copied to the member directory. If a publish fails, private records remain saved and you can retry.</p>' + (user.admin || user.owner ? button('Retry public update', 'retrySync') : '') + '<p class="sync-line">Private revision: ' + state.revision + ' · Last saved: ' + escape(state.updatedAt ? new Date(state.updatedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'No changes yet') + '</p></section>' : '');
   }
   function ownerAccessView() {
     if (!user.owner) return '<div class="card"><p class="muted">Only the Owner can manage access.</p></div>';
-    return '<p class="page-intro">Set who works as Secretary (Admin Work) and who works as Organizing Treasurer (Treasurer Work). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
+    return '<p class="page-intro">Set who works as Secretary (Admin Work), Organizing Treasurer (Treasurer Work) and Organizing Chairman / OC (Documents due dates &amp; checklist). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards — and can approve documents.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div><div class="field full"><label for="oc-emails">Organizing Chairman (OC) · Gmail list</label><textarea id="oc-emails" rows="3">' + escape(ocs.join('\n')) + '</textarea><p class="hint">Once approved here, OC sees each activity package (e.g. AGM 2026) on the navbar and can open it, edit due dates, upload and submit. OC cannot approve.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
   }
   function render() {
     if (!state) return;
@@ -261,6 +411,7 @@
       Exams: examList,
       Duty: dutyList,
       Awards: awardList,
+      Documents: documentsView,
       Data: dataList,
       Setup: setupView,
       Import: importView,
@@ -268,9 +419,18 @@
       Owner: ownerAccessView,
       Settings: settingsView
     };
-    if (!workspaceNav(workspaceMode).some(([key]) => key === view)) {
-      view = workspaceNav(workspaceMode)[0][0];
-      byId('page-title').textContent = workspaceTitles(workspaceMode)[view];
+    if (!isOcOnly() && !workspaceNav(workspaceMode).some(([key]) => key === view)) {
+      view = workspaceNav(workspaceMode)[0] ? workspaceNav(workspaceMode)[0][0] : 'Documents';
+      byId('page-title').textContent = workspaceTitles(workspaceMode)[view] || view;
+    }
+    if (isOcOnly()) {
+      view = 'Documents';
+      const mine = ocPackages();
+      if (!openDocPackageId || !canOpenPackage(state.DocPackages.find(row => row.id === openDocPackageId))) {
+        openDocPackageId = mine[0] ? mine[0].id : null;
+      }
+      const opened = openDocPackageId ? state.DocPackages.find(row => row.id === openDocPackageId) : null;
+      if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ')';
     }
     byId('content').innerHTML = views[view] ? views[view]() : '';
     byId('sync-notice').hidden = sync.ok;
@@ -278,7 +438,7 @@
     if (view === 'Settings' && backups.length) renderBackups();
     if (view === 'Import' && importPreview) renderImport();
   }
-  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…' };
+  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…', createDocPackage: 'Creating package…', docItemUpload: 'Uploading file…', docItemSubmit: 'Submitting document…', docItemReview: 'Reviewing document…', docItemReopen: 'Reopening document…', saveDocTemplate: 'Saving template…', docPackageArchive: 'Updating package…', initDocFolders: 'Creating folders…' };
   async function call(request, label) {
     if (busy) throw new Error('Please wait for the current operation.');
     busy = true;
@@ -306,9 +466,12 @@
     sync = response.sync;
     admins = response.admins || [];
     treasurers = response.treasurers || [];
+    ocs = response.ocs || [];
+    docFolders = response.docFolders || { templates: '', submissions: '' };
     currentPhase = response.currentPhase || 1;
     workspaceMode = preferredMode();
-    if (workspaceMode === 'treasurer') view = 'Finance';
+    if (isOcOnly()) view = 'Documents';
+    else if (workspaceMode === 'treasurer') view = 'Finance';
     else if (workspaceMode === 'owner') view = 'Owner';
     byId('account').textContent = user.email;
     byId('role').textContent = roleLabel();
@@ -588,6 +751,76 @@
       notice('Recommended system setup applied.');
       return;
     }
+    if (name === 'openAdmin') {
+      openGoogleAccountUrl(adminSelfUrl());
+      return;
+    }
+    if (name === 'logoutSwitchAccount' || name === 'signOutGoogle' || name === 'switchGoogleAccount') {
+      // Logout then Google's own account picker. Do not continue into Apps Script
+      // (that hop 400s or 404s). User returns with Open Admin / browser Back.
+      notice('Signing out of Google. Pick an account, then press Open Admin (or browser Back).');
+      openGoogleAccountUrl('https://accounts.google.com/Logout?continue=' + encodeURIComponent('https://accounts.google.com/AccountChooser'));
+      return;
+    }
+    if (name === 'reloadNow') {
+      if (!busy) { importPreview = null; importFile = null; await refresh(); notice('Records reloaded with the current Google account.'); }
+      return;
+    }
+    if (name === 'docOpen') {
+      const pkg = state.DocPackages.find(row => row.id === id);
+      if (!canOpenPackage(pkg)) throw new Error('You can only open your own activity package.');
+      view = 'Documents'; openDocPackageId = id; query = ''; page = 0; render(); return;
+    }
+    if (name === 'docBack') { openDocPackageId = null; render(); return; }
+    if (name === 'docSubmit') {
+      applySave(await call({ action: 'docItemSubmit', itemId: id, revision: state.revision }));
+      notice('Document submitted for approval.');
+      return;
+    }
+    if (name === 'docApprove') {
+      if (!(user.owner || user.admin)) throw new Error('Only Owner or Secretary can approve documents.');
+      applySave(await call({ action: 'docItemReview', itemId: id, approve: true, revision: state.revision }));
+      notice('Document approved.');
+      return;
+    }
+    if (name === 'docReject') {
+      if (!(user.owner || user.admin)) throw new Error('Only Owner or Secretary can approve documents.');
+      const remarks = prompt('Reason for rejection (required):');
+      if (remarks === null) return;
+      if (!String(remarks).trim()) { notice('A reason is required when rejecting.', true); return; }
+      applySave(await call({ action: 'docItemReview', itemId: id, approve: false, remarks: String(remarks).trim(), revision: state.revision }));
+      notice('Document rejected.');
+      return;
+    }
+    if (name === 'docReopen') {
+      if (!(user.owner || user.admin)) throw new Error('Only Owner or Secretary can reopen documents.');
+      if (!confirm('Reopen this approved item?')) return;
+      applySave(await call({ action: 'docItemReopen', itemId: id, revision: state.revision }));
+      notice('Document reopened.');
+      return;
+    }
+    if (name === 'docDownload' || name === 'docDownloadTemplate') {
+      const result = await call({ action: 'docDownload', itemId: id, source: name === 'docDownloadTemplate' ? 'template' : 'file' }, 'Preparing file…');
+      if (!result || !result.contentBase64) throw new Error('No file available to download.');
+      downloadBase64(result.fileName, result.contentBase64);
+      notice('Downloaded ' + result.fileName);
+      return;
+    }
+    if (name === 'docArchive') {
+      if (!user.owner) throw new Error('Only the owner can archive packages.');
+      const pkg = state.DocPackages.find(row => row.id === id);
+      if (!confirm((pkg && pkg.archived ? 'Unarchive' : 'Archive') + ' this package?')) return;
+      applySave(await call({ action: 'docPackageArchive', packageId: id, revision: state.revision }));
+      notice('Package updated.');
+      return;
+    }
+    if (name === 'initDocFolders') {
+      const result = await call({ action: 'initDocFolders' }, 'Creating folders…');
+      docFolders = result || { templates: '', submissions: '' };
+      render();
+      notice('Document folders initialised.');
+      return;
+    }
     if (name === 'archive') {
       const row = KPT.copy(state[tableName].find(item => item.id === id));
       if (!confirm((row.archived ? 'Unarchive' : 'Archive') + ' this record? History will be kept.')) return;
@@ -656,6 +889,38 @@
   document.addEventListener('change', event => {
     if (dialogTable === 'Exams' && ['field-activityId', 'field-memberId'].includes(event.target.id)) updateExamLink();
     if (event.target.id === 'excel-file') { importPreview = null; importFile = null; if (byId('import-preview')) byId('import-preview').innerHTML = ''; }
+    const docUploadId = event.target.dataset && event.target.dataset.docUpload;
+    if (docUploadId) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      if (file.size > 8 * 1024 * 1024) { notice('Use a file smaller than 8 MB.', true); event.target.value = ''; return; }
+      fileToBase64(file).then(async base64 => {
+        applySave(await call({ action: 'docItemUpload', itemId: docUploadId, fileName: file.name, fileBase64: base64, revision: state.revision }, 'Uploading file…'));
+        notice('File uploaded. Review it, then press Submit.');
+      }).catch(error => notice(error.message, true));
+      return;
+    }
+    const tplUploadId = event.target.dataset && event.target.dataset.tplUpload;
+    if (tplUploadId) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      if (file.size > 8 * 1024 * 1024) { notice('Use a file smaller than 8 MB.', true); event.target.value = ''; return; }
+      const template = (state.DocTemplates || []).find(row => row.id === tplUploadId);
+      if (!template) return;
+      fileToBase64(file).then(async base64 => {
+        const response = await call({
+          action: 'saveDocTemplate',
+          revision: state.revision,
+          row: Object.assign({}, template, { fileName: file.name, version: template.version, versionLabel: String(new Date().getFullYear()) + '.1' }),
+          fileBase64: base64
+        }, 'Uploading template…');
+        state = response.state;
+        sync = response.sync || sync;
+        render();
+        notice('Template replaced.');
+      }).catch(error => notice(error.message, true));
+      return;
+    }
     if (event.target.id === 'finance-receipts') {
       const chosen = [...event.target.files];
       Promise.all(chosen.map(file => new Promise((resolve, reject) => {
@@ -671,7 +936,7 @@
     }
   });
   document.addEventListener('submit', async event => {
-    if (!['record-form', 'attendance-form', 'admin-access-form', 'access-form'].includes(event.target.id)) return;
+    if (!['record-form', 'attendance-form', 'admin-access-form', 'access-form', 'doc-package-form', 'doc-event-form', 'tpl-new-form'].includes(event.target.id)) return;
     event.preventDefault();
     if (busy) return;
     const submit = event.target.querySelector('button[type="submit"]');
@@ -697,12 +962,54 @@
         const result = await call({
           action: 'setAccess',
           admins: byId('admin-emails').value.split(/\s+/).filter(Boolean),
-          treasurers: byId('treasurer-emails').value.split(/\s+/).filter(Boolean)
+          treasurers: byId('treasurer-emails').value.split(/\s+/).filter(Boolean),
+          ocs: byId('oc-emails') ? byId('oc-emails').value.split(/\s+/).filter(Boolean) : []
         });
         admins = result.admins || [];
         treasurers = result.treasurers || [];
+        ocs = result.ocs || [];
         render();
         notice('Access lists saved.');
+      } else if (event.target.id === 'doc-package-form') {
+        const response = await call({
+          action: 'createDocPackage',
+          activityType: byId('doc-activity').value,
+          year: Number(byId('doc-year').value),
+          eventDate: byId('doc-event-date').value || '',
+          ocEmail: (byId('doc-oc-email') && byId('doc-oc-email').value.trim()) || '',
+          basePackageId: byId('doc-base').value || '',
+          revision: state.revision
+        }, 'Creating package…');
+        state = response.state;
+        sync = response.sync || sync;
+        openDocPackageId = response.packageId || (state.DocPackages[state.DocPackages.length - 1] || {}).id;
+        render();
+        notice('Package created.');
+      } else if (event.target.id === 'doc-event-form') {
+        applySave(await call({
+          action: 'saveDocPackageMeta',
+          packageId: openDocPackageId,
+          eventDate: byId('doc-event-edit').value,
+          ocEmail: byId('doc-oc-edit') ? byId('doc-oc-edit').value.trim() : undefined,
+          revision: state.revision
+        }));
+        notice('Package details saved.');
+      } else if (event.target.id === 'tpl-new-form') {
+        const file = byId('tpl-new-file').files[0];
+        if (!file) throw new Error('Choose a template file.');
+        if (file.size > 8 * 1024 * 1024) throw new Error('Use a file smaller than 8 MB.');
+        const pkg = state.DocPackages.find(row => row.id === openDocPackageId);
+        const base64 = await fileToBase64(file);
+        const response = await call({
+          action: 'saveDocTemplate',
+          revision: state.revision,
+          row: { id: '', version: 0, activityType: pkg ? pkg.activityType : 'AGM', title: byId('tpl-new-title').value.trim(), fileName: file.name, mime: file.type || '', fileId: '', versionLabel: String(new Date().getFullYear()) + '.1', active: true, archived: false },
+          fileBase64: base64
+        }, 'Uploading template…');
+        state = response.state;
+        sync = response.sync || sync;
+        render();
+        notice('Template saved.');
       } else {
         const result = await call({ action: 'setAdmins', emails: byId('admin-emails').value.split(/\s+/).filter(Boolean) });
         admins = Array.isArray(result) ? result : (result.admins || []);

@@ -242,3 +242,67 @@ test('500 members with five years of attendance validate and aggregate', () => {
   assert.equal(KPT.projectPublic(state).members.length, 500);
   assert.equal(KPT.summary(state, state.Members[0].id, 2026).dim, 12);
 });
+
+test('AGM package creates default checklist and runs upload to approve flow', () => {
+  let state = KPT.mutate(KPT.empty(), { action: 'createDocPackage', activityType: 'AGM', year: 2026, eventDate: '2026-12-06', revision: 0 }, context());
+  const pkg = state.DocPackages[0];
+  assert.equal(pkg.status, 'Open');
+  assert.equal(state.DocItems.length, 12);
+  assert.ok(state.DocItems.filter(row => row.required).length >= 7);
+  const item = state.DocItems[0];
+  assert.equal(item.status, 'Pending');
+  assert.equal(item.dueOffsetDays, -28);
+  state = KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'AGM Application.docx', fileId: 'drive-1', revision: state.revision }, context());
+  assert.equal(state.DocItems[0].status, 'Draft');
+  state = KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context());
+  assert.equal(state.DocItems[0].status, 'Submitted');
+  assert.throws(() => KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context()), /Upload a file/);
+  state = KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: true, revision: state.revision }, context());
+  assert.equal(state.DocItems[0].status, 'Approved');
+  assert.equal(state.DocPackages[0].status, 'Open');
+});
+test('package completes when every required item is approved; reject keeps package open', () => {
+  let state = KPT.mutate(KPT.empty(), { action: 'createDocPackage', activityType: 'AGM', year: 2026, revision: 0 }, context());
+  const required = state.DocItems.filter(row => row.required);
+  required.forEach((item, index) => {
+    state = KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'file' + index + '.pdf', fileId: 'f' + index, revision: state.revision }, context());
+    state = KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context());
+    if (index === 0) {
+      assert.throws(() => KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: false, revision: state.revision }, context()), /reason is required/);
+      state = KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: false, remarks: 'Fix date', revision: state.revision }, context());
+      assert.equal(state.DocItems.find(row => row.id === item.id).status, 'Rejected');
+      state = KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'file0b.pdf', fileId: 'f0b', revision: state.revision }, context());
+      state = KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context());
+    }
+    state = KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: true, revision: state.revision }, context());
+  });
+  assert.equal(state.DocPackages[0].status, 'Completed');
+  assert.throws(() => KPT.mutate(state, { action: 'docItemUpload', itemId: required[0].id, fileName: 'x.pdf', fileId: 'z', revision: state.revision }, context()), /archived|Reopen/);
+  state = KPT.mutate(state, { action: 'docItemReopen', itemId: required[0].id, revision: state.revision }, context());
+  assert.equal(state.DocPackages[0].status, 'Open');
+});
+test('cloning a package copies structure with fresh ids and Pending status', () => {
+  let state = KPT.mutate(KPT.empty(), { action: 'createDocPackage', activityType: 'AGM', year: 2026, revision: 0 }, context());
+  const base = state.DocPackages[0];
+  const firstItemId = state.DocItems[0].id;
+  state = KPT.mutate(state, { action: 'docItemUpload', itemId: firstItemId, fileName: 'a.docx', fileId: 'fa', revision: state.revision }, context());
+  state = KPT.mutate(state, { action: 'createDocPackage', activityType: 'AGM', year: 2027, basePackageId: base.id, revision: state.revision }, context());
+  const clone = state.DocPackages.find(row => row.year === 2027);
+  const cloneItems = state.DocItems.filter(row => row.packageId === clone.id);
+  assert.equal(cloneItems.length, 12);
+  assert.equal(clone.basePackageId, base.id);
+  assert.ok(cloneItems.every(row => row.status === 'Pending' && row.fileId === '' && row.id !== firstItemId));
+  assert.equal(cloneItems[0].title, state.DocItems.find(row => row.id === firstItemId).title);
+  assert.throws(() => KPT.mutate(state, { action: 'createDocPackage', activityType: 'AGM', year: 2026, revision: state.revision }, context()), /already exists/);
+});
+test('OC-style meta edits change due dates; blocked templates and extensions are rejected', () => {
+  let state = KPT.mutate(KPT.empty(), { action: 'createDocPackage', activityType: 'AGM', year: 2026, revision: 0 }, context());
+  const item = state.DocItems[0];
+  state = KPT.mutate(state, { action: 'saveDocItemsMeta', packageId: item.packageId, items: [{ id: item.id, dueOffsetDays: -30, required: false }], revision: state.revision }, context());
+  const updated = state.DocItems.find(row => row.id === item.id);
+  assert.equal(updated.dueOffsetDays, -30);
+  assert.equal(updated.required, false);
+  assert.throws(() => KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'evil.exe', fileId: 'x', revision: state.revision }, context()), /Allowed files/);
+  assert.throws(() => KPT.mutate(state, { action: 'saveDocItemsMeta', packageId: item.packageId, items: [{ id: item.id, dueOffsetDays: -999 }], revision: state.revision }, context()), /365/);
+  assert.throws(() => KPT.mutate(state, { action: 'save', table: 'DocPackages', row: { id: 'x', version: 1 }, revision: state.revision }, context()), /document package actions/);
+});

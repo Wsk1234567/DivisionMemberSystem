@@ -7,7 +7,7 @@ const { fixture } = require('../src/demo-data.js');
 function environment() {
   let serial = 0;
   const env = { actor: 'owner@gmail.com', effective: null, publicFailure: false, privateFailure: false, backupFailure: false, failWrites: false, actorCalls: 0 };
-  const values = new Map(Object.entries({ OWNER_EMAIL: 'owner@gmail.com', ADMINS: '["secretary@gmail.com"]', ADMIN_EMAILS: '["secretary@gmail.com"]', TREASURER_EMAILS: '["treasurer@gmail.com"]', PRIVATE_SHEET_ID: 'private', PUBLIC_SHEET_ID: 'public', BACKUP_FOLDER_ID: 'backups', CURRENT_SLOT: '0', PUBLISHED_REVISION: '1' }));
+  const values = new Map(Object.entries({ OWNER_EMAIL: 'owner@gmail.com', ADMINS: '["secretary@gmail.com"]', ADMIN_EMAILS: '["secretary@gmail.com"]', TREASURER_EMAILS: '["treasurer@gmail.com"]', OC_EMAILS: '["oc@gmail.com"]', PRIVATE_SHEET_ID: 'private', PUBLIC_SHEET_ID: 'public', BACKUP_FOLDER_ID: 'backups', CURRENT_SLOT: '0', PUBLISHED_REVISION: '1' }));
   const properties = { getProperty: key => values.has(key) ? values.get(key) : null, setProperty: (key, value) => values.set(key, String(value)), deleteProperty: key => values.delete(key), setProperties: data => Object.entries(data).forEach(([key, value]) => values.set(key, String(value))) };
   const sheet = () => {
     let rows = [];
@@ -36,8 +36,17 @@ function environment() {
     Session: { getActiveUser: () => ({ getEmail: () => env.actor }), getEffectiveUser: () => ({ getEmail: () => env.effective || env.actor }) },
     LockService: { getScriptLock: () => lock },
     SpreadsheetApp: { openById(id) { env.actorCalls++; if (id === 'public' && env.publicFailure) throw new Error('Public permissions unavailable'); if (id === 'private' && env.privateFailure) throw new Error('Storage unavailable'); return id === 'private' ? privateBook : publicBook; }, flush: () => {} },
-    Utilities: { getUuid: () => 'uuid-' + ++serial },
-    DriveApp: { getFolderById: () => folder, getFileById: id => { if (files.has(id)) return files.get(id); return { addEditor: () => {}, removeEditor: () => {} }; } }
+    Utilities: { getUuid: () => 'uuid-' + ++serial, base64Decode: value => Buffer.from(String(value || ''), 'base64'), base64Encode: value => Buffer.from(value).toString('base64'), newBlob: (bytes, mime, name) => ({ getBytes: () => bytes, getMimeType: () => mime, getName: () => name }) },
+    DriveApp: {
+      Access: { PRIVATE: 'private' },
+      Permission: { NONE: 'none' },
+      getFolderById: () => folder,
+      getFileById: id => { if (files.has(id)) return files.get(id); return { addEditor: () => {}, removeEditor: () => {} }; },
+      createFolder: () => {
+        const id = 'folder-' + ++serial;
+        return { getId: () => id, setSharing: () => {}, addEditor: () => {}, removeEditor: () => {}, createFile: (nameOrBlob, content, mime) => makeFile(typeof nameOrBlob === 'string' ? nameOrBlob : (nameOrBlob.getName && nameOrBlob.getName()) || 'file', content || '', mime) };
+      }
+    }
   };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require.resolve('../apps-script/admin/Code.gs'), 'utf8'), sandbox);
@@ -94,7 +103,7 @@ test('stranger still cannot access the workspace', () => {
   const { env, sandbox } = environment(); env.actor = 'stranger@gmail.com';
   const response = sandbox.rpc({ action: 'bootstrap' });
   assert.equal(response.ok, false);
-  assert.match(response.error, /not an administrator or treasurer/i);
+  assert.match(response.error, /not an administrator, officer or treasurer/i);
 });
 test('secretary can preview and apply recommended system setup with a safety backup', () => {
   const { env, sandbox, privateBook, files } = environment(); env.actor = 'secretary@gmail.com';
@@ -122,6 +131,63 @@ test('owner can set phase 1 to 6 without changing or restoring member data', () 
 test('wrong deployment identity fails closed', () => {
   const { env, sandbox } = environment(); env.actor = 'secretary@gmail.com'; env.effective = 'owner@gmail.com';
   assert.equal(sandbox.rpc({ action: 'bootstrap' }).ok, false);
+});
+test('OC can edit document checklist but cannot approve; treasurer cannot use documents', () => {
+  const { env, sandbox } = environment();
+  env.actor = 'owner@gmail.com';
+  assert.equal(sandbox.rpc({ action: 'initDocFolders' }).ok, true);
+  let created = sandbox.rpc({ action: 'createDocPackage', activityType: 'AGM', year: 2026, eventDate: '2026-12-06', ocEmail: 'oc@gmail.com', revision: sandbox.rpc({ action: 'bootstrap' }).data.state.revision });
+  assert.equal(created.ok, true, created.error);
+  const packageId = created.data.state.DocPackages[0].id;
+  const itemId = created.data.state.DocItems[0].id;
+  env.actor = 'oc@gmail.com';
+  const boot = sandbox.rpc({ action: 'bootstrap' });
+  assert.equal(boot.ok, true);
+  assert.equal(boot.data.user.oc, true);
+  assert.equal(boot.data.user.admin, false);
+  const uploaded = sandbox.rpc({ action: 'docItemUpload', itemId, fileName: 'letter.docx', fileBase64: 'AAAA', revision: created.data.state.revision });
+  assert.equal(uploaded.ok, true, uploaded.error);
+  const submitted = sandbox.rpc({ action: 'docItemSubmit', itemId, revision: uploaded.data.state.revision });
+  assert.equal(submitted.ok, true, submitted.error);
+  const rejectedApprove = sandbox.rpc({ action: 'docItemReview', itemId, approve: true, revision: submitted.data.state.revision });
+  assert.equal(rejectedApprove.ok, false);
+  assert.match(rejectedApprove.error, /Only Owner or Secretary/);
+  const meta = sandbox.rpc({ action: 'saveDocItemsMeta', packageId, items: [{ id: itemId, dueOffsetDays: -20 }], revision: submitted.data.state.revision });
+  assert.equal(meta.ok, true, meta.error);
+  assert.equal(meta.data.state.DocItems.find(row => row.id === itemId).dueOffsetDays, -20);
+  env.actor = 'owner@gmail.com';
+  const other = sandbox.rpc({ action: 'createDocPackage', activityType: 'AGM', year: 2027, ocEmail: 'other@gmail.com', revision: meta.data.state.revision });
+  assert.equal(other.ok, true, other.error);
+  const otherPackage = other.data.state.DocPackages.find(row => row.year === 2027);
+  const otherItemId = other.data.state.DocItems.find(row => row.packageId === otherPackage.id).id;
+  env.actor = 'oc@gmail.com';
+  const denied = sandbox.rpc({ action: 'docItemUpload', itemId: otherItemId, fileName: 'nope.pdf', fileBase64: 'QUJD', revision: other.data.state.revision });
+  assert.equal(denied.ok, false);
+  assert.match(denied.error, /Organizing Chairman|Documents access|not found/);
+  env.actor = 'treasurer@gmail.com';
+  const treasurerDocs = sandbox.rpc({ action: 'createDocPackage', activityType: 'AGM', year: 2027, revision: other.data.state.revision });
+  assert.equal(treasurerDocs.ok, false);
+});
+test('secretary approves submitted documents; owner inits folders and setAccess keeps OC list', () => {
+  const { env, sandbox, properties } = environment();
+  env.actor = 'owner@gmail.com';
+  assert.equal(sandbox.rpc({ action: 'initDocFolders' }).ok, true);
+  const created = sandbox.rpc({ action: 'createDocPackage', activityType: 'AGM', year: 2026, revision: sandbox.rpc({ action: 'bootstrap' }).data.state.revision });
+  assert.equal(created.ok, true, created.error);
+  const itemId = created.data.state.DocItems[0].id;
+  const uploaded = sandbox.rpc({ action: 'docItemUpload', itemId, fileName: 'x.pdf', fileBase64: 'QUJD', revision: created.data.state.revision });
+  assert.equal(uploaded.ok, true, uploaded.error);
+  const submitted = sandbox.rpc({ action: 'docItemSubmit', itemId, revision: uploaded.data.state.revision });
+  assert.equal(submitted.ok, true, submitted.error);
+  const approved = sandbox.rpc({ action: 'docItemReview', itemId, approve: true, revision: submitted.data.state.revision });
+  assert.equal(approved.ok, true, approved.error);
+  assert.equal(approved.data.state.DocItems.find(row => row.id === itemId).status, 'Approved');
+  env.actor = 'owner@gmail.com';
+  const access = sandbox.rpc({ action: 'setAccess', admins: ['secretary@gmail.com'], treasurers: ['treasurer@gmail.com'], ocs: ['oc@gmail.com'] });
+  assert.equal(access.ok, true, access.error);
+  assert.equal(JSON.stringify(access.data.ocs), JSON.stringify(['oc@gmail.com']));
+  assert.equal(properties.getProperty('OC_EMAILS'), '["oc@gmail.com"]');
+  assert.ok(properties.getProperty('DOC_TEMPLATES_FOLDER_ID'));
 });
 
 test('admin serves bundled HTML literally after identity checks', () => {

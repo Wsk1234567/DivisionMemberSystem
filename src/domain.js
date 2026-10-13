@@ -13,7 +13,10 @@
     FinIncomes: ['id', 'version', 'bookId', 'date', 'description', 'amount'],
     FinExpenses: ['id', 'version', 'bookId', 'date', 'item', 'description', 'quantity', 'unitCost', 'amount'],
     FinReimbursements: ['id', 'version', 'bookId', 'formSeq', 'treasurerName', 'formDate', 'purpose', 'chequeNo', 'amount'],
-    FinReimburseLines: ['id', 'version', 'reimbursementId', 'lineNo', 'date', 'invoiceNo', 'particular', 'total']
+    FinReimburseLines: ['id', 'version', 'reimbursementId', 'lineNo', 'date', 'invoiceNo', 'particular', 'total'],
+    DocPackages: ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'basePackageId', 'ocEmail', 'createdBy', 'createdAt', 'approvedAt', 'archived'],
+    DocItems: ['id', 'version', 'packageId', 'sortOrder', 'title', 'role', 'dueOffsetDays', 'required', 'templateId', 'status', 'fileName', 'fileId', 'uploadedBy', 'uploadedAt', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt', 'remarks', 'archived'],
+    DocTemplates: ['id', 'version', 'activityType', 'title', 'fileName', 'mime', 'fileId', 'versionLabel', 'active', 'archived']
   };
   const money = value => {
     if (value === '' || value == null) return null;
@@ -26,6 +29,10 @@
   const results = ['Pass', 'Fail', 'Pending', 'Absent'];
   const forms = ['Peralihan', 'Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Adult'];
   const races = ['Melayu', 'India', 'Cina', 'Other'];
+  const docActivityTypes = ['AGM', 'CadetEnrolment', 'OrientationDay', 'Exam', 'MidTermReview', 'JuniorCamp', 'InspectionDay'];
+  const docItemStatuses = ['Pending', 'Draft', 'Submitted', 'Approved', 'Rejected', 'NotRequired'];
+  const docPackageStatuses = ['Open', 'Completed', 'Archived'];
+  const docUploadMimes = ['.docx', '.xlsx', '.pdf', '.pptx', '.jpg', '.jpeg', '.png', '.zip'];
   const recommendedCatalog = [];
   const addRecommended = (code, sortOrder, kind, category, name, level, eligibilityMetric, eligibilityThreshold) => recommendedCatalog.push({ code, sortOrder, kind, category, name, level: level || '', eligibilityMetric: eligibilityMetric || '', eligibilityThreshold: eligibilityThreshold == null ? null : eligibilityThreshold, archived: false });
   ['EFA (New)', 'EFA (Recert)', 'BFA (New)', 'BFA (Recert)', 'BFA (Renew)', 'Home Nursing', 'AFA'].forEach((name, index) => addRecommended('EXAM_' + name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase(), index + 1, 'Exam', '', name));
@@ -74,7 +81,7 @@
     row.version = Number(input.version || 0);
     if (!Number.isInteger(row.version) || row.version < 0) fail('Version must be a non-negative integer.');
     if (table === 'Activities') row.tags = Array.isArray(input.tags) ? [...new Set(input.tags.map(str))] : [...new Set(str(input.tags).split('|').map(str).filter(Boolean))];
-    ['present', 'attended', 'archived'].forEach(field => {
+    ['present', 'attended', 'archived', 'required', 'active'].forEach(field => {
       if (fields[table].includes(field)) {
         if (![true, false, 'true', 'false', 'TRUE', 'FALSE', '', undefined, null].includes(input[field])) fail(field + ' must be TRUE or FALSE.');
         row[field] = boolean(input[field]);
@@ -91,6 +98,10 @@
     if (table === 'Catalog') {
       row.sortOrder = str(input.sortOrder) === '' ? 0 : Number(input.sortOrder);
       row.eligibilityThreshold = str(input.eligibilityThreshold) === '' ? null : Number(input.eligibilityThreshold);
+    }
+    if (table === 'DocItems') {
+      row.sortOrder = str(input.sortOrder) === '' ? 0 : Number(input.sortOrder);
+      row.dueOffsetDays = str(input.dueOffsetDays) === '' ? 0 : Number(input.dueOffsetDays);
     }
     return row;
   }
@@ -181,6 +192,26 @@
           if (!['', 'lifetimeDutyHours', 'efficientYears'].includes(metric)) fail('Invalid eligibility rule.');
           if (metric && (!Number.isFinite(threshold) || threshold <= 0)) fail('Eligibility threshold must be positive.');
         }
+        if (table === 'DocPackages') {
+          if (!docActivityTypes.includes(row.activityType)) fail('Unknown activity type.');
+          if (!docPackageStatuses.includes(row.status)) fail('Invalid package status.');
+          if (row.eventDate && !dateValid(row.eventDate)) fail('Event date must be YYYY-MM-DD.');
+          if (row.ocEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.ocEmail)) fail('Organizing Chairman email is invalid.');
+        }
+        if (table === 'DocItems') {
+          if (!state.DocPackages.some(item => item.id === row.packageId)) fail('Unknown document package.');
+          if (!docItemStatuses.includes(row.status)) fail('Invalid document status.');
+          if (!Number.isInteger(row.sortOrder) || row.sortOrder < 0) fail('Document order must be a non-negative integer.');
+          if (!Number.isInteger(row.dueOffsetDays) || row.dueOffsetDays < -365 || row.dueOffsetDays > 365) fail('Due offset must be between -365 and 365 days.');
+          if (!row.title) fail('Document title is required.');
+          if (row.templateId && !state.DocTemplates.some(item => item.id === row.templateId)) fail('Unknown document template.');
+          if (row.status === 'Submitted' && !row.fileId) fail('Submitted items need an uploaded file.');
+        }
+        if (table === 'DocTemplates') {
+          if (!docActivityTypes.includes(row.activityType)) fail('Unknown activity type.');
+          if (!row.title) fail('Template title is required.');
+          if (row.fileId && !row.fileName) fail('Template file name is required.');
+        }
         } catch (error) { error.table = table; error.recordId = row.id; throw error; }
       });
     });
@@ -195,6 +226,8 @@
     unique(state.Awards.filter(row => row.catalogId), row => row.memberId + ':' + row.catalogId, 'member award');
     unique(state.FinReimbursements, row => row.bookId + ':' + row.formSeq, 'finance form number');
     unique(state.FinReimburseLines, row => row.reimbursementId + ':' + row.lineNo, 'finance line number');
+    unique(state.DocPackages.filter(row => !row.archived), row => row.activityType + ':' + row.year, 'document package');
+    unique(state.DocItems, row => row.packageId + ':' + row.sortOrder, 'document order');
     if (state.Members.some(row => /^STU-\d+$/.test(row.id) && Number(row.id.slice(4)) > state.sequence)) fail('Student sequence is behind existing IDs.');
     return state;
   }
@@ -251,6 +284,7 @@
     const table = request.table;
     if (request.action === 'save') {
       if (table === 'Attendance') fail('Use activity attendance to record participation.');
+      if (table && table.startsWith('Doc')) fail('Use document package actions for Files.');
       const row = upsert(state, table, request.row, context.uuid);
       if (table === 'Activities') reconcileExams(state, row, context.uuid);
       if (table === 'Members') {
@@ -271,8 +305,215 @@
       reconcileExams(state, activity, context.uuid);
     } else if (request.action === 'saveFinanceBook') {
       saveFinanceBook(state, request, context);
+    } else if (request.action === 'createDocPackage') {
+      createDocPackage(state, request, context);
+    } else if (request.action === 'saveDocPackageMeta') {
+      saveDocPackageMeta(state, request, context);
+    } else if (request.action === 'saveDocItemsMeta') {
+      saveDocItemsMeta(state, request, context);
+    } else if (request.action === 'docItemUpload') {
+      docItemUpload(state, request, context);
+    } else if (request.action === 'docItemSubmit') {
+      docItemSubmit(state, request, context);
+    } else if (request.action === 'docItemReview') {
+      docItemReview(state, request, context);
+    } else if (request.action === 'docItemReopen') {
+      docItemReopen(state, request, context);
+    } else if (request.action === 'docPackageArchive') {
+      docPackageArchive(state, request, context);
+    } else if (request.action === 'saveDocTemplate') {
+      upsert(state, 'DocTemplates', request.row, context.uuid);
     } else fail('Unsupported action.');
-    return finish(state, context.actor, request.action + ':' + (table || request.activityId || (request.book && request.book.id) || 'finance'), context.now);
+    return finish(state, context.actor, request.action + ':' + (table || request.activityType || request.itemId || request.packageId || request.action), context.now);
+  }
+  function defaultDocItems(activityType) {
+    if (activityType !== 'AGM') return [];
+    return [
+      { sortOrder: 1, title: 'AGM Application Letter', role: 'Secretary', dueOffsetDays: -28, required: true, templateId: '' },
+      { sortOrder: 2, title: 'Email to ASO', role: 'Secretary', dueOffsetDays: -28, required: true, templateId: '' },
+      { sortOrder: 3, title: 'Venue Application Letter', role: 'Secretary', dueOffsetDays: -28, required: false, templateId: '' },
+      { sortOrder: 4, title: 'Invitation - JDO', role: 'Secretary', dueOffsetDays: -21, required: true, templateId: '' },
+      { sortOrder: 5, title: 'Invitation - Teacher Advisor / Speech', role: 'Secretary', dueOffsetDays: -21, required: true, templateId: '' },
+      { sortOrder: 6, title: 'Invitation - Guest / Attendance', role: 'Secretary', dueOffsetDays: -21, required: false, templateId: '' },
+      { sortOrder: 7, title: 'Agenda', role: 'Chairperson', dueOffsetDays: -7, required: true, templateId: '' },
+      { sortOrder: 8, title: 'Action Plan', role: 'Chairperson', dueOffsetDays: -7, required: true, templateId: '' },
+      { sortOrder: 9, title: 'Meeting Minutes', role: 'Secretary', dueOffsetDays: 5, required: true, templateId: '' },
+      { sortOrder: 10, title: 'Committee Board', role: 'Secretary', dueOffsetDays: 7, required: true, templateId: '' },
+      { sortOrder: 11, title: 'Photo Pack', role: 'Records', dueOffsetDays: 2, required: false, templateId: '' },
+      { sortOrder: 12, title: 'Awards / NCO Promotion pack', role: 'Training', dueOffsetDays: -14, required: false, templateId: '' }
+    ];
+  }
+  function findDocPackage(state, id) {
+    const pkg = state.DocPackages.find(row => row.id === id);
+    if (!pkg) fail('Document package not found.');
+    return pkg;
+  }
+  function findDocItem(state, id) {
+    const item = state.DocItems.find(row => row.id === id);
+    if (!item) fail('Document item not found.');
+    return item;
+  }
+  function openDocPackage(pkg) {
+    if (pkg.archived || pkg.status === 'Archived') fail('This package is archived.');
+  }
+  function refreshDocPackageStatus(state, packageId, now) {
+    const pkg = state.DocPackages.find(row => row.id === packageId);
+    if (!pkg || pkg.archived || pkg.status === 'Archived') return;
+    const required = state.DocItems.filter(row => row.packageId === packageId && !row.archived && row.required && row.status !== 'NotRequired');
+    const complete = required.length > 0 && required.every(row => row.status === 'Approved');
+    const next = complete ? 'Completed' : 'Open';
+    if (pkg.status !== next) {
+      pkg.status = next;
+      pkg.version++;
+      pkg.approvedAt = complete ? (pkg.approvedAt || now || '') : '';
+    }
+  }
+  function createDocPackage(state, request, context) {
+    const activityType = str(request.activityType);
+    if (!docActivityTypes.includes(activityType)) fail('Unknown activity type.');
+    const year = Number(request.year);
+    if (!Number.isInteger(year) || year < 1900 || year > 2200) fail('Choose a valid package year.');
+    if (state.DocPackages.some(row => !row.archived && row.activityType === activityType && row.year === year)) fail('A package already exists for this activity and year.');
+    const eventDate = str(request.eventDate);
+    if (eventDate && !dateValid(eventDate)) fail('Event date must be YYYY-MM-DD.');
+    let source = null;
+    if (request.basePackageId) {
+      source = state.DocPackages.find(row => row.id === request.basePackageId);
+      if (!source) fail('Base package not found.');
+      if (source.activityType !== activityType) fail('Base package must match the activity type.');
+    }
+    const pkg = upsert(state, 'DocPackages', {
+      activityType, year, eventDate, status: 'Open',
+      basePackageId: source ? source.id : '',
+      ocEmail: str(request.ocEmail).toLowerCase(),
+      createdBy: context.actor, createdAt: context.now, approvedAt: '', archived: false
+    }, context.uuid);
+    const templates = state.DocTemplates.filter(row => row.activityType === activityType && !row.archived);
+    const rows = source
+      ? state.DocItems.filter(row => row.packageId === source.id && !row.archived).sort((a, b) => a.sortOrder - b.sortOrder).map(row => ({ sortOrder: row.sortOrder, title: row.title, role: row.role, dueOffsetDays: row.dueOffsetDays, required: row.required, templateId: row.templateId }))
+      : defaultDocItems(activityType);
+    rows.forEach(row => {
+      const byId = row.templateId && templates.find(item => item.id === row.templateId);
+      const byTitle = templates.find(item => item.title === row.title);
+      const template = byId || byTitle;
+      upsert(state, 'DocItems', Object.assign({}, row, {
+        packageId: pkg.id,
+        templateId: template ? template.id : '',
+        status: 'Pending', fileName: '', fileId: '',
+        uploadedBy: '', uploadedAt: '', submittedBy: '', submittedAt: '',
+        reviewedBy: '', reviewedAt: '', remarks: '', archived: false
+      }), context.uuid);
+    });
+    return pkg;
+  }
+  function saveDocPackageMeta(state, request, context) {
+    const pkg = findDocPackage(state, request.packageId);
+    openDocPackage(pkg);
+    const eventDate = str(request.eventDate === undefined ? pkg.eventDate : request.eventDate);
+    if (eventDate && !dateValid(eventDate)) fail('Event date must be YYYY-MM-DD.');
+    const ocEmail = str(request.ocEmail === undefined ? pkg.ocEmail : request.ocEmail).toLowerCase();
+    if (ocEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ocEmail)) fail('Organizing Chairman email is invalid.');
+    const updated = upsert(state, 'DocPackages', Object.assign({}, pkg, { eventDate, ocEmail }), context.uuid);
+    refreshDocPackageStatus(state, updated.id, context.now);
+    return updated;
+  }
+  function saveDocItemsMeta(state, request, context) {
+    const rows = Array.isArray(request.items) ? request.items : [request.item || request];
+    if (!rows.length) fail('No document items provided.');
+    const packageId = request.packageId || (rows[0] && rows[0].packageId);
+    const pkg = findDocPackage(state, packageId);
+    openDocPackage(pkg);
+    if (pkg.status === 'Completed') fail('Reopen required items before editing a completed package.');
+    rows.forEach(input => {
+      const current = findDocPackage(state, packageId);
+      openDocPackage(current);
+      const item = findDocItem(state, input.id);
+      if (item.packageId !== packageId) fail('Document item belongs to another package.');
+      const next = Object.assign({}, item, {
+        title: str(input.title === undefined ? item.title : input.title) || item.title,
+        role: str(input.role === undefined ? item.role : input.role),
+        dueOffsetDays: input.dueOffsetDays === undefined ? item.dueOffsetDays : Number(input.dueOffsetDays),
+        sortOrder: input.sortOrder === undefined ? item.sortOrder : Number(input.sortOrder),
+        required: input.required === undefined ? item.required : input.required
+      });
+      if (!Number.isInteger(next.sortOrder) || next.sortOrder < 0) fail('Document order must be a non-negative integer.');
+      if (!Number.isInteger(next.dueOffsetDays) || next.dueOffsetDays < -365 || next.dueOffsetDays > 365) fail('Due offset must be between -365 and 365 days.');
+      upsert(state, 'DocItems', next, context.uuid);
+    });
+    refreshDocPackageStatus(state, packageId, context.now);
+  }
+  function docItemUpload(state, request, context) {
+    const item = findDocItem(state, request.itemId);
+    const pkg = findDocPackage(state, item.packageId);
+    openDocPackage(pkg);
+    if (item.status === 'Approved') fail('Reopen this item before uploading a new file.');
+    if (item.status === 'Submitted') fail('This item is waiting for review.');
+    const fileName = str(request.fileName);
+    const fileId = str(request.fileId);
+    if (!fileName) fail('File name is required.');
+    if (!fileId) fail('File upload failed.');
+    const extension = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
+    if (!docUploadMimes.includes(extension)) fail('Allowed files: docx, xlsx, pdf, pptx, jpg, png, zip.');
+    item.fileName = fileName;
+    item.fileId = fileId;
+    item.uploadedBy = context.actor;
+    item.uploadedAt = context.now;
+    item.submittedBy = '';
+    item.submittedAt = '';
+    item.reviewedBy = '';
+    item.reviewedAt = '';
+    item.remarks = '';
+    item.status = 'Draft';
+    item.version++;
+    refreshDocPackageStatus(state, pkg.id, context.now);
+  }
+  function docItemSubmit(state, request, context) {
+    const item = findDocItem(state, request.itemId);
+    const pkg = findDocPackage(state, item.packageId);
+    openDocPackage(pkg);
+    if (!['Draft', 'Rejected'].includes(item.status)) fail('Upload a file before submitting.');
+    if (!item.fileId) fail('Upload a file before submitting.');
+    item.status = 'Submitted';
+    item.submittedBy = context.actor;
+    item.submittedAt = context.now;
+    item.version++;
+    refreshDocPackageStatus(state, pkg.id, context.now);
+  }
+  function docItemReview(state, request, context) {
+    const item = findDocItem(state, request.itemId);
+    const pkg = findDocPackage(state, item.packageId);
+    openDocPackage(pkg);
+    if (item.status !== 'Submitted') fail('Only submitted items can be reviewed.');
+    const approve = !!request.approve;
+    const remarks = str(request.remarks);
+    if (!approve && !remarks) fail('A reason is required when rejecting.');
+    item.status = approve ? 'Approved' : 'Rejected';
+    item.reviewedBy = context.actor;
+    item.reviewedAt = context.now;
+    item.remarks = approve ? '' : remarks;
+    item.version++;
+    refreshDocPackageStatus(state, pkg.id, context.now);
+  }
+  function docItemReopen(state, request, context) {
+    const item = findDocItem(state, request.itemId);
+    const pkg = findDocPackage(state, item.packageId);
+    openDocPackage(pkg);
+    if (item.status !== 'Approved') fail('Only approved items can be reopened.');
+    item.status = 'Pending';
+    item.reviewedBy = '';
+    item.reviewedAt = '';
+    item.remarks = '';
+    item.version++;
+    refreshDocPackageStatus(state, pkg.id, context.now);
+  }
+  function docPackageArchive(state, request, context) {
+    const pkg = findDocPackage(state, request.packageId);
+    const archive = request.archived === undefined ? !pkg.archived : !!request.archived;
+    pkg.archived = archive;
+    pkg.status = archive ? 'Archived' : 'Open';
+    pkg.version++;
+    if (!archive) refreshDocPackageStatus(state, pkg.id, context.now);
+    return pkg;
   }
   function saveFinanceBook(state, request, context) {
     const payload = request.book;
@@ -498,7 +739,7 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money };
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

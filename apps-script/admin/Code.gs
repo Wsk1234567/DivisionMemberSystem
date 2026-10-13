@@ -5,7 +5,8 @@ function configuration_() {
   if (!owner) throw new Error('Owner has not configured the application.');
   const admins = JSON.parse(props.getProperty('ADMINS') || props.getProperty('ADMIN_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
   const treasurers = JSON.parse(props.getProperty('TREASURER_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
-  return { owner, admins, treasurers, privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID') };
+  const ocs = JSON.parse(props.getProperty('OC_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
+  return { owner, admins, treasurers, ocs, privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID'), templatesId: props.getProperty('DOC_TEMPLATES_FOLDER_ID'), submissionsId: props.getProperty('DOC_SUBMISSIONS_FOLDER_ID') };
 }
 function identity_(ownerOnly, requireAccess) {
   const config = configuration_();
@@ -15,15 +16,37 @@ function identity_(ownerOnly, requireAccess) {
   const isOwner = email === config.owner;
   const isAdmin = config.admins.includes(email);
   const isTreasurer = config.treasurers.includes(email);
-  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer) throw new Error('Access denied. This Google account is not an administrator or treasurer.');
+  const isOc = isOwner || config.ocs.includes(email);
+  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email)) throw new Error('Access denied. This Google account is not an administrator, officer or treasurer.');
   if (ownerOnly && !isOwner) throw new Error('Only the owner can perform this action.');
-  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, config };
+  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOc, config };
 }
 function requireFinance_(actor) {
   if (!actor.owner && !actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
 }
 function requireAdmin_(actor) {
   if (!actor.owner && !actor.admin) throw new Error('Access denied. Administrator access is required.');
+}
+function requireDocuments_(actor) {
+  if (actor.owner || actor.admin || actor.oc) return;
+  throw new Error('Access denied. Documents access is required.');
+}
+function requireDocumentApprover_(actor) {
+  if (actor.owner || actor.admin) return;
+  throw new Error('Access denied. Only Owner or Secretary can approve documents.');
+}
+function requirePackageAccess_(state, actor, packageId, itemId) {
+  let id = packageId;
+  if (!id && itemId) {
+    const item = state.DocItems.find(row => row.id === itemId);
+    if (item) id = item.packageId;
+  }
+  const pkg = id ? state.DocPackages.find(row => row.id === id) : null;
+  if (!pkg) throw new Error('Document package not found.');
+  if (actor.owner || actor.admin) return pkg;
+  const ocEmail = String(pkg.ocEmail || '').toLowerCase();
+  if (ocEmail && ocEmail === String(actor.email || '').toLowerCase()) return pkg;
+  throw new Error('Access denied. You are not the Organizing Chairman for this activity.');
 }
 function doGet() {
   try {
@@ -89,6 +112,41 @@ function sync_(state) {
   }
 }
 function context_(actor) { return { actor, now: new Date().toISOString(), uuid: () => Utilities.getUuid() }; }
+function docMime_(fileName) {
+  const ext = String(fileName || '').slice(String(fileName || '').lastIndexOf('.')).toLowerCase();
+  const map = { '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.pdf': 'application/pdf', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.zip': 'application/zip' };
+  return map[ext] || 'application/octet-stream';
+}
+function storeDocFile_(folderId, fileName, base64) {
+  if (!folderId) throw new Error('Document folders are not initialised. Owner must run Initialize document folders.');
+  const blob = Utilities.newBlob(Utilities.base64Decode(String(base64 || '')), docMime_(fileName), String(fileName));
+  return DriveApp.getFolderById(folderId).createFile(blob).getId();
+}
+function docDownload_(state, request) {
+  let fileId = request.fileId || '';
+  let fallbackName = request.fileName || '';
+  if (!fileId && request.itemId) {
+    const item = state.DocItems.find(row => row.id === request.itemId);
+    if (!item) throw new Error('Document item not found.');
+    if (request.source === 'template' && item.templateId) {
+      const template = state.DocTemplates.find(row => row.id === item.templateId);
+      fileId = template ? template.fileId : '';
+      fallbackName = template ? template.fileName : '';
+    } else {
+      fileId = item.fileId;
+      fallbackName = item.fileName;
+    }
+  }
+  if (!fileId && request.templateId) {
+    const template = state.DocTemplates.find(row => row.id === request.templateId);
+    if (!template) throw new Error('Template not found.');
+    fileId = template.fileId;
+    fallbackName = template.fileName;
+  }
+  if (!fileId) throw new Error('No file available to download.');
+  const file = DriveApp.getFileById(fileId);
+  return { fileName: file.getName() || fallbackName, mime: file.getMimeType(), contentBase64: Utilities.base64Encode(file.getBlob().getBytes()) };
+}
 function withLock_(work) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Another save is in progress. Please retry shortly.');
@@ -116,21 +174,26 @@ function bootstrap_(actor) {
       owner: actor.owner,
       admin: actor.admin,
       treasurer: actor.treasurer,
-      roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null].filter(Boolean)
+      oc: actor.oc,
+      roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null, actor.oc ? 'oc' : null].filter(Boolean)
     },
     sync: { ok: properties_().getProperty('SYNC_PENDING') === null, revision: Number(properties_().getProperty('PUBLISHED_REVISION') || -1) },
     admins: actor.owner ? actor.config.admins : [],
     treasurers: actor.owner ? actor.config.treasurers : [],
-    currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1
+    ocs: actor.owner ? actor.config.ocs : [],
+    currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1,
+    docFolders: { templates: actor.config.templatesId || '', submissions: actor.config.submissionsId || '' }
   };
 }
 function rpc(request) {
   try {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
-    const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash'];
+    const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash', 'initDocFolders'];
     const adminOnlyActions = ['previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults'];
     const financeActions = ['saveFinanceBook'];
     const memberDataActions = ['save', 'attendance'];
+    const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload'];
+    const documentApproveActions = ['docItemReview'];
     if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false, true)) }));
     if (request.action === 'listBackups') {
       const listActor = identity_(false, true);
@@ -142,13 +205,32 @@ function rpc(request) {
       if (adminOnlyActions.includes(request.action)) requireAdmin_(actor);
       if (financeActions.includes(request.action)) requireFinance_(actor);
       if (memberDataActions.includes(request.action)) requireAdmin_(actor);
+      if (documentActions.includes(request.action) || documentApproveActions.includes(request.action)) requireDocuments_(actor);
+      if (documentApproveActions.includes(request.action)) requireDocumentApprover_(actor);
       const state = loadState_();
       const context = context_(actor.email);
-      if (['save', 'attendance', 'saveFinanceBook'].includes(request.action)) {
+      const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload'];
+      if (packageScoped.includes(request.action)) requirePackageAccess_(state, actor, request.packageId, request.itemId);
+      if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
+      if (request.action === 'docItemUpload' && request.fileBase64 && !request.fileId) {
+        requireDocuments_(actor);
+        request.fileId = storeDocFile_(actor.config.submissionsId, request.fileName, request.fileBase64);
+      }
+      if (request.action === 'saveDocTemplate' && request.fileBase64) {
+        if (!actor.owner) throw new Error('Access denied. Only the owner can manage templates.');
+        if (!actor.config.templatesId) throw new Error('Document folders are not initialised. Owner must run Initialize document folders.');
+        request.row = Object.assign({}, request.row, { fileId: storeDocFile_(actor.config.templatesId, request.row.fileName, request.fileBase64) });
+      }
+      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate'].includes(request.action)) {
         const next = KPT.mutate(state, request, context);
         commit_(next);
         const sync = sync_(next);
         return { ok: true, data: { state: next, sync } };
+      }
+      if (request.action === 'docDownload') {
+        requireDocuments_(actor);
+        const result = docDownload_(state, request);
+        return { ok: true, data: result };
       }
       if (request.action === 'previewDelete') return { ok: true, data: KPT.recycleBundle(state, request.table, request.id) };
       if (request.action === 'previewDeleteAllMembers') return { ok: true, data: KPT.allMembersBundle(state) };
@@ -203,21 +285,48 @@ function rpc(request) {
         return { ok: true, data: { state: restored, sync: sync_(restored) } };
       }
       if (request.action === 'setAdmins' || request.action === 'setAccess') {
-        const normalizeList = list => [...new Set((list || []).map(value => String(value).trim().toLowerCase()))].filter(value => value && value !== actor.config.owner && /^[^\s@]+@gmail\.com$/.test(value));
-        const admins = normalizeList(request.action === 'setAccess' ? request.admins : request.emails);
-        const treasurers = normalizeList(request.action === 'setAccess' ? request.treasurers : []);
-        if (admins.length > 5 || treasurers.length > 8) throw new Error('Use at most five admin Gmail accounts and eight treasurer Gmail accounts.');
-        const previous = new Set([...actor.config.admins, ...actor.config.treasurers]);
-        const nextSet = new Set([...admins, ...treasurers]);
+        const normalizeList = (list, max) => {
+          const values = [...new Set((list || []).map(value => String(value).trim().toLowerCase()))].filter(value => value && value !== actor.config.owner && /^[^\s@]+@gmail\.com$/.test(value));
+          if (values.length > max) throw new Error('Use at most ' + max + ' Gmail accounts for this list.');
+          return values;
+        };
+        const admins = normalizeList(request.action === 'setAccess' ? request.admins : request.emails, 5);
+        const treasurers = normalizeList(request.action === 'setAccess' ? request.treasurers : [], 8);
+        const ocs = normalizeList(request.action === 'setAccess' ? request.ocs : [], 8);
+        const previous = new Set([...actor.config.admins, ...actor.config.treasurers, ...actor.config.ocs]);
+        const nextSet = new Set([...admins, ...treasurers, ...ocs]);
         const privateFile = DriveApp.getFileById(actor.config.privateId);
         const publicFile = DriveApp.getFileById(actor.config.publicId);
         const folder = DriveApp.getFolderById(actor.config.backupsId);
-        [...previous].filter(email => !nextSet.has(email)).forEach(email => { privateFile.removeEditor(email); publicFile.removeEditor(email); folder.removeEditor(email); });
-        nextSet.forEach(email => { if (!previous.has(email)) { privateFile.addEditor(email); publicFile.addEditor(email); folder.addEditor(email); } });
+        const docFolders = [actor.config.templatesId, actor.config.submissionsId].filter(Boolean).map(id => DriveApp.getFolderById(id));
+        [...previous].filter(email => !nextSet.has(email)).forEach(email => {
+          privateFile.removeEditor(email); publicFile.removeEditor(email); folder.removeEditor(email);
+          docFolders.forEach(docFolder => { try { docFolder.removeEditor(email); } catch (error) { /* ignore */ } });
+        });
+        nextSet.forEach(email => {
+          if (previous.has(email)) return;
+          privateFile.addEditor(email); publicFile.addEditor(email); folder.addEditor(email);
+          docFolders.forEach(docFolder => { try { docFolder.addEditor(email); } catch (error) { /* ignore */ } });
+        });
         properties_().setProperty('ADMINS', JSON.stringify(admins));
         properties_().setProperty('ADMIN_EMAILS', JSON.stringify(admins));
         properties_().setProperty('TREASURER_EMAILS', JSON.stringify(treasurers));
-        return { ok: true, data: { admins, treasurers } };
+        properties_().setProperty('OC_EMAILS', JSON.stringify(ocs));
+        return { ok: true, data: { admins, treasurers, ocs } };
+      }
+      if (request.action === 'initDocFolders') {
+        const props = properties_();
+        const templatesId = props.getProperty('DOC_TEMPLATES_FOLDER_ID');
+        const submissionsId = props.getProperty('DOC_SUBMISSIONS_FOLDER_ID');
+        if (templatesId && submissionsId) return { ok: true, data: { templates: templatesId, submissions: submissionsId, existing: true } };
+        const templates = DriveApp.createFolder('TCCD Document Templates');
+        const submissions = DriveApp.createFolder('TCCD Document Submissions');
+        [templates, submissions].forEach(folder => folder.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE));
+        props.setProperty('DOC_TEMPLATES_FOLDER_ID', templates.getId());
+        props.setProperty('DOC_SUBMISSIONS_FOLDER_ID', submissions.getId());
+        const editors = new Set([actor.config.owner, ...actor.config.admins, ...actor.config.ocs]);
+        editors.forEach(email => { templates.addEditor(email); submissions.addEditor(email); });
+        return { ok: true, data: { templates: templates.getId(), submissions: submissions.getId() } };
       }
       if (request.action === 'setCurrentPhase') {
         const phase = Number(request.phase);
