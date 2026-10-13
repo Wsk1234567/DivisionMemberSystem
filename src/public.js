@@ -8,64 +8,68 @@
   byId('organization').textContent = config.organization || byId('organization').textContent;
   byId('region').textContent = config.region || byId('region').textContent;
   byId('demo-banner').hidden = !demo;
-  const adminLink = byId('admin-link');
-  const treasurerLink = byId('treasurer-link');
-  const loginLink = byId('login-link');
   const nav = byId('portal-nav');
   const workspaceBase = () => {
     if (demo) return 'admin.html';
     if (approvedUrl(config.adminUrl)) return config.adminUrl;
     return '';
   };
-  function bindWorkspaceLink(element, mode, disabledTitle) {
-    const base = workspaceBase();
-    if (base) {
-      element.href = base + (base.includes('?') ? '&' : '?') + 'mode=' + mode;
-      element.removeAttribute('aria-disabled');
-      element.title = '';
-    } else {
-      element.removeAttribute('href');
-      element.setAttribute('aria-disabled', 'true');
-      element.title = disabledTitle;
+  function decodeBase64Url(value) {
+    const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '==='.slice((normalized.length + 3) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+  function parsePortalPayload(raw) {
+    try {
+      const payload = JSON.parse(decodeBase64Url(raw));
+      if (!payload || typeof payload !== 'object') return null;
+      if (payload.exp && Number(payload.exp) < Date.now()) return null;
+      return payload;
+    } catch (error) {
+      return null;
     }
   }
-  function sessionFromHash() {
+  function portalFromHash() {
     const hash = String(location.hash || '').replace(/^#/, '');
-    if (!hash.startsWith('session=')) return '';
-    try { return decodeURIComponent(hash.slice('session='.length)); } catch (error) { return ''; }
+    if (hash.startsWith('portal=')) return parsePortalPayload(hash.slice('portal='.length));
+    return null;
   }
-  function clearSessionHash() {
+  function clearHash() {
     try { history.replaceState({}, '', location.pathname + location.search); } catch (error) { location.hash = ''; }
   }
-  function saveSession(token) {
-    try { sessionStorage.setItem('tccd-portal-session', token); } catch (error) { /* ignore */ }
+  function saveSession(payload) {
+    try { sessionStorage.setItem('tccd-portal', JSON.stringify(payload)); } catch (error) { /* ignore */ }
   }
   function loadSession() {
-    try { return sessionStorage.getItem('tccd-portal-session') || ''; } catch (error) { return ''; }
+    try {
+      const raw = sessionStorage.getItem('tccd-portal');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload && payload.exp && Number(payload.exp) < Date.now()) {
+        sessionStorage.removeItem('tccd-portal');
+        return null;
+      }
+      return payload;
+    } catch (error) {
+      return null;
+    }
   }
   function clearSession() {
-    try { sessionStorage.removeItem('tccd-portal-session'); } catch (error) { /* ignore */ }
-    clearSessionHash();
+    try { sessionStorage.removeItem('tccd-portal'); } catch (error) { /* ignore */ }
+    clearHash();
   }
-  async function fetchPortal(token) {
+  function portalLoginHref() {
     const base = workspaceBase();
-    if (!base) throw new Error('Sign-in is not configured yet.');
-    const url = base + (base.includes('?') ? '&' : '?') + 'portalSession=' + encodeURIComponent(token);
-    const response = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
-    const payload = await response.json();
-    if (!payload || !payload.ok) throw new Error((payload && payload.error) || 'Sign-in expired. Please login again.');
-    return payload.data;
+    if (!base) return '#';
+    return base + (base.includes('?') ? '&' : '?') + 'mode=portal';
   }
-  async function logoutPortal(token) {
+  function workspaceHref(mode) {
     const base = workspaceBase();
-    if (base && token) {
-      try {
-        await fetch(base + (base.includes('?') ? '&' : '?') + 'portalLogout=' + encodeURIComponent(token), { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
-      } catch (error) { /* ignore */ }
-    }
-    clearSession();
-    renderNavbar(null);
-    window.location.reload();
+    if (!base) return '#';
+    return base + (base.includes('?') ? '&' : '?') + 'mode=' + mode;
   }
   function packageHref(adminUrl, packageId) {
     const base = adminUrl || workspaceBase();
@@ -74,49 +78,35 @@
   }
   function renderNavbar(session) {
     const find = '<a href="#member-search">Find Member</a>';
-    const login = '<a id="login-link" class="button primary portal-login" href="' + escape(portalLoginHref()) + '">Login</a>';
     if (!session) {
-      nav.innerHTML = find + '<a id="treasurer-link" class="portal-link treasurer" href="' + escape(workspaceBase() ? workspaceBase() + '?mode=treasurer' : '#') + '">Treasurer Work</a><a id="admin-link" class="portal-link admin" href="' + escape(workspaceBase() ? workspaceBase() + '?mode=admin' : '#') + '">Admin Work</a>' + login;
+      nav.innerHTML = find
+        + '<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>'
+        + '<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>'
+        + '<a id="login-link" class="button primary portal-login" href="' + escape(portalLoginHref()) + '">Login</a>';
       return;
     }
     const parts = [find];
-    if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape((session.adminUrl || workspaceBase()) + '?mode=treasurer') + '">Treasurer Work</a>');
-    if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape((session.adminUrl || workspaceBase()) + '?mode=admin') + '">Admin Work</a>');
+    if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>');
+    if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>');
     (session.packages || []).forEach(pkg => {
       parts.push('<a class="portal-link package-link" href="' + escape(packageHref(session.adminUrl, pkg.id)) + '">' + escape(pkg.label) + '</a>');
     });
-    parts.push('<a id="logout-link" class="button portal-login" href="#">Logout</a>');
+    parts.push('<button type="button" id="logout-link" class="button portal-login">Logout</button>');
     nav.innerHTML = parts.join('');
     const logout = byId('logout-link');
-    if (logout) logout.addEventListener('click', event => {
-      event.preventDefault();
-      logoutPortal(loadSession());
+    if (logout) logout.addEventListener('click', () => {
+      clearSession();
+      renderNavbar(null);
     });
   }
-  function portalLoginHref() {
-    const base = workspaceBase();
-    if (!base) return '#';
-    return base + (base.includes('?') ? '&' : '?') + 'mode=portal';
-  }
-  bindWorkspaceLink(adminLink, 'admin', 'Admin access is not configured yet.');
-  bindWorkspaceLink(treasurerLink, 'treasurer', 'Treasurer access is not configured yet.');
-  if (loginLink) loginLink.href = portalLoginHref();
 
-  const hashSession = sessionFromHash();
-  if (hashSession) {
-    saveSession(hashSession);
-    clearSessionHash();
-    fetchPortal(hashSession).then(session => {
-      renderNavbar(session);
-    }).catch(() => {
-      clearSession();
-      renderNavbar(null);
-    });
-  } else if (loadSession()) {
-    fetchPortal(loadSession()).then(session => renderNavbar(session)).catch(() => {
-      clearSession();
-      renderNavbar(null);
-    });
+  const fromHash = portalFromHash();
+  if (fromHash) {
+    saveSession(fromHash);
+    clearHash();
+    renderNavbar(fromHash);
+  } else {
+    renderNavbar(loadSession());
   }
 
   byId('search-mode').addEventListener('change', () => { byId('query').placeholder = byId('search-mode').value === 'name' ? 'Enter a name' : 'Enter the complete SJAM ID'; });

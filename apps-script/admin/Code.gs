@@ -117,6 +117,12 @@ function portalNavbarPayload_(session) {
     adminUrl: portalAdminUrl_()
   };
 }
+function encodePortalPayload_(session) {
+  const payload = portalNavbarPayload_(session);
+  payload.exp = Date.now() + 24 * 60 * 60 * 1000;
+  const json = JSON.stringify(payload);
+  return Utilities.base64EncodeWebSafe(json);
+}
 function doGet(e) {
   const params = (e && e.parameter) || {};
   if (params.portalSession) {
@@ -139,13 +145,18 @@ function doGet(e) {
     const actor = identity_(false, true);
     if (wantPortal) {
       const state = loadState_();
-      const token = createPortalSession_(actor, state);
-      const target = portalPublicUrl_().replace(/#.*$/, '') + '#session=' + encodeURIComponent(token);
-      return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=' + target.replace(/"/g, '&quot;') + '"><p>Signing you back to the member system… <a href="' + target.replace(/"/g, '&quot;') + '">Continue</a></p>');
+      const session = createPortalSession_(actor, state);
+      // Prefer embedding nav in the redirect so the public site does not need a second API call.
+      const map = portalSessionList_();
+      const full = map[session] || { email: actor.email, owner: !!actor.owner, admin: !!actor.admin, treasurer: !!actor.treasurer, oc: !!actor.oc, packages: [] };
+      const encoded = encodePortalPayload_(full);
+      const base = portalPublicUrl_().replace(/#.*$/, '');
+      const target = base + '#portal=' + encoded;
+      return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=' + target.replace(/"/g, '&quot;') + '"><p>Returning to the member system… <a href="' + target.replace(/"/g, '&quot;') + '">Continue</a></p>');
     }
     return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
-    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised Google account. You need Treasurer, Administrator, Organizing Chairman, or Owner access.</p>');
+    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised Google account. You need Treasurer, Administrator, Organizing Chairman, or Owner access.<br><small>' + String(error.message || error).replace(/</g, '&lt;') + '</small></p>');
   }
 }
 function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
