@@ -470,6 +470,14 @@
     docFolders = response.docFolders || { templates: '', submissions: '' };
     currentPhase = response.currentPhase || 1;
     workspaceMode = preferredMode();
+    const packageParam = new URLSearchParams(String(location.search || '')).get('package');
+    if (packageParam && state && state.DocPackages) {
+      const linked = state.DocPackages.find(row => row.id === packageParam);
+      if (linked && canOpenPackage(linked)) {
+        openDocPackageId = linked.id;
+        if (!user.admin && !user.owner) workspaceMode = 'oc';
+      }
+    }
     if (isOcOnly()) view = 'Documents';
     else if (workspaceMode === 'treasurer') view = 'Finance';
     else if (workspaceMode === 'owner') view = 'Owner';

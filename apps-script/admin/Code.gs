@@ -48,12 +48,104 @@ function requirePackageAccess_(state, actor, packageId, itemId) {
   if (ocEmail && ocEmail === String(actor.email || '').toLowerCase()) return pkg;
   throw new Error('Access denied. You are not the Organizing Chairman for this activity.');
 }
-function doGet() {
+function portalPublicUrl_() {
+  return String(properties_().getProperty('PUBLIC_SITE_URL') || properties_().getProperty('PORTAL_RETURN_URL') || 'https://wsk1234567.github.io/DivisionMemberSystem/');
+}
+function portalSessionList_() {
+  try { return JSON.parse(properties_().getProperty('PORTAL_SESSIONS') || '{}'); } catch (error) { return {}; }
+}
+function portalSessionSave_(map) {
+  const keys = Object.keys(map);
+  if (keys.length > 40) {
+    keys.sort((a, b) => String(map[b].createdAt || '').localeCompare(String(map[a].createdAt || '')));
+    keys.slice(40).forEach(key => { delete map[key]; });
+  }
+  properties_().setProperty('PORTAL_SESSIONS', JSON.stringify(map));
+}
+function createPortalSession_(actor, state) {
+  const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+  const packages = state.DocPackages.filter(pkg => {
+    if (pkg.archived || pkg.status === 'Archived') return false;
+    if (actor.owner || actor.admin) return true;
+    return String(pkg.ocEmail || '').toLowerCase() === String(actor.email || '').toLowerCase();
+  }).map(pkg => ({
+    id: pkg.id,
+    label: pkg.activityType + ' (' + pkg.year + ')',
+    activityType: pkg.activityType,
+    year: pkg.year,
+    eventDate: pkg.eventDate || ''
+  }));
+  const map = portalSessionList_();
+  map[token] = {
+    createdAt: new Date().toISOString(),
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    email: actor.email,
+    owner: !!actor.owner,
+    admin: !!actor.admin,
+    treasurer: !!actor.treasurer,
+    oc: !!actor.oc,
+    packages
+  };
+  portalSessionSave_(map);
+  return token;
+}
+function readPortalSession_(token) {
+  const map = portalSessionList_();
+  const session = map[token];
+  if (!session) throw new Error('Login expired. Please sign in again.');
+  if (session.expiresAt && session.expiresAt < Date.now()) {
+    delete map[token];
+    portalSessionSave_(map);
+    throw new Error('Login expired. Please sign in again.');
+  }
+  return session;
+}
+function portalAdminUrl_() {
   try {
-    identity_(false, true);
+    if (typeof ScriptApp !== 'undefined' && ScriptApp.getService) return ScriptApp.getService().getUrl();
+  } catch (error) { /* ignore */ }
+  return String(properties_().getProperty('ADMIN_URL') || '');
+}
+function portalNavbarPayload_(session) {
+  return {
+    email: session.email,
+    owner: !!session.owner,
+    admin: !!session.admin,
+    treasurer: !!session.treasurer,
+    oc: !!session.oc,
+    packages: session.packages || [],
+    adminUrl: portalAdminUrl_()
+  };
+}
+function doGet(e) {
+  const params = (e && e.parameter) || {};
+  if (params.portalSession) {
+    try {
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, data: portalNavbarPayload_(readPortalSession_(String(params.portalSession))) })).setMimeType(ContentService.MimeType.JSON);
+    } catch (error) {
+      return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(error.message || error) })).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  if (params.portalLogout) {
+    try {
+      const map = portalSessionList_();
+      delete map[String(params.portalLogout)];
+      portalSessionSave_(map);
+    } catch (error) { /* ignore */ }
+    return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  }
+  const wantPortal = params.mode === 'portal' || params.portal === '1';
+  try {
+    const actor = identity_(false, true);
+    if (wantPortal) {
+      const state = loadState_();
+      const token = createPortalSession_(actor, state);
+      const target = portalPublicUrl_().replace(/#.*$/, '') + '#session=' + encodeURIComponent(token);
+      return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=' + target.replace(/"/g, '&quot;') + '"><p>Signing you back to the member system… <a href="' + target.replace(/"/g, '&quot;') + '">Continue</a></p>');
+    }
     return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
-    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised Google account. You need Treasurer, Administrator, or Owner access.</p>');
+    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised Google account. You need Treasurer, Administrator, Organizing Chairman, or Owner access.</p>');
   }
 }
 function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
