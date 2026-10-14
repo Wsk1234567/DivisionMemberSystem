@@ -15,11 +15,18 @@ test('built admin page embeds literal scripts without unresolved placeholders', 
   assert.equal(scripts.length, 8);
   for (const script of scripts) assert.doesNotThrow(() => new vm.Script(script));
   assert.equal(scripts[0], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
+  // GitHub-hosted admin UI is also emitted for Plan B.
+  const githubAdmin = read('dist/admin.html');
+  assert.match(githubAdmin, /src="transport\.js"/);
+  assert.match(githubAdmin, /src="admin\.js"/);
+  assert.equal(read('src/transport.js').includes('portalLogin'), true);
 });
 test('public and admin Apps Script deployments have separate scope and execution identity', () => {
   const admin = JSON.parse(read('apps-script/admin/appsscript.json'));
   const publicManifest = JSON.parse(read('apps-script/public/appsscript.json'));
-  assert.equal(admin.webapp.executeAs, 'USER_ACCESSING');
+  // Admin API is called from GitHub Pages with session tokens; execute as deployer + Anyone.
+  assert.equal(admin.webapp.executeAs, 'USER_DEPLOYING');
+  assert.equal(admin.webapp.access, 'ANYONE');
   assert.equal(publicManifest.webapp.executeAs, 'USER_DEPLOYING');
   assert.equal(publicManifest.webapp.access, 'ANYONE_ANONYMOUS');
   assert.deepEqual(publicManifest.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets.readonly']);

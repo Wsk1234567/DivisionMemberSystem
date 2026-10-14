@@ -11,10 +11,11 @@ const demo = require('../src/demo-data.js');
 const read = name => fs.readFile(path.join(root, name), 'utf8');
 const write = async (name, value) => { const target = path.resolve(root, name); if (!target.startsWith(root + path.sep)) throw new Error('Output is outside the project.'); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, value); };
 const config = JSON.parse(await read('config.public.json'));
-const publicKeys = ['organization', 'region', 'publicApiUrl', 'adminUrl', 'publicSiteUrl'];
+const publicKeys = ['organization', 'region', 'publicApiUrl', 'adminUrl', 'publicSiteUrl', 'googleClientId'];
 if (Object.keys(config).some(key => !publicKeys.includes(key))) throw new Error('Public config has unsupported fields. Never add credentials.');
 for (const key of ['adminUrl', 'publicApiUrl']) if (config[key] && !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(config[key])) throw new Error('Use a Google /exec deployment URL for ' + key);
 if (config.publicSiteUrl && !/^https:\/\/[\w.-]+\.github\.io\//.test(config.publicSiteUrl)) throw new Error('Use the GitHub Pages https URL for publicSiteUrl.');
+if (config.googleClientId && !/\.apps\.googleusercontent\.com$/.test(config.googleClientId)) throw new Error('googleClientId must be a Google OAuth client id.');
 execFileSync(process.execPath, ['scripts/build-finance-templates.cjs'], { cwd: root, stdio: 'inherit' });
 const style = await read('src/styles.css');
 const domainCode = await read('src/domain.js');
@@ -32,6 +33,7 @@ const inline = code => '<script>' + code.replace(/<\/script/gi, '<\\/script') + 
 const transport = (await read('src/transport.js')).replace("'__PUBLIC_URL__'", JSON.stringify(config.publicSiteUrl || ''));
 const productionAdmin = adminTemplate.replace('__STYLE__', () => '<style>' + style + '</style>').replace('__LIBRARY__', () => inline(library)).replace('__DOMAIN__', () => inline(domainCode)).replace('__WORKBOOK__', () => inline(workbook)).replace('__FINANCETPL__', () => inline(financeTemplates)).replace('__FINANCEWB__', () => inline(financeWorkbook)).replace('__FINANCEPDF__', () => inline(financePdf)).replace('__TRANSPORT__', () => inline(transport)).replace('__ADMIN__', () => inline(admin));
 const previewAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__FINANCETPL__', '<script src="finance-templates.js"></script>').replace('__FINANCEWB__', '<script src="finance-workbook.js"></script>').replace('__FINANCEPDF__', '<script src="finance-pdf.js"></script>').replace('__TRANSPORT__', '<script src="demo-transport.js"></script>').replace('__ADMIN__', '<script src="admin.js"></script>');
+const githubAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__FINANCETPL__', '<script src="finance-templates.js"></script>').replace('__FINANCEWB__', '<script src="finance-workbook.js"></script>').replace('__FINANCEPDF__', '<script src="finance-pdf.js"></script>').replace('__TRANSPORT__', '<script src="transport.js"></script>').replace('__ADMIN__', '<script src="admin.js"></script>');
 for (const dir of ['dist', 'preview']) {
   await write(dir + '/index.html', await read('src/public.html'));
   await write(dir + '/public.js', await read('src/public.js'));
@@ -39,6 +41,9 @@ for (const dir of ['dist', 'preview']) {
   await write(dir + '/config.js', 'window.KPT_CONFIG = ' + JSON.stringify(dir === 'preview' ? { ...config, demo: true } : config).replace(/</g, '\\u003c') + ';\n');
 }
 await write('dist/.nojekyll', '');
+await write('dist/admin.html', githubAdmin);
+for (const file of ['domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js']) await write('dist/' + file, await read('src/' + file));
+await write('dist/xlsx.full.min.js', library);
 await write('preview/admin.html', previewAdmin);
 for (const file of ['domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'demo-transport.js']) await write('preview/' + file, await read('src/' + file));
 await write('preview/xlsx.full.min.js', library);
@@ -49,8 +54,8 @@ await write('preview/demo-public.json', JSON.stringify(domain.projectPublic(fixt
 await write('build/apps-script/admin/Admin.html', productionAdmin);
 await write('build/apps-script/admin/Domain.gs', domainCode);
 for (const project of ['admin', 'public']) for (const file of ['Code.gs', 'appsscript.json']) await write('build/apps-script/' + project + '/' + file, await read('apps-script/' + project + '/' + file));
-const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css'];
+const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css', 'admin.html', 'domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'xlsx.full.min.js'];
 const publicFiles = await fs.readdir(path.join(root, 'dist'));
 if (publicFiles.some(name => !approvedFiles.includes(name))) throw new Error('Unexpected file in public dist. Review before publishing.');
-console.log('Built TCCD public site, 500-member fictional preview, and two Google Apps Script deployment packages.');
-console.log('Public deployment: dist/ · Local preview: preview/ · Google packages: build/apps-script/');
+console.log('Built TCCD public+admin site, preview, and Apps Script packages.');
+console.log('GitHub Pages: dist/ | Preview: preview/ | Apps Script: build/apps-script/');

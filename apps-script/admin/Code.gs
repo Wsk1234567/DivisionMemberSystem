@@ -8,11 +8,35 @@ function configuration_() {
   const ocs = JSON.parse(props.getProperty('OC_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
   return { owner, admins, treasurers, ocs, privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID'), templatesId: props.getProperty('DOC_TEMPLATES_FOLDER_ID'), submissionsId: props.getProperty('DOC_SUBMISSIONS_FOLDER_ID') };
 }
-function identity_(ownerOnly, requireAccess) {
+function actorFromEmail_(email) {
   const config = configuration_();
-  const email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-  const effective = String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
-  if (!email || email !== effective) throw new Error('Sign in using the authorised Google account. Deploy Admin as User accessing the web app.');
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) throw new Error('Sign in with the authorised Google account.');
+  const isOwner = normalized === config.owner;
+  const isAdmin = config.admins.includes(normalized);
+  const isTreasurer = config.treasurers.includes(normalized);
+  const inOcList = config.ocs.includes(normalized);
+  return {
+    email: normalized,
+    owner: isOwner,
+    admin: isOwner || isAdmin,
+    treasurer: isOwner || isTreasurer,
+    oc: isOwner || inOcList,
+    config
+  };
+}
+function identity_(ownerOnly, requireAccess, apiEmail) {
+  const config = configuration_();
+  let email;
+  if (apiEmail) {
+    email = String(apiEmail).trim().toLowerCase();
+  } else {
+    email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const effective = String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
+    // Execute-as-deployer web apps may have empty getActiveUser; callers should pass apiEmail.
+    if (email && effective && email !== effective && !apiEmail) throw new Error('Sign in using the authorised Google account.');
+    if (!email) throw new Error('Sign in with the authorised Google account.');
+  }
   const isOwner = email === config.owner;
   const isAdmin = config.admins.includes(email);
   const isTreasurer = config.treasurers.includes(email);
@@ -293,7 +317,7 @@ function bootstrap_(actor) {
     docFolders: { templates: actor.config.templatesId || '', submissions: actor.config.submissionsId || '' }
   };
 }
-function rpc(request) {
+function rpc(request, apiEmail) {
   try {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
     const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash', 'initDocFolders'];
@@ -302,14 +326,14 @@ function rpc(request) {
     const memberDataActions = ['save', 'attendance'];
     const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload'];
     const documentApproveActions = ['docItemReview'];
-    if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false, true)) }));
+    if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false, true, apiEmail)) }));
     if (request.action === 'listBackups') {
-      const listActor = identity_(false, true);
+      const listActor = identity_(false, true, apiEmail);
       requireAdmin_(listActor);
       return { ok: true, data: listBackups_() };
     }
     return withLock_(() => {
-      const actor = identity_(ownerOnlyActions.includes(request.action), true);
+      const actor = identity_(ownerOnlyActions.includes(request.action), true, apiEmail);
       if (adminOnlyActions.includes(request.action)) requireAdmin_(actor);
       if (financeActions.includes(request.action)) requireFinance_(actor);
       if (memberDataActions.includes(request.action)) requireAdmin_(actor);
@@ -480,4 +504,65 @@ function dailyBackup_() {
     backup_(loadState_(), 'Daily backup');
     listBackups_().slice(30).forEach(row => DriveApp.getFileById(row.id).setTrashed(true));
   });
+}
+
+// ---- JSON API for GitHub-hosted admin UI (Plan B) ----
+function apiJson_(payload) {
+  return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
+}
+function verifyGoogleIdToken_(idToken) {
+  const token = String(idToken || '').trim();
+  if (!token) throw new Error('Missing Google ID token.');
+  const response = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(token), { muteHttpExceptions: true });
+  if (response.getResponseCode() !== 200) throw new Error('Google sign-in failed. Please login again.');
+  const info = JSON.parse(response.getContentText() || '{}');
+  const email = String(info.email || '').toLowerCase();
+  if (!email || String(info.email_verified) === 'false') throw new Error('Google account is not verified.');
+  return actorFromEmail_(email);
+}
+function actorFromSessionToken_(token) {
+  const session = readPortalSession_(String(token || ''));
+  return actorFromEmail_(session.email);
+}
+function portalLogin_(request) {
+  const actor = verifyGoogleIdToken_(request.idToken);
+  const state = loadState_();
+  const sessionToken = createPortalSession_(actor, state);
+  const map = portalSessionList_();
+  const session = map[sessionToken] || {};
+  return {
+    sessionToken,
+    user: {
+      email: actor.email,
+      owner: actor.owner,
+      admin: actor.admin,
+      treasurer: actor.treasurer,
+      oc: actor.oc
+    },
+    packages: session.packages || []
+  };
+}
+function doPost(e) {
+  try {
+    const raw = (e && e.postData && e.postData.contents) || (e && e.parameter && e.parameter.payload) || '';
+    let request;
+    try { request = JSON.parse(raw); } catch (error) { throw new Error('Invalid JSON request.'); }
+    if (request.action === 'portalLogin') return apiJson_({ ok: true, data: portalLogin_(request) });
+    if (request.action === 'portalLogout') {
+      if (request.sessionToken) {
+        const map = portalSessionList_();
+        delete map[String(request.sessionToken)];
+        portalSessionSave_(map);
+      }
+      return apiJson_({ ok: true, data: { loggedOut: true } });
+    }
+    let email = '';
+    if (request.sessionToken) email = readPortalSession_(String(request.sessionToken)).email;
+    else if (request.idToken) email = verifyGoogleIdToken_(request.idToken).email;
+    else throw new Error('Sign-in required.');
+    const result = rpc(request, email);
+    return apiJson_(result);
+  } catch (error) {
+    return apiJson_({ ok: false, error: String(error.message || error).slice(0, 500) });
+  }
 }

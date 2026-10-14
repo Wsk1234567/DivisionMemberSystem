@@ -820,10 +820,11 @@
       return;
     }
     if (name === 'logoutPortal') {
+      if (window.KPTTransport && window.KPTTransport.logout) await window.KPTTransport.logout();
       clearSessionHash();
       try { sessionStorage.removeItem('tccd-portal'); } catch (error) { /* ignore */ }
-      notice('Signed out of this session. Close other Google tabs if you need a full Google logout.');
-      render();
+      notice('Signed out of this session.');
+      showLoginGate('Signed out. Sign in again to continue.');
       return;
     }
     if (name === 'docBack') { openDocPackageId = null; render(); return; }
@@ -1073,5 +1074,39 @@
     } catch (error) { if (byId('editor').open) byId('editor-message').textContent = error.message; else notice(error.message, true); }
     finally { submit.disabled = false; }
   });
-  refresh().catch(error => { notice(error.message, true); byId('content').innerHTML = '<div class="card empty"><strong>Records could not be loaded</strong>Check administrator authorisation, then use Reload data.</div>'; });
+  function showLoginGate(message) {
+    const clientId = (window.KPT_CONFIG && window.KPT_CONFIG.googleClientId) || '';
+    byId('page-title').textContent = 'Sign in';
+    byId('content').innerHTML = '<section class="card"><div class="eyebrow">TCCD Member System</div><h2>Sign in</h2><p class="muted">' + escape(message || 'Sign in with the Gmail account granted access by the Owner.') + '</p>'
+      + (clientId
+        ? '<div id="gis-button" style="margin:18px 0"></div><p class="hint">Secretary, Treasurer, Organizing Chairman, or Owner Gmail only.</p>'
+        : '<p class="hint">Set <strong>googleClientId</strong> in config.public.json (Google OAuth Web client ID) to enable sign-in on this page.</p>')
+      + '</section>';
+    if (!clientId) return;
+    const startGis = () => {
+      if (!window.google || !google.accounts || !google.accounts.id) return;
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: response => {
+          window.KPTTransport.loginWithIdToken(response.credential)
+            .then(() => refresh())
+            .catch(error => notice(error.message, true));
+        }
+      });
+      const holder = byId('gis-button');
+      if (holder) google.accounts.id.renderButton(holder, { theme: 'outline', size: 'large', text: 'signin_with' });
+    };
+    if (window.google && google.accounts) startGis();
+    else window.addEventListener('load', startGis, { once: true });
+  }
+  refresh().catch(error => {
+    const message = String(error.message || error);
+    if (/sign-in|sign in|login/i.test(message)) {
+      notice(message, true);
+      showLoginGate(message);
+      return;
+    }
+    notice(message, true);
+    byId('content').innerHTML = '<div class="card empty"><strong>Records could not be loaded</strong>Check administrator authorisation, then use Reload data.</div>';
+  });
 })();

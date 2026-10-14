@@ -63,9 +63,8 @@
     clearHash();
   }
   function loginHref() {
-    const base = workspaceBase();
-    if (!base) return '#';
-    return base + (base.includes('?') ? '&' : '?') + 'mode=login';
+    // Admin UI is hosted on GitHub Pages (Plan B); Google sign-in is inside admin.html.
+    return 'admin.html';
   }
   function workspaceHref(mode) {
     const base = workspaceBase();
