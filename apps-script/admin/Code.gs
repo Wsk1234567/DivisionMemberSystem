@@ -151,7 +151,8 @@ function doGet(e) {
       const encoded = encodePortalPayload_(full);
       const base = portalPublicUrl_().replace(/#.*$/, '');
       const target = base + '#portal=' + encoded;
-      return HtmlService.createHtmlOutput('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=' + target.replace(/"/g, '&quot;') + '"><title>TCCD • Login</title><p style="font-family:sans-serif">Signing you in… <a href="' + target.replace(/"/g, '&quot;') + '">Continue to member system</a></p>');
+      // Must leave the HtmlService iframe; meta refresh alone often stays stuck on the iframe.
+      return HtmlService.createHtmlOutput('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>TCCD</title><body style="font-family:system-ui,sans-serif;padding:32px"><p>Signing you in…</p><p><a id="go" href="' + target.replace(/"/g, '&quot;') + '">Continue to member system</a></p><script>var t=' + JSON.stringify(target) + ';try{if(window.top&&window.top!==window){window.top.location.replace(t);}else{window.location.replace(t);}}catch(e){document.getElementById("go").click();}<\/script></body>');
     }
     return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {

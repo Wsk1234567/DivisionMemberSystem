@@ -77,22 +77,43 @@
     if (!base || !packageId) return '#';
     return base + (base.includes('?') ? '&' : '?') + 'mode=oc&package=' + encodeURIComponent(packageId);
   }
+  function openTop(url) {
+    if (!url || url === '#') return;
+    try {
+      if (window.top && window.top !== window) window.top.location.href = url;
+      else window.location.href = url;
+    } catch (error) {
+      window.open(url, '_blank', 'noopener');
+    }
+  }
+  function bindTopLinks() {
+    nav.querySelectorAll('a[href]').forEach(anchor => {
+      const href = anchor.getAttribute('href') || '';
+      if (!href || href.startsWith('#')) return;
+      anchor.setAttribute('target', '_top');
+      anchor.addEventListener('click', event => {
+        event.preventDefault();
+        openTop(href);
+      });
+    });
+  }
   function renderNavbar(session) {
     const find = '<a href="#member-search">Find Member</a>';
     if (!session) {
-      // Logged out: only Find Member + Login
-      nav.innerHTML = find + '<a id="login-link" class="button primary portal-login" href="' + escape(loginHref()) + '">Login</a>';
+      nav.innerHTML = find + '<a id="login-link" class="button primary portal-login" target="_top" href="' + escape(loginHref()) + '">Login</a>';
+      bindTopLinks();
       return;
     }
     const parts = [find];
     if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>');
     if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>');
     (session.packages || []).forEach(pkg => {
-      parts.push('<a class="portal-link package-link" href="' + escape(packageHref(session, pkg.id)) + '">' + escape(pkg.label) + '</a>');
+      parts.push('<a class="portal-link package-link" href="' + escape(packageHref(session, pkg.id)) + '" title="' + escape(packageHref(session, pkg.id)) + '">' + escape(pkg.label) + '</a>');
     });
     parts.push('<span class="portal-email" title="Signed in">' + escape(session.email || '') + '</span>');
     parts.push('<button type="button" id="logout-link" class="button portal-login">Logout</button>');
     nav.innerHTML = parts.join('');
+    bindTopLinks();
     const logout = byId('logout-link');
     if (logout) logout.addEventListener('click', () => {
       clearSession();
