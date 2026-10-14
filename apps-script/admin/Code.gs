@@ -143,20 +143,10 @@ function doGet(e) {
   const wantPortal = params.mode === 'portal' || params.portal === '1';
   try {
     const actor = identity_(false, true);
-    if (wantPortal) {
-      const state = loadState_();
-      const session = createPortalSession_(actor, state);
-      // Prefer embedding nav in the redirect so the public site does not need a second API call.
-      const map = portalSessionList_();
-      const full = map[session] || { email: actor.email, owner: !!actor.owner, admin: !!actor.admin, treasurer: !!actor.treasurer, oc: !!actor.oc, packages: [] };
-      const encoded = encodePortalPayload_(full);
-      const base = portalPublicUrl_().replace(/#.*$/, '');
-      const target = base + '#portal=' + encoded;
-      return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=' + target.replace(/"/g, '&quot;') + '"><p>Returning to the member system… <a href="' + target.replace(/"/g, '&quot;') + '">Continue</a></p>');
-    }
-    return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    // Portal is the same signed-in app shell (mode=portal); no redirect to the public site.
+    return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Member System').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
-    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>Access unavailable</h1><p>Sign in with an authorised Google account. You need Treasurer, Administrator, Organizing Chairman, or Owner access.<br><small>' + String(error.message || error).replace(/</g, '&lt;') + '</small></p>');
+    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>TCCD Member System</h1><p>Sign in with your Google account to continue.</p><p><small>Use the account granted access by the Owner (Secretary, Treasurer, or Organizing Chairman).</small></p><p>' + String(error.message || error).replace(/</g, '&lt;') + '</p>');
   }
 }
 function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }

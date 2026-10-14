@@ -5,10 +5,13 @@
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
     admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Documents', 'Document Packages'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
-    owner: [['Owner', 'Owner access'], ['Settings', 'General settings']]
+    owner: [['Owner', 'Owner access'], ['Settings', 'General settings']],
+    portal: [['Portal', 'Member System']],
+    oc: []
   };
   const ocNav = [];
   const workspaceNav = mode => {
+    if (mode === 'portal') return nav.portal;
     if (mode === 'oc') return ocNav;
     if (mode === 'admin' && user && !user.admin && user.oc && !user.owner && !user.treasurer) return ocNav;
     return nav[mode] || nav.admin;
@@ -86,20 +89,22 @@
     const hash = String(location.hash || '').replace('#', '').toLowerCase();
     const queryMode = String(new URLSearchParams(location.search).get('mode') || '').toLowerCase();
     const requested = queryMode || hash;
+    if (requested === 'portal') return 'portal';
     if (requested === 'treasurer' && (user.treasurer || user.owner)) return 'treasurer';
     if (requested === 'owner' && user.owner) return 'owner';
     if (requested === 'admin' && (user.admin || user.owner)) return 'admin';
     if (requested === 'oc' && user.oc) return 'oc';
-    if (user.owner) return 'owner';
-    if (user.treasurer && !user.admin) return 'treasurer';
-    if (user.admin) return 'admin';
+    if (user.owner) return 'portal';
+    if (user.treasurer && !user.admin) return 'portal';
+    if (user.admin) return 'portal';
     if (user.oc) return 'oc';
-    return 'oc';
+    return 'portal';
   }
   function modeSwitcher() {
     if (!user) return '';
     const items = [];
     if (isOcOnly()) return '';
+    items.push(['portal', 'Member System']);
     if (user.owner || user.treasurer) items.push(['treasurer', 'Treasurer Work']);
     if (user.owner || user.admin) items.push(['admin', 'Admin Work']);
     if (user.owner) items.push(['owner', 'Owner']);
@@ -135,6 +140,9 @@
   }
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
+  function clearSessionHash() {
+    try { history.replaceState({}, '', location.pathname + location.search.replace(/[?&]mode=portal/g, '').replace(/[?&]package=[^&]*/g, '')); } catch (error) { /* ignore */ }
+  }
   function openGoogleAccountUrl(url) {
     // HtmlService runs inside a Google iframe; accounts.google.com refuses framing.
     // Navigate the top window, or fall back to a new tab.
@@ -380,6 +388,20 @@
     const folders = user.owner && !docFolders.templates ? '<section class="card" style="margin-top:16px"><h2>Document folders</h2><p class="muted">Drive folders are not initialised yet.</p><button class="button primary" type="button" data-action="initDocFolders">Initialize document folders</button></section>' : '';
     return nextCard + meta + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
   }
+  function portalView() {
+    const packages = ocPackages();
+    const email = escape(user && user.email || '');
+    const role = escape(roleLabel());
+    const packageCards = packages.length ? packages.map(pkg => {
+      const progress = docProgress(pkg);
+      return '<article class="card"><div class="eyebrow">' + escape(pkg.activityType) + '</div><h2>' + escape(pkg.activityType + ' (' + pkg.year + ')') + '</h2><p class="muted">' + escape((pkg.eventDate || 'Date TBC') + ' · ' + (progress.total ? progress.approved + '/' + progress.total + ' required files approved' : pkg.status)) + '</p><div class="toolbar">' + button('Open activity workspace', 'docOpen', pkg.id) + '</div></article>';
+    }).join('') : '<article class="card"><h2>No activity package</h2><p class="muted">When the Owner assigns you to an activity (for example AGM 2027), it will appear here.</p></article>';
+    const workspaces = [];
+    if (user && (user.admin || user.owner)) workspaces.push('<a class="button" href="?mode=admin">Admin Work</a>');
+    if (user && (user.treasurer || user.owner)) workspaces.push('<a class="button" href="?mode=treasurer">Treasurer Work</a>');
+    if (user && user.owner) workspaces.push('<a class="button" href="?mode=owner">Owner</a>');
+    return '<section class="card" style="margin-bottom:20px"><div class="eyebrow">TCCD Member System</div><h2>Welcome</h2><p><strong>' + email + '</strong> · ' + role + '</p><p class="muted">This is your login home. Open an activity workspace below, or switch to Admin / Treasurer work if you have access.</p><div class="toolbar">' + workspaces.join('') + '<a class="button" href="' + escape((window.KPT_CONFIG && window.KPT_CONFIG.publicSiteUrl) || 'https://wsk1234567.github.io/DivisionMemberSystem/') + '" target="_blank" rel="noopener">Find Member</a>' + button('Logout', 'logoutPortal') + '</div></section><div class="grid-two">' + packageCards + '</div>';
+  }
   function trashView() {
     const rows = state.trash || [];
     return '<p class="page-intro">Owner 删除的资料会先放在这里。Restore 会恢复整组关联资料；Permanently delete 无法从系统恢复，但执行前会自动建立私人 Backup。</p>' + (user.owner ? table(['Deleted record', 'Deleted at', 'Deleted by', 'Included records', 'Actions'], rows.map(row => [escape(row.rootTable + ' · ' + row.label), escape(new Date(row.deletedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(Object.entries(row.counts || {}).map(([name, count]) => name + ': ' + count).join(' · ')), '<div class="row-tools">' + button('Restore', 'restoreTrash', row.id) + button('Permanently delete', 'purgeTrash', row.id) + '</div>'])) : '<div class="card"><p class="muted">Only the Owner can view and manage deleted records.</p></div>');
@@ -417,7 +439,8 @@
       Import: importView,
       Trash: trashView,
       Owner: ownerAccessView,
-      Settings: settingsView
+      Settings: settingsView,
+      Portal: portalView
     };
     if (!isOcOnly() && !workspaceNav(workspaceMode).some(([key]) => key === view)) {
       view = workspaceNav(workspaceMode)[0] ? workspaceNav(workspaceMode)[0][0] : 'Documents';
@@ -478,7 +501,8 @@
         if (!user.admin && !user.owner) workspaceMode = 'oc';
       }
     }
-    if (isOcOnly()) view = 'Documents';
+    if (workspaceMode === 'portal') view = 'Portal';
+    else if (isOcOnly()) view = 'Documents';
     else if (workspaceMode === 'treasurer') view = 'Finance';
     else if (workspaceMode === 'owner') view = 'Owner';
     byId('account').textContent = user.email;
@@ -565,11 +589,18 @@
     if (name === 'recordEligible') { const [memberId, catalogId] = id.split('|'); openEditor('Awards', '', { memberId, catalogId, date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }) }); return; }
     if (name === 'duty') { const existing = state.Duty.find(row => row.memberId === id && row.year === year()); openEditor('Duty', existing && existing.id, { memberId: id, year: year(), hours: '' }); return; }
     if (name === 'setMode') {
+      if (id === 'portal') {
+        workspaceMode = 'portal';
+        view = 'Portal';
+        render();
+        notice('Member System home.');
+        return;
+      }
       if (id === 'treasurer' && !(user.treasurer || user.owner)) throw new Error('No Treasurer access.');
       if (id === 'admin' && !(user.admin || user.owner)) throw new Error('No Admin access.');
       if (id === 'owner' && !user.owner) throw new Error('Owner only.');
       workspaceMode = id;
-      view = id === 'treasurer' ? 'Finance' : id === 'owner' ? 'Owner' : 'Overview';
+      view = id === 'treasurer' ? 'Finance' : id === 'owner' ? 'Owner' : id === 'portal' ? 'Portal' : 'Overview';
       try {
         const url = new URL(location.href);
         url.searchParams.set('mode', id);
@@ -777,7 +808,19 @@
     if (name === 'docOpen') {
       const pkg = state.DocPackages.find(row => row.id === id);
       if (!canOpenPackage(pkg)) throw new Error('You can only open your own activity package.');
-      view = 'Documents'; openDocPackageId = id; query = ''; page = 0; render(); return;
+      openDocPackageId = id;
+      query = ''; page = 0;
+      workspaceMode = (user.admin || user.owner) && !isOcOnly() ? 'admin' : 'oc';
+      view = 'Documents';
+      render();
+      return;
+    }
+    if (name === 'logoutPortal') {
+      clearSessionHash();
+      try { sessionStorage.removeItem('tccd-portal'); } catch (error) { /* ignore */ }
+      notice('Signed out of this session. Close other Google tabs if you need a full Google logout.');
+      render();
+      return;
     }
     if (name === 'docBack') { openDocPackageId = null; render(); return; }
     if (name === 'docSubmit') {

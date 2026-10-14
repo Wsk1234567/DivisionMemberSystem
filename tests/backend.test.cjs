@@ -201,7 +201,7 @@ test('admin serves bundled HTML literally after identity checks', () => {
   };
   assert.equal(sandbox.doGet(), output);
   env.actor = 'stranger@gmail.com';
-  assert.match(sandbox.doGet().text, /Access unavailable/);
+  assert.match(sandbox.doGet().text, /Sign in with your Google account|Access unavailable/);
   assert.equal(fileReads, 1);
 });
 test('sync failure leaves private save intact and can be retried', () => {
