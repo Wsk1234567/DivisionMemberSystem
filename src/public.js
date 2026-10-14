@@ -9,6 +9,7 @@
   byId('region').textContent = config.region || byId('region').textContent;
   byId('demo-banner').hidden = !demo;
   const nav = byId('portal-nav');
+  const PUBLIC_HOME = 'https://wsk1234567.github.io/DivisionMemberSystem/';
   const workspaceBase = () => {
     if (demo) return 'admin.html';
     if (approvedUrl(config.adminUrl)) return config.adminUrl;
@@ -61,44 +62,31 @@
     try { sessionStorage.removeItem('tccd-portal'); } catch (error) { /* ignore */ }
     clearHash();
   }
-  function portalLoginHref() {
+  function loginHref() {
     const base = workspaceBase();
     if (!base) return '#';
-    return base + (base.includes('?') ? '&' : '?') + 'mode=portal';
+    return base + (base.includes('?') ? '&' : '?') + 'mode=login';
   }
-  function resolveAdminUrl(session) {
-    const candidates = [];
-    if (session && session.adminUrl) candidates.push(String(session.adminUrl));
-    candidates.push(workspaceBase());
-    for (const url of candidates) {
-      if (!url) continue;
-      if (demo) return url;
-      if (approvedUrl(url)) return url;
-    }
-    return workspaceBase();
-  }
-  function workspaceHref(mode, session) {
-    const base = resolveAdminUrl(session);
+  function workspaceHref(mode) {
+    const base = workspaceBase();
     if (!base) return '#';
     return base + (base.includes('?') ? '&' : '?') + 'mode=' + mode;
   }
   function packageHref(session, packageId) {
-    const base = resolveAdminUrl(session);
+    const base = workspaceBase();
     if (!base || !packageId) return '#';
     return base + (base.includes('?') ? '&' : '?') + 'mode=oc&package=' + encodeURIComponent(packageId);
   }
   function renderNavbar(session) {
     const find = '<a href="#member-search">Find Member</a>';
     if (!session) {
-      nav.innerHTML = find
-        + '<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>'
-        + '<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>'
-        + '<a id="login-link" class="button primary portal-login" href="' + escape(portalLoginHref()) + '">Login</a>';
+      // Logged out: only Find Member + Login
+      nav.innerHTML = find + '<a id="login-link" class="button primary portal-login" href="' + escape(loginHref()) + '">Login</a>';
       return;
     }
     const parts = [find];
-    if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer', session)) + '">Treasurer Work</a>');
-    if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin', session)) + '">Admin Work</a>');
+    if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>');
+    if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>');
     (session.packages || []).forEach(pkg => {
       parts.push('<a class="portal-link package-link" href="' + escape(packageHref(session, pkg.id)) + '">' + escape(pkg.label) + '</a>');
     });

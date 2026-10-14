@@ -140,13 +140,22 @@ function doGet(e) {
     } catch (error) { /* ignore */ }
     return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
   }
-  const wantPortal = params.mode === 'portal' || params.portal === '1';
+  const wantLogin = params.mode === 'login' || params.mode === 'portal' || params.portal === '1';
   try {
     const actor = identity_(false, true);
-    // Portal is the same signed-in app shell (mode=portal); no redirect to the public site.
-    return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Member System').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    if (wantLogin) {
+      const state = loadState_();
+      const session = createPortalSession_(actor, state);
+      const map = portalSessionList_();
+      const full = map[session] || { email: actor.email, owner: !!actor.owner, admin: !!actor.admin, treasurer: !!actor.treasurer, oc: !!actor.oc, packages: [] };
+      const encoded = encodePortalPayload_(full);
+      const base = portalPublicUrl_().replace(/#.*$/, '');
+      const target = base + '#portal=' + encoded;
+      return HtmlService.createHtmlOutput('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=' + target.replace(/"/g, '&quot;') + '"><title>TCCD • Login</title><p style="font-family:sans-serif">Signing you in… <a href="' + target.replace(/"/g, '&quot;') + '">Continue to member system</a></p>');
+    }
+    return HtmlService.createHtmlOutputFromFile('Admin').setTitle('TCCD • Administration').addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
-    return HtmlService.createHtmlOutput('<!doctype html><meta name="viewport" content="width=device-width"><h1>TCCD Member System</h1><p>Sign in with your Google account to continue.</p><p><small>Use the account granted access by the Owner (Secretary, Treasurer, or Organizing Chairman).</small></p><p>' + String(error.message || error).replace(/</g, '&lt;') + '</p>');
+    return HtmlService.createHtmlOutput('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>TCCD • Login</title><body style="font-family:system-ui,sans-serif;max-width:520px;margin:48px auto;padding:0 20px"><h1>TCCD Division Member System</h1><p>Sign in with the Gmail account granted access by the Owner.</p><p><a class="button" style="display:inline-block;background:#852b3d;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600" href="?mode=login">Sign in with Google</a></p><p style="color:#666;font-size:.9rem">Use Secretary, Treasurer, or Organizing Chairman access. Contact the Owner if you need permission.</p></body>');
   }
 }
 function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
