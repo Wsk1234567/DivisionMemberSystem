@@ -66,14 +66,19 @@ function createPortalSession_(actor, state) {
   const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
   const packages = state.DocPackages.filter(pkg => {
     if (pkg.archived || pkg.status === 'Archived') return false;
+    const email = String(actor.email || '').trim().toLowerCase();
+    const ocEmail = String(pkg.ocEmail || '').trim().toLowerCase();
+    if (!email) return false;
+    // Owner/Admin see all packages; OC only sees packages they are assigned to.
     if (actor.owner || actor.admin) return true;
-    return String(pkg.ocEmail || '').toLowerCase() === String(actor.email || '').toLowerCase();
+    return ocEmail === email;
   }).map(pkg => ({
     id: pkg.id,
     label: pkg.activityType + ' (' + pkg.year + ')',
     activityType: pkg.activityType,
     year: pkg.year,
-    eventDate: pkg.eventDate || ''
+    eventDate: pkg.eventDate || '',
+    ocEmail: pkg.ocEmail || ''
   }));
   const map = portalSessionList_();
   map[token] = {
