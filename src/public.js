@@ -66,14 +66,25 @@
     if (!base) return '#';
     return base + (base.includes('?') ? '&' : '?') + 'mode=portal';
   }
-  function workspaceHref(mode) {
-    const base = workspaceBase();
+  function resolveAdminUrl(session) {
+    const candidates = [];
+    if (session && session.adminUrl) candidates.push(String(session.adminUrl));
+    candidates.push(workspaceBase());
+    for (const url of candidates) {
+      if (!url) continue;
+      if (demo) return url;
+      if (approvedUrl(url)) return url;
+    }
+    return workspaceBase();
+  }
+  function workspaceHref(mode, session) {
+    const base = resolveAdminUrl(session);
     if (!base) return '#';
     return base + (base.includes('?') ? '&' : '?') + 'mode=' + mode;
   }
-  function packageHref(adminUrl, packageId) {
-    const base = adminUrl || workspaceBase();
-    if (!base) return '#';
+  function packageHref(session, packageId) {
+    const base = resolveAdminUrl(session);
+    if (!base || !packageId) return '#';
     return base + (base.includes('?') ? '&' : '?') + 'mode=oc&package=' + encodeURIComponent(packageId);
   }
   function renderNavbar(session) {
@@ -86,11 +97,12 @@
       return;
     }
     const parts = [find];
-    if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>');
-    if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>');
+    if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer', session)) + '">Treasurer Work</a>');
+    if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin', session)) + '">Admin Work</a>');
     (session.packages || []).forEach(pkg => {
-      parts.push('<a class="portal-link package-link" href="' + escape(packageHref(session.adminUrl, pkg.id)) + '">' + escape(pkg.label) + '</a>');
+      parts.push('<a class="portal-link package-link" href="' + escape(packageHref(session, pkg.id)) + '">' + escape(pkg.label) + '</a>');
     });
+    parts.push('<span class="portal-email" title="Signed in">' + escape(session.email || '') + '</span>');
     parts.push('<button type="button" id="logout-link" class="button portal-login">Logout</button>');
     nav.innerHTML = parts.join('');
     const logout = byId('logout-link');
