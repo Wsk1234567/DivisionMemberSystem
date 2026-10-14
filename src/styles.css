@@ -35,6 +35,10 @@ body[data-mode="owner"] .eyebrow{color:#f5c542;font-weight:800}
 body[data-mode="owner"] .page-intro{color:#d0d0d0;font-weight:500}
 body[data-mode="owner"] .pill{background:#222;color:#f0f0f0}
 body[data-mode="owner"] .sidebar-bottom strong{color:#f5f5f5;font-weight:700}
+body[data-mode="oc"] .sidebar{display:none}
+body[data-mode="oc"] .admin-shell{display:block}
+body[data-mode="oc"] .main{max-width:960px;margin:0 auto}
+body[data-mode="oc"] .nav{display:none}
 body[data-mode="owner"] a{color:#f5c542;font-weight:600}
 body[data-mode="owner"] label{color:#e8e8e8;font-weight:600}
 body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{background:#161616;border-color:#333}

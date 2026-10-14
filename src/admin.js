@@ -136,7 +136,7 @@
     });
   }
   function applyWorkspaceTheme() {
-    document.body.dataset.mode = workspaceMode;
+    document.body.dataset.mode = isOcOnly() || workspaceMode === 'oc' ? 'oc' : workspaceMode;
   }
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
@@ -420,9 +420,12 @@
     if (!state) return;
     renderNavigation();
     applyWorkspaceTheme();
+    const ocShell = isOcOnly() || workspaceMode === 'oc';
     const modeTitles = workspaceTitles(workspaceMode);
     byId('page-title').innerHTML = escape(modeTitles[view] || titles[view] || view);
-    byId('mode-switcher-slot').innerHTML = modeSwitcher();
+    byId('mode-switcher-slot').innerHTML = ocShell ? '' : modeSwitcher();
+    const yearField = document.querySelector('.admin-top .field');
+    if (yearField) yearField.hidden = ocShell;
     document.querySelectorAll('[data-nav]').forEach(element => { element.classList.toggle('active', element.dataset.nav === view); element.setAttribute('aria-current', element.dataset.nav === view ? 'page' : 'false'); });
     const views = {
       Overview: overview,
@@ -442,18 +445,19 @@
       Settings: settingsView,
       Portal: portalView
     };
-    if (!isOcOnly() && !workspaceNav(workspaceMode).some(([key]) => key === view)) {
+    if (!ocShell && !workspaceNav(workspaceMode).some(([key]) => key === view)) {
       view = workspaceNav(workspaceMode)[0] ? workspaceNav(workspaceMode)[0][0] : 'Documents';
       byId('page-title').textContent = workspaceTitles(workspaceMode)[view] || view;
     }
-    if (isOcOnly()) {
+    if (ocShell) {
       view = 'Documents';
       const mine = ocPackages();
       if (!openDocPackageId || !canOpenPackage(state.DocPackages.find(row => row.id === openDocPackageId))) {
         openDocPackageId = mine[0] ? mine[0].id : null;
       }
       const opened = openDocPackageId ? state.DocPackages.find(row => row.id === openDocPackageId) : null;
-      if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ')';
+      if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ') · Activity';
+      document.querySelector('.admin-top .eyebrow').textContent = 'Activity workspace';
     }
     byId('content').innerHTML = views[view] ? views[view]() : '';
     byId('sync-notice').hidden = sync.ok;
