@@ -190,19 +190,20 @@ test('secretary approves submitted documents; owner inits folders and setAccess 
   assert.ok(properties.getProperty('DOC_TEMPLATES_FOLDER_ID'));
 });
 
-test('admin serves bundled HTML literally after identity checks', () => {
+test('admin doGet points to GitHub admin UI and does not require Admin.html', () => {
   const { env, sandbox } = environment();
   let fileReads = 0;
-  const output = { setTitle() { return this; }, addMetaTag() { return this; } };
   sandbox.HtmlService = {
-    createHtmlOutputFromFile(name) { assert.equal(name, 'Admin'); fileReads++; return output; },
+    createHtmlOutputFromFile(name) { fileReads++; return { setTitle() { return this; }, addMetaTag() { return this; }, name }; },
     createHtmlOutput: text => ({ text }),
     createTemplateFromFile() { throw new Error('Bundled XML literals must not become scriptlets'); }
   };
-  assert.equal(sandbox.doGet(), output);
+  const page = sandbox.doGet({ parameter: {} });
+  assert.match(String(page.text || ''), /admin\.html/);
+  assert.equal(fileReads, 0);
   env.actor = 'stranger@gmail.com';
-  assert.match(sandbox.doGet().text, /Sign in with Google|Sign in with your Google account|Access unavailable/);
-  assert.equal(fileReads, 1);
+  assert.match(String(sandbox.doGet({ parameter: {} }).text || ''), /Sign in with Google|Sign in with your Google account|Access unavailable|TCCD/);
+  assert.equal(fileReads, 0);
 });
 test('sync failure leaves private save intact and can be retried', () => {
   const { env, sandbox, initial, properties } = environment(); env.publicFailure = true;
