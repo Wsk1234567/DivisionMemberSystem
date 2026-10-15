@@ -33,7 +33,7 @@ Admin web app：https://script.google.com/macros/s/AKfycbyEkEYW1DVIB6qYCzfx_hWL0
 - **绝不**提交 IC 号码、学生 Excel、私有导出、备份、Sheet ID、密码、token 或 OAuth 凭证。
 - 公开结果只允许包含：成员姓名、SJAM ID、状态，以及公开奖项的名称/日期/类别/等级。
 - IC、考勤、考试、Duty、证书编号与备注必须保持私有。
-- Admin 必须以 **User accessing the web app** 运行，并允许 **Anyone with Google account**。服务端身份校验是强制的。
+- Admin API 部署为 **Execute as: Me** + **Anyone**；界面在 GitHub `admin.html`。服务端用 ID token / session token 校验身份（强制）。
 - Public Apps Script 必须保持为独立的只读部署，**不含**私人 Sheet ID。
 - Owner 专属操作：管理员授权、恢复、Phase 切换、Recycle Bin 删除/恢复、Delete All Students。
 - Owner 与 Secretary 可维护普通记录并应用 System Setup 默认项。

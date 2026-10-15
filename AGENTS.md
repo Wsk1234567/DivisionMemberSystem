@@ -25,7 +25,7 @@
 
 - **绝不**把 IC、学生 Excel、导出档、备份、Sheet ID、密码、token、OAuth 凭证提交进仓库。
 - 公开投影只允许：姓名、SJAM ID、状态、奖项名称/日期/类别/等级。IC、考勤、考试、Duty、证书编号、备注必须保持私有。
-- Admin 部署设置必须保持 **Execute as: User accessing the web app** / **Anyone with Google account**，且服务端强制校验身份。身份不符必须拒绝。
+- Admin **API** 部署设置：**Execute as: Me（部署者）** / **Anyone**。界面在 GitHub Pages `admin.html`，用 `?api=1` 或 `?mode=bridge` 调 `Code.gs`。服务端用 Google ID token / session token 校验身份；身份不符必须拒绝。Script Properties 建议设 `GOOGLE_CLIENT_ID`、`PUBLIC_SITE_URL`。
 - Owner 专属：管理员授权、恢复、Phase 切换、Recycle Bin 删除/恢复、Delete All Students。Owner 与 Secretary 可维护普通记录并应用 System Setup。
 - 未经 owner 明确指示并预览，**不要**恢复、清空或删除线上 / Recycle Bin 数据。Phase 1 旧批量导入是有意放进 Recycle Bin 的。
 

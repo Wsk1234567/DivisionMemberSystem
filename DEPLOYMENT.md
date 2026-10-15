@@ -9,7 +9,7 @@
 3. 在项目设置中开启显示 `appsscript.json`，复制同目录的 manifest。时区使用 `Asia/Kuala_Lumpur`。
 4. 编辑器不列出下划线结尾的函数。临时在 Code.gs 加入 `function initializeTCCD() { initialSetup_(); }`，保存后选择并执行 `initializeTCCD`，完成你自己项目的 Google 授权。它建立私人资料表、独立公开资料表、私人备份文件夹和每日备份触发器，不导入任何真实资料。成功后移除临时函数并保存，才继续部署；`initialSetup_` 的下划线保留，避免初始化函数被网页远程调用。
 5. 在项目设置 → Script properties 检查 `OWNER_EMAIL`、`PRIVATE_SHEET_ID`、`PUBLIC_SHEET_ID`、`BACKUP_FOLDER_ID`。初次设置自动填写，现有资料不会被重复 setup 清空。
-6. Deploy → New deployment → Web app：**Execute as: User accessing the web app**；**Who has access: Anyone with Google account**。复制 `/exec` 地址作为 `adminUrl`。不要选择 Execute as me，否则秘书的身份检查会拒绝访问。
+6. Deploy → Manage deployments → Edit 现有 Web app → **Execute as: Me**；**Who has access: Anyone**。**Version: New version**（保持同一 `/exec` URL）。把 `/exec` 地址作为 `adminUrl`。界面走 GitHub Pages 的 `admin.html`（Google 登录 + iframe bridge）。
 7. 用你的 Gmail 打开管理页面，在 Settings 增加秘书的 Gmail。后台会共享必要的储存文件并登记授权名单。
 8. 用秘书自己的 Gmail 在独立浏览器会话打开管理地址，完成授权；再用第三个账号确认拒绝访问。
 

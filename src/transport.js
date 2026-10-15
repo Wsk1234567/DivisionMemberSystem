@@ -90,6 +90,9 @@
         window.addEventListener('message', event => {
           const data = event && event.data;
           if (!data) return;
+          // Only accept messages from Apps Script / Google user content hosts.
+          const origin = String(event.origin || '');
+          if (!/^https:\/\/(script\.google\.com|[\w.-]+\.googleusercontent\.com)$/.test(origin)) return;
           if (data.kptBridgeReady) markBridgeReady();
           if (!data.kptBridge) return;
           const entry = pending.get(data.id);

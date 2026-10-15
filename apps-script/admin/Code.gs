@@ -532,6 +532,10 @@ function verifyGoogleIdToken_(idToken) {
   const info = JSON.parse(response.getContentText() || '{}');
   const email = String(info.email || '').toLowerCase();
   if (!email || String(info.email_verified) === 'false') throw new Error('Google account is not verified.');
+  const clientId = String(properties_().getProperty('GOOGLE_CLIENT_ID') || '').trim();
+  const aud = String(info.aud || '');
+  if (clientId && aud !== clientId) throw new Error('Google sign-in client mismatch.');
+  if (!clientId && aud && !/\.apps\.googleusercontent\.com$/.test(aud)) throw new Error('Google sign-in audience is invalid.');
   return actorFromEmail_(email);
 }
 function actorFromSessionToken_(token) {
@@ -583,7 +587,9 @@ function doPost(e) {
 
 // ---- Iframe bridge (avoids CORS from GitHub Pages) ----
 function bridgeHtml_() {
-  return '<!doctype html><meta charset="utf-8"><title>TCCD bridge</title><body><script>(function(){window.addEventListener("message",function(e){if(!e.data||!e.data.kptBridge)return;var id=e.data.id;google.script.run.withSuccessHandler(function(r){try{parent.postMessage({kptBridge:true,id:id,result:r},"*");}catch(err){}}).withFailureHandler(function(err){try{parent.postMessage({kptBridge:true,id:id,result:{ok:false,error:String(err&&err.message||err)}},"*");}catch(err2){}}).apiRpc(e.data.payload);});try{parent.postMessage({kptBridgeReady:true},"*");}catch(err){}})();<\/script></body>';
+  const origin = String(properties_().getProperty('PUBLIC_SITE_URL') || 'https://wsk1234567.github.io').replace(/\/$/, '');
+  const allowJs = JSON.stringify(origin);
+  return '<!doctype html><meta charset="utf-8"><title>TCCD bridge</title><body><script>(function(){var allow=' + allowJs + ';function ok(e){return e&&e.origin===allow;}window.addEventListener("message",function(e){if(!ok(e)||!e.data||!e.data.kptBridge)return;var id=e.data.id;google.script.run.withSuccessHandler(function(r){try{e.source.postMessage({kptBridge:true,id:id,result:r},e.origin);}catch(err){}}).withFailureHandler(function(err){try{e.source.postMessage({kptBridge:true,id:id,result:{ok:false,error:String(err&&err.message||err)}},e.origin);}catch(err2){}}).apiRpc(e.data.payload);});try{parent.postMessage({kptBridgeReady:true},allow);}catch(err){try{parent.postMessage({kptBridgeReady:true},"*");}catch(err2){}}})();<\/script></body>';
 }
 function apiRpc(request) {
   try {
