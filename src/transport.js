@@ -20,6 +20,8 @@
     }
   }
   const store = sessionStore();
+  const DEPLOYMENT_ERROR = 'The admin service is not publicly reachable. Redeploy the Apps Script web app as Execute as Me / Anyone, then sign in again.';
+  const AUTH_ERROR = /(?:sign[ -]?in required|login expired|please sign in again)/i;
   function apiUrl() {
     const config = readConfig();
     return config.adminUrl || config.apiUrl || '';
@@ -56,8 +58,15 @@
     store.remove('tccd-id-token');
     store.remove('tccd-portal');
   }
+  function isGoogleAuthorisationPage(response, text) {
+    const finalUrl = String(response && response.url || '');
+    const contentType = String(response && response.headers && response.headers.get && response.headers.get('content-type') || '');
+    return /accounts\.google\.com|\/signin\//i.test(finalUrl)
+      || (/text\/html/i.test(contentType) && /Google Apps Script|accounts\.google\.com|Authorization needed/i.test(String(text || '')));
+  }
   let bridgeFrame = null;
   let bridgeReady = false;
+  let bridgeListenerInstalled = false;
   let bridgeWaiters = [];
   let callSeq = 0;
   const pending = new Map();
@@ -68,11 +77,29 @@
     bridgeWaiters = [];
     waiters.forEach(fn => fn());
   }
+  function installBridgeListener() {
+    if (bridgeListenerInstalled) return;
+    bridgeListenerInstalled = true;
+    window.addEventListener('message', event => {
+      const data = event && event.data;
+      if (!data) return;
+      const origin = String(event.origin || '');
+      if (!/^https:\/\/(script\.google\.com|[\w.-]+\.googleusercontent\.com)$/.test(origin)) return;
+      if (data.kptBridgeReady) markBridgeReady();
+      if (!data.kptBridge) return;
+      const entry = pending.get(data.id);
+      if (!entry) return;
+      pending.delete(data.id);
+      if (data.result && data.result.ok) entry.resolve(data.result.data);
+      else entry.reject(new Error((data.result && data.result.error) || 'Request failed.'));
+    });
+  }
   function ensureBridge() {
     return new Promise((resolve, reject) => {
       const base = apiUrl();
       if (!base) return reject(new Error('Admin API URL is not configured.'));
       if (typeof document === 'undefined') return reject(new Error('Bridge is not available.'));
+      installBridgeListener();
       if (bridgeReady && bridgeFrame) return resolve(bridgeFrame);
       if (!bridgeFrame) {
         bridgeFrame = document.getElementById('kpt-bridge');
@@ -85,28 +112,12 @@
           bridgeFrame.src = base + (base.includes('?') ? '&' : '?') + 'mode=bridge';
           document.body.appendChild(bridgeFrame);
         }
-        // onload + message both mark ready (message can arrive before we listen).
-        bridgeFrame.addEventListener('load', () => markBridgeReady());
-        window.addEventListener('message', event => {
-          const data = event && event.data;
-          if (!data) return;
-          // Only accept messages from Apps Script / Google user content hosts.
-          const origin = String(event.origin || '');
-          if (!/^https:\/\/(script\.google\.com|[\w.-]+\.googleusercontent\.com)$/.test(origin)) return;
-          if (data.kptBridgeReady) markBridgeReady();
-          if (!data.kptBridge) return;
-          const entry = pending.get(data.id);
-          if (!entry) return;
-          pending.delete(data.id);
-          if (data.result && data.result.ok) entry.resolve(data.result.data);
-          else entry.reject(new Error((data.result && data.result.error) || 'Request failed.'));
-        });
       }
       if (bridgeReady) return resolve(bridgeFrame);
       bridgeWaiters.push(() => resolve(bridgeFrame));
       setTimeout(() => {
         if (bridgeReady) resolve(bridgeFrame);
-        else reject(new Error('Could not reach the admin API bridge.'));
+        else reject(new Error(DEPLOYMENT_ERROR));
       }, 8000);
     });
   }
@@ -127,9 +138,9 @@
       setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
-          reject(new Error('The admin API did not respond.'));
+          reject(new Error(DEPLOYMENT_ERROR));
         }
-      }, 60000);
+      }, 10000);
     }));
   }
   async function getApi(body, base) {
@@ -142,9 +153,10 @@
       cache: 'no-store'
     });
     const text = await response.text();
+    if (isGoogleAuthorisationPage(response, text)) throw new Error(DEPLOYMENT_ERROR);
     let payload;
     try { payload = JSON.parse(text); } catch (error) {
-      throw new Error('The admin API returned an unexpected response.');
+      throw new Error(/<!doctype|<html/i.test(text) ? DEPLOYMENT_ERROR : 'The admin API returned an unexpected response.');
     }
     if (!payload || payload.ok === false) throw new Error((payload && payload.error) || 'Request failed.');
     return payload.data;
@@ -167,7 +179,9 @@
           failed += 1;
           errors.push(String(error && error.message || error));
           if (failed === attempts.length) {
-            reject(new Error(errors[0] || 'Request failed.'));
+            const message = errors.find(value => value === DEPLOYMENT_ERROR) || errors[0] || 'Request failed.';
+            if (AUTH_ERROR.test(message)) clearTokens();
+            reject(new Error(message));
           }
         });
       });

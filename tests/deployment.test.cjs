@@ -40,6 +40,22 @@ test('public website uses credential-free CORS instead of JSONP', () => {
   assert.match(source, /mode:\s*'cors'/);
   assert.doesNotMatch(source, /createElement\('script'\)/);
 });
+test('admin transport detects deployment login pages and expires stale sessions promptly', () => {
+  const source = read('src/transport.js');
+  assert.match(source, /isGoogleAuthorisationPage/);
+  assert.match(source, /Authorization needed/);
+  assert.match(source, /Execute as Me \/ Anyone/);
+  assert.match(source, /AUTH_ERROR\.test\(message\)\) clearTokens\(\)/);
+  assert.doesNotMatch(source, /setTimeout\(send, 400\);[\s\S]*?60000/);
+  assert.doesNotMatch(source, /addEventListener\('load',[\s\S]*?markBridgeReady/);
+});
+test('admin bridge derives an origin from the full GitHub Pages URL', () => {
+  const source = read('apps-script/admin/Code.gs');
+  assert.match(source, /function portalPublicOrigin_\(\)/);
+  assert.match(source, /match\(\/\^\(https:/);
+  assert.match(source, /const origin = portalPublicOrigin_\(\)/);
+  assert.match(source, /e\.origin===allow/);
+});
 test('source JavaScript and Apps Script compile; vendored Excel library checksum matches', () => {
   for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'demo-transport.js', 'transport.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);
   for (const project of ['admin', 'public']) assert.doesNotThrow(() => new vm.Script(read('apps-script/' + project + '/Code.gs')), project);

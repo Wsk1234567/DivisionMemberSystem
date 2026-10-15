@@ -75,6 +75,11 @@ function requirePackageAccess_(state, actor, packageId, itemId) {
 function portalPublicUrl_() {
   return String(properties_().getProperty('PUBLIC_SITE_URL') || properties_().getProperty('PORTAL_RETURN_URL') || 'https://wsk1234567.github.io/DivisionMemberSystem/');
 }
+function portalPublicOrigin_() {
+  const match = portalPublicUrl_().trim().match(/^(https:\/\/[^/]+)/i);
+  if (!match) throw new Error('PUBLIC_SITE_URL must be a valid HTTPS URL.');
+  return match[1].toLowerCase();
+}
 function portalSessionList_() {
   try { return JSON.parse(properties_().getProperty('PORTAL_SESSIONS') || '{}'); } catch (error) { return {}; }
 }
@@ -587,7 +592,7 @@ function doPost(e) {
 
 // ---- Iframe bridge (avoids CORS from GitHub Pages) ----
 function bridgeHtml_() {
-  const origin = String(properties_().getProperty('PUBLIC_SITE_URL') || 'https://wsk1234567.github.io').replace(/\/$/, '');
+  const origin = portalPublicOrigin_();
   const allowJs = JSON.stringify(origin);
   return '<!doctype html><meta charset="utf-8"><title>TCCD bridge</title><body><script>(function(){var allow=' + allowJs + ';function ok(e){return e&&e.origin===allow;}window.addEventListener("message",function(e){if(!ok(e)||!e.data||!e.data.kptBridge)return;var id=e.data.id;google.script.run.withSuccessHandler(function(r){try{e.source.postMessage({kptBridge:true,id:id,result:r},e.origin);}catch(err){}}).withFailureHandler(function(err){try{e.source.postMessage({kptBridge:true,id:id,result:{ok:false,error:String(err&&err.message||err)}},e.origin);}catch(err2){}}).apiRpc(e.data.payload);});try{parent.postMessage({kptBridgeReady:true},allow);}catch(err){try{parent.postMessage({kptBridgeReady:true},"*");}catch(err2){}}})();<\/script></body>';
 }
