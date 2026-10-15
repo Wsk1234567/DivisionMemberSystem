@@ -99,7 +99,7 @@
       setTimeout(() => {
         if (bridgeReady) resolve(bridgeFrame);
         else reject(new Error('Could not reach the admin API bridge.'));
-      }, 12000);
+      }, 6000);
     });
   }
   function bridgeCall(payload) {
@@ -122,27 +122,37 @@
       sessionToken: request.sessionToken || tokens.sessionToken || '',
       idToken: request.idToken || tokens.idToken || ''
     });
-    // Prefer iframe bridge (no CORS). Fall back to fetch if bridge is unavailable.
+    const base = apiUrl();
+    if (!base) throw new Error('Admin API URL is not configured.');
+    // GET ?api=1&payload=... is a simple request (no CORS preflight) and usually works from GitHub Pages.
+    const encoded = encodeURIComponent(JSON.stringify(body));
+    if (encoded.length < 7000) {
+      try {
+        const response = await fetch(base + (base.includes('?') ? '&' : '?') + 'api=1&payload=' + encoded, {
+          method: 'GET',
+          credentials: 'omit',
+          redirect: 'follow',
+          cache: 'no-store'
+        });
+        const text = await response.text();
+        let payload;
+        try { payload = JSON.parse(text); } catch (error) {
+          throw new Error('The admin API returned an unexpected response.');
+        }
+        if (!payload || payload.ok === false) throw new Error((payload && payload.error) || 'Request failed.');
+        return payload.data;
+      } catch (getError) {
+        if (/Failed to fetch|NetworkError|unexpected response/i.test(String(getError.message || getError))) {
+          // fall through to iframe bridge
+        } else {
+          throw getError;
+        }
+      }
+    }
     try {
       return await bridgeCall(body);
     } catch (bridgeError) {
-      const base = apiUrl();
-      if (!base) throw bridgeError;
-      const response = await fetch(base + (base.includes('?') ? '&' : '?') + 'api=1', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(body),
-        credentials: 'omit',
-        redirect: 'follow',
-        cache: 'no-store'
-      });
-      const text = await response.text();
-      let payload;
-      try { payload = JSON.parse(text); } catch (error) {
-        throw new Error('The admin API returned an unexpected response.');
-      }
-      if (!payload || payload.ok === false) throw new Error((payload && payload.error) || 'Request failed.');
-      return payload.data;
+      throw new Error(String(bridgeError.message || bridgeError) + ' — Deploy the latest Code.gs (apiRpc + bridge) on Apps Script as Execute as Me / Anyone.');
     }
   }
   root.KPTTransport = {

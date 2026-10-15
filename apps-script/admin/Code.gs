@@ -154,6 +154,19 @@ function encodePortalPayload_(session) {
 }
 function doGet(e) {
   const params = (e && e.parameter) || {};
+  if (params.api === '1') {
+    try {
+      let request = null;
+      if (params.payload) {
+        const raw = decodeURIComponent(String(params.payload));
+        request = JSON.parse(raw);
+      }
+      if (!request) throw new Error('Missing API payload.');
+      return apiJson_(apiRpc(request));
+    } catch (error) {
+      return apiJson_({ ok: false, error: String(error.message || error).slice(0, 500) });
+    }
+  }
   if (params.portalSession) {
     try {
       return ContentService.createTextOutput(JSON.stringify({ ok: true, data: portalNavbarPayload_(readPortalSession_(String(params.portalSession))) })).setMimeType(ContentService.MimeType.JSON);
