@@ -161,6 +161,24 @@
     if (!payload || payload.ok === false) throw new Error((payload && payload.error) || 'Request failed.');
     return payload.data;
   }
+  async function postApi(body, base) {
+    const response = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(body),
+      credentials: 'omit',
+      redirect: 'follow',
+      cache: 'no-store'
+    });
+    const text = await response.text();
+    if (isGoogleAuthorisationPage(response, text)) throw new Error(DEPLOYMENT_ERROR);
+    let payload;
+    try { payload = JSON.parse(text); } catch (error) {
+      throw new Error(/<!doctype|<html/i.test(text) ? DEPLOYMENT_ERROR : 'The admin API returned an unexpected response.');
+    }
+    if (!payload || payload.ok === false) throw new Error((payload && payload.error) || 'Request failed.');
+    return payload.data;
+  }
   async function callApi(request) {
     const tokens = getTokens();
     const body = Object.assign({}, request, {
@@ -169,22 +187,10 @@
     });
     const base = apiUrl();
     if (!base) throw new Error('Admin API URL is not configured.');
-    // Race GET and iframe bridge so we do not wait for a blocked CORS request first.
-    const attempts = [bridgeCall(body), getApi(body, base)];
-    return new Promise((resolve, reject) => {
-      let failed = 0;
-      const errors = [];
-      attempts.forEach(promise => {
-        promise.then(resolve).catch(error => {
-          failed += 1;
-          errors.push(String(error && error.message || error));
-          if (failed === attempts.length) {
-            const message = errors.find(value => value === DEPLOYMENT_ERROR) || errors[0] || 'Request failed.';
-            if (AUTH_ERROR.test(message)) clearTokens();
-            reject(new Error(message));
-          }
-        });
-      });
+    return postApi(body, base).catch(error => {
+      const message = String(error && error.message || error);
+      if (AUTH_ERROR.test(message)) clearTokens();
+      throw new Error(message);
     });
   }
   root.KPTTransport = {

@@ -48,6 +48,10 @@ test('admin transport detects deployment login pages and expires stale sessions 
   assert.match(source, /AUTH_ERROR\.test\(message\)\) clearTokens\(\)/);
   assert.doesNotMatch(source, /setTimeout\(send, 400\);[\s\S]*?60000/);
   assert.doesNotMatch(source, /addEventListener\('load',[\s\S]*?markBridgeReady/);
+  assert.match(source, /method:\s*'POST'/);
+  assert.match(source, /'Content-Type':\s*'text\/plain;charset=UTF-8'/);
+  assert.match(source, /return postApi\(body, base\)\.catch/);
+  assert.doesNotMatch(source, /const attempts = \[bridgeCall/);
 });
 test('admin bridge derives an origin from the full GitHub Pages URL', () => {
   const source = read('apps-script/admin/Code.gs');
