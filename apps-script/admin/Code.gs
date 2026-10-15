@@ -169,6 +169,7 @@ function doGet(e) {
     } catch (error) { /* ignore */ }
     return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
   }
+  if (params.mode === 'bridge') return HtmlService.createHtmlOutput(bridgeHtml_());
   const wantLogin = params.mode === 'login' || params.mode === 'portal' || params.portal === '1';
   try {
     const actor = identity_(false, true);
@@ -564,5 +565,32 @@ function doPost(e) {
     return apiJson_(result);
   } catch (error) {
     return apiJson_({ ok: false, error: String(error.message || error).slice(0, 500) });
+  }
+}
+
+// ---- Iframe bridge (avoids CORS from GitHub Pages) ----
+function bridgeHtml_() {
+  return '<!doctype html><meta charset="utf-8"><title>TCCD bridge</title><body><script>(function(){window.addEventListener("message",function(e){if(!e.data||!e.data.kptBridge)return;var id=e.data.id;google.script.run.withSuccessHandler(function(r){try{parent.postMessage({kptBridge:true,id:id,result:r},"*");}catch(err){}}).withFailureHandler(function(err){try{parent.postMessage({kptBridge:true,id:id,result:{ok:false,error:String(err&&err.message||err)}},"*");}catch(err2){}}).apiRpc(e.data.payload);});try{parent.postMessage({kptBridgeReady:true},"*");}catch(err){}})();<\/script></body>';
+}
+function apiRpc(request) {
+  try {
+    if (!request || typeof request !== 'object') return { ok: false, error: 'Invalid request.' };
+    if (request.action === 'portalLogin') return { ok: true, data: portalLogin_(request) };
+    if (request.action === 'portalLogout') {
+      if (request.sessionToken) {
+        const map = portalSessionList_();
+        delete map[String(request.sessionToken)];
+        portalSessionSave_(map);
+      }
+      return { ok: true, data: { loggedOut: true } };
+    }
+    let email = '';
+    if (request.sessionToken) email = readPortalSession_(String(request.sessionToken)).email;
+    else if (request.idToken) email = verifyGoogleIdToken_(request.idToken).email;
+    else email = String(Session.getActiveUser().getEmail() || '');
+    if (!email) return { ok: false, error: 'Sign-in required.' };
+    return rpc(request, email);
+  } catch (error) {
+    return { ok: false, error: String(error.message || error).slice(0, 500) };
   }
 }
