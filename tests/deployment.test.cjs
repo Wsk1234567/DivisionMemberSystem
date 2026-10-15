@@ -17,9 +17,9 @@ test('built admin page embeds literal scripts without unresolved placeholders', 
   assert.match(scripts[0], /KPT_CONFIG/);
   assert.equal(scripts[1], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
   const githubAdmin = read('dist/admin.html');
-  assert.match(githubAdmin, /src="config\.js"/);
-  assert.match(githubAdmin, /src="transport\.js"/);
-  assert.match(githubAdmin, /src="admin\.js"/);
+  assert.match(githubAdmin, /src="config\.js\?v=[a-f0-9]{12}"/);
+  assert.match(githubAdmin, /src="transport\.js\?v=[a-f0-9]{12}"/);
+  assert.match(githubAdmin, /src="admin\.js\?v=[a-f0-9]{12}"/);
   assert.equal(read('src/transport.js').includes('portalLogin'), true);
 });
 test('public and admin Apps Script deployments have separate scope and execution identity', () => {
