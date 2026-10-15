@@ -55,6 +55,7 @@ test('admin bridge derives an origin from the full GitHub Pages URL', () => {
   assert.match(source, /match\(\/\^\(https:/);
   assert.match(source, /const origin = portalPublicOrigin_\(\)/);
   assert.match(source, /e\.origin===allow/);
+  assert.match(source, /setXFrameOptionsMode\(HtmlService\.XFrameOptionsMode\.ALLOWALL\)/);
 });
 test('source JavaScript and Apps Script compile; vendored Excel library checksum matches', () => {
   for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'demo-transport.js', 'transport.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);

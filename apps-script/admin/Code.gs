@@ -187,7 +187,10 @@ function doGet(e) {
     } catch (error) { /* ignore */ }
     return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
   }
-  if (params.mode === 'bridge') return HtmlService.createHtmlOutput(bridgeHtml_());
+  if (params.mode === 'bridge') {
+    return HtmlService.createHtmlOutput(bridgeHtml_())
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   const wantLogin = params.mode === 'login' || params.mode === 'portal' || params.portal === '1';
   try {
     const actor = identity_(false, true);
