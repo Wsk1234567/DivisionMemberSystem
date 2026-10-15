@@ -58,14 +58,22 @@
   }
   let bridgeFrame = null;
   let bridgeReady = false;
+  let bridgeWaiters = [];
   let callSeq = 0;
   const pending = new Map();
+  function markBridgeReady() {
+    if (bridgeReady) return;
+    bridgeReady = true;
+    const waiters = bridgeWaiters;
+    bridgeWaiters = [];
+    waiters.forEach(fn => fn());
+  }
   function ensureBridge() {
     return new Promise((resolve, reject) => {
-      if (bridgeReady && bridgeFrame) return resolve(bridgeFrame);
       const base = apiUrl();
       if (!base) return reject(new Error('Admin API URL is not configured.'));
       if (typeof document === 'undefined') return reject(new Error('Bridge is not available.'));
+      if (bridgeReady && bridgeFrame) return resolve(bridgeFrame);
       if (!bridgeFrame) {
         bridgeFrame = document.getElementById('kpt-bridge');
         if (!bridgeFrame) {
@@ -77,9 +85,13 @@
           bridgeFrame.src = base + (base.includes('?') ? '&' : '?') + 'mode=bridge';
           document.body.appendChild(bridgeFrame);
         }
+        // onload + message both mark ready (message can arrive before we listen).
+        bridgeFrame.addEventListener('load', () => markBridgeReady());
         window.addEventListener('message', event => {
           const data = event && event.data;
-          if (!data || !data.kptBridge) return;
+          if (!data) return;
+          if (data.kptBridgeReady) markBridgeReady();
+          if (!data.kptBridge) return;
           const entry = pending.get(data.id);
           if (!entry) return;
           pending.delete(data.id);
@@ -88,26 +100,27 @@
         });
       }
       if (bridgeReady) return resolve(bridgeFrame);
-      const onReady = event => {
-        if (event && event.data && event.data.kptBridgeReady) {
-          bridgeReady = true;
-          window.removeEventListener('message', onReady);
-          resolve(bridgeFrame);
-        }
-      };
-      window.addEventListener('message', onReady);
+      bridgeWaiters.push(() => resolve(bridgeFrame));
       setTimeout(() => {
         if (bridgeReady) resolve(bridgeFrame);
         else reject(new Error('Could not reach the admin API bridge.'));
-      }, 6000);
+      }, 8000);
     });
   }
   function bridgeCall(payload) {
     return ensureBridge().then(frame => new Promise((resolve, reject) => {
       const id = 'kpt-' + (++callSeq);
       pending.set(id, { resolve, reject });
-      const send = () => frame.contentWindow.postMessage({ kptBridge: true, id, payload }, '*');
+      const send = () => {
+        try { frame.contentWindow.postMessage({ kptBridge: true, id, payload }, '*'); }
+        catch (error) {
+          pending.delete(id);
+          reject(new Error('Could not post to the admin API bridge.'));
+        }
+      };
       send();
+      // Retry once shortly in case the bridge script was not ready yet.
+      setTimeout(send, 400);
       setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
