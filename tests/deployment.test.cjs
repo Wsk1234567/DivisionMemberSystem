@@ -10,13 +10,14 @@ const read = name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
 test('built admin page embeds literal scripts without unresolved placeholders', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: path.join(__dirname, '..') });
   const html = read('build/apps-script/admin/Admin.html');
-  assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|FINANCETPL|FINANCEWB|FINANCEPDF|TRANSPORT|ADMIN)__/.test(html), false);
+  assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|FINANCETPL|FINANCEWB|FINANCEPDF|TRANSPORT|ADMIN|CONFIG)__/.test(html), false);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-  assert.equal(scripts.length, 8);
+  assert.equal(scripts.length, 9);
   for (const script of scripts) assert.doesNotThrow(() => new vm.Script(script));
-  assert.equal(scripts[0], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
-  // GitHub-hosted admin UI is also emitted for Plan B.
+  assert.match(scripts[0], /KPT_CONFIG/);
+  assert.equal(scripts[1], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
   const githubAdmin = read('dist/admin.html');
+  assert.match(githubAdmin, /src="config\.js"/);
   assert.match(githubAdmin, /src="transport\.js"/);
   assert.match(githubAdmin, /src="admin\.js"/);
   assert.equal(read('src/transport.js').includes('portalLogin'), true);
