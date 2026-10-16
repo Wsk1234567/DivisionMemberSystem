@@ -4,12 +4,12 @@
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
-    admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Documents', 'Document Packages'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
+    admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Documents', 'Annual Activity'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
     owner: [['Owner', 'Owner access'], ['Settings', 'General settings']],
     portal: [['Portal', 'Member System']],
     oc: []
   };
-  const ocNav = [];
+  const ocNav = [['Documents', 'Annual Activity']];
   const workspaceNav = mode => {
     if (mode === 'portal') return nav.portal;
     if (mode === 'oc') return ocNav;
@@ -125,15 +125,7 @@
     return 'Guest';
   }
   function renderNavigation() {
-    const links = isOcOnly() ? '' : workspaceNav(workspaceMode).map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
-    const packageLinks = ocPackages().map(pkg => {
-      const label = pkg.activityType + ' (' + pkg.year + ')';
-      return '<button type="button" class="doc-package-link" data-action="docOpen" data-id="' + escape(pkg.id) + '" data-package="' + escape(pkg.id) + '">' + icon + escape(label) + '</button>';
-    }).join('');
-    byId('navigation').innerHTML = links + packageLinks;
-    document.querySelectorAll('[data-package]').forEach(element => {
-      element.classList.toggle('active', !!openDocPackageId && element.dataset.package === openDocPackageId);
-    });
+    byId('navigation').innerHTML = workspaceNav(workspaceMode).map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
   }
   function applyWorkspaceTheme() {
     document.body.dataset.mode = isOcOnly() || workspaceMode === 'oc' ? 'oc' : workspaceMode;
@@ -191,7 +183,7 @@
     const metrics = [['Members on record', state.Members.length, 'Current & former members'], ['Active members', members.filter(row => row.annualStatus === 'Active').length, 'For the selected reporting year'], ['Efficient', summaries.filter(row => row.efficient === 'Efficient').length, 'All four conditions met'], ['Duty awaiting entry', summaries.filter(row => row.hours === null).length, 'Annual hours not yet recorded']];
     const activities = state.Activities.filter(row => !row.archived && Number(row.date.slice(0, 4)) === year()).sort((first, second) => second.date.localeCompare(first.date)).slice(0, 5);
     const packages = ocPackages();
-    const packageCard = packages.length ? '<section class="card" style="margin-top:24px"><div class="section-heading" style="margin-top:0"><h2>Activity packages</h2>' + button('Documents', 'navigate', 'Documents') + '</div><div class="activity-line-wrap">' + packages.map(pkg => {
+    const packageCard = packages.length ? '<section class="card" style="margin-top:24px"><div class="section-heading" style="margin-top:0"><h2>Annual Activity</h2>' + button('Open', 'navigate', 'Documents') + '</div><div class="activity-line-wrap">' + packages.map(pkg => {
       const progress = docProgress(pkg);
       return '<div class="activity-line"><div><strong>' + escape(pkg.activityType + ' (' + pkg.year + ')') + '</strong><small>' + escape((pkg.eventDate || 'Date TBC') + ' · ' + (progress.total ? progress.approved + '/' + progress.total + ' approved' : pkg.status)) + '</small></div>' + button('Open', 'docOpen', pkg.id) + '</div>';
     }).join('') + '</div></section>' : '';
@@ -358,15 +350,17 @@
     if (!openDocPackageId) {
       const packages = ocPackages();
       if (isOcOnly()) {
-        return packages.length ? '' : '<section class="card"><h2>No activity package yet</h2><p class="muted">When the Owner assigns you as Organizing Chairman for an activity, it will appear in the left navbar (for example AGM (2027)).</p></section>';
+        return packages.length
+          ? '<section class="card"><div class="section-heading" style="margin-top:0"><h2>Annual Activity</h2></div><div class="activity-line-wrap">' + packages.map(pkg => { const progress = docProgress(pkg); return '<div class="activity-line"><div><strong>' + escape(pkg.activityType + ' (' + pkg.year + ')') + '</strong><small>' + escape((pkg.eventDate || 'Date TBC') + ' · ' + progress.approved + '/' + progress.total + ' approved') + '</small></div>' + button('Open', 'docOpen', pkg.id) + '</div>'; }).join('') + '</div></section>'
+          : '<section class="card"><h2>No annual activity yet</h2><p class="muted">When the Owner assigns you as Organizing Chairman, the activity will appear on this page.</p></section>';
       }
-      const guide = '<section class="card" style="margin-bottom:20px"><div class="eyebrow">How it works</div><h2>Document packages</h2><ol class="rule-list"><li><span>1</span><strong>Owner opens a package for the year (optional: clone last year structure)</strong></li><li><span>2</span><strong>Download templates, edit locally, upload, then Submit</strong></li><li><span>3</span><strong>Owner or Secretary Approves · Organizing Chairman edits due dates</strong></li></ol><p class="hint">Treasurer accounts cannot open Documents. Each OC only sees their own activity (e.g. AGM 2027) on the navbar.</p></section>';
+      const guide = '<section class="card" style="margin-bottom:20px"><div class="eyebrow">How it works</div><h2>Annual Activity</h2><ol class="rule-list"><li><span>1</span><strong>Owner opens an activity for the year (optional: clone last year structure)</strong></li><li><span>2</span><strong>Download templates, edit locally, upload, then Submit</strong></li><li><span>3</span><strong>Owner or Secretary Approves · Organizing Chairman edits due dates</strong></li></ol><p class="hint">Treasurer accounts cannot open Annual Activity. Each OC only sees activities assigned to their Gmail account.</p></section>';
       const create = user.owner ? '<section class="card"><div class="section-heading" style="margin-top:0"><h2>Start new package</h2></div><form id="doc-package-form" class="form-grid"><div class="field"><label for="doc-activity">Activity</label><select id="doc-activity">' + options(KPT.docActivityTypes.map(value => [value, value === 'AGM' ? 'AGM (Annual General Meeting)' : value]), 'AGM') + '</select></div><div class="field"><label for="doc-year">Year</label><input id="doc-year" type="number" min="1900" max="2200" value="' + year() + '" required></div><div class="field"><label for="doc-event-date">Event date (optional)</label><input id="doc-event-date" type="date"></div><div class="field"><label for="doc-oc-email">Organizing Chairman (OC) email</label><input id="doc-oc-email" type="email" placeholder="organizer@gmail.com"></div><div class="field"><label for="doc-base">Base structure</label><select id="doc-base"><option value="">First package (default checklist)</option>' + packages.filter(row => !row.archived).map(row => '<option value="' + escape(row.id) + '">' + escape(row.activityType + ' ' + row.year) + '</option>').join('') + '</select></div><div class="field"><button class="button primary" type="submit">Create package</button></div></form></section>' : '';
       const list = packages.length ? table(['Activity', 'Year', 'OC', 'Event date', 'Progress', 'Status', 'Actions'], packages.map(pkg => {
         const progress = docProgress(pkg);
         return [escape(pkg.activityType), escape(String(pkg.year)), escape(pkg.ocEmail || '—'), escape(pkg.eventDate || '—'), progress.total ? progress.approved + '/' + progress.total : '—', pill(pkg.archived ? 'Archived' : pkg.status), '<div class="row-tools">' + button('Open', 'docOpen', pkg.id) + (user.owner ? button(pkg.archived ? 'Unarchive' : 'Archive', 'docArchive', pkg.id) : '') + '</div>'];
       })) : '';
-      return guide + create + '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Packages</h2></div>' + (list || '<p class="muted">No document packages yet. Owner creates the first one.</p>') + '</section>';
+      return guide + create + '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Activities</h2></div>' + (list || '<p class="muted">No annual activities yet. Owner creates the first one.</p>') + '</section>';
     }
     const pkg = state.DocPackages.find(row => row.id === openDocPackageId);
     if (!pkg) { openDocPackageId = null; return documentsView(); }
@@ -374,7 +368,7 @@
     const items = progress.items.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
     const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Next step</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? 'Download the template and upload your file' : nextItem.status === 'Draft' ? 'Ready to Submit' : nextItem.status === 'Rejected' ? 'Revise, re-upload, then Submit' : nextItem.status === 'Submitted' ? 'Waiting for Owner / Secretary approval' : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Completed</div><p>All required documents are approved.</p></section>' : '');
-    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + (isOcOnly() ? '' : button('Back to list', 'docBack')) + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
+    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
     const rows = items.map(item => [
       String(item.sortOrder),
       escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : ''),
@@ -414,7 +408,7 @@
   }
   function ownerAccessView() {
     if (!user.owner) return '<div class="card"><p class="muted">Only the Owner can manage access.</p></div>';
-    return '<p class="page-intro">Set who works as Secretary (Admin Work), Organizing Treasurer (Treasurer Work) and Organizing Chairman / OC (Documents due dates &amp; checklist). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards — and can approve documents.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div><div class="field full"><label for="oc-emails">Organizing Chairman (OC) · Gmail list</label><textarea id="oc-emails" rows="3">' + escape(ocs.join('\n')) + '</textarea><p class="hint">Once approved here, OC sees each activity package (e.g. AGM 2026) on the navbar and can open it, edit due dates, upload and submit. OC cannot approve.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
+    return '<p class="page-intro">Set who works as Secretary (Admin Work), Organizing Treasurer (Treasurer Work) and Organizing Chairman / OC (Annual Activity due dates &amp; checklist). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards — and can approve documents.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div><div class="field full"><label for="oc-emails">Organizing Chairman (OC) · Gmail list</label><textarea id="oc-emails" rows="3">' + escape(ocs.join('\n')) + '</textarea><p class="hint">Once approved here, OC opens Annual Activity and selects an assigned activity there. OC can edit due dates, upload and submit, but cannot approve.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
   }
   function render() {
     if (!state) return;
@@ -451,12 +445,10 @@
     }
     if (ocShell) {
       view = 'Documents';
-      const mine = ocPackages();
-      if (!openDocPackageId || !canOpenPackage(state.DocPackages.find(row => row.id === openDocPackageId))) {
-        openDocPackageId = mine[0] ? mine[0].id : null;
-      }
+      if (openDocPackageId && !canOpenPackage(state.DocPackages.find(row => row.id === openDocPackageId))) openDocPackageId = null;
       const opened = openDocPackageId ? state.DocPackages.find(row => row.id === openDocPackageId) : null;
       if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ') · Activity';
+      else byId('page-title').textContent = 'Annual Activity';
       document.querySelector('.admin-top .eyebrow').textContent = 'Activity workspace';
     }
     byId('content').innerHTML = views[view] ? views[view]() : '';

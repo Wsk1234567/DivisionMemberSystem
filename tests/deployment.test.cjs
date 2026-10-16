@@ -63,6 +63,13 @@ test('admin API falls back to a valid Google token when a portal session is miss
   assert.match(source, /if \(request\.idToken\) return verifyGoogleIdToken_\(request\.idToken\)\.email/);
   assert.ok((source.match(/portalRequestEmail_\(request\)/g) || []).length >= 3);
 });
+test('annual activities use one static sidebar destination', () => {
+  const source = read('src/admin.js');
+  assert.match(source, /\['Documents', 'Annual Activity'\]/);
+  assert.doesNotMatch(source, /class="doc-package-link"/);
+  assert.doesNotMatch(source, /data-package=/);
+  assert.doesNotMatch(source, /Document Packages/);
+});
 test('admin bridge derives an origin from the full GitHub Pages URL', () => {
   const source = read('apps-script/admin/Code.gs');
   assert.match(source, /function portalPublicOrigin_\(\)/);
