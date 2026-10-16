@@ -178,7 +178,7 @@
     });
   }
   function busyNotice(message) { byId('notice').className = 'message working'; byId('notice').innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + escape(message); }
-  function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming', 'Ready', 'Missing'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
+  function pill(value) { return '<span class="pill ' + (['Active', 'Efficient', 'Pending', 'Pass', 'Fail', 'Absent', 'Current', 'Completed', 'Upcoming', 'Ready', 'Missing', 'Approved', 'Rejected'].includes(value) ? value : '') + '">' + escape(value) + '</span>'; }
   function memberName(id) { const row = state.Members.find(member => member.id === id); return row ? row.name : id; }
   function button(label, action, id, table) { return '<button class="button small" type="button" data-action="' + action + '" data-id="' + escape(id || '') + '" data-table="' + escape(table || '') + '">' + escape(label) + '</button>'; }
   function deleteButton(tableName, id) { return user.owner ? button('Delete', 'delete', id, tableName) : ''; }
