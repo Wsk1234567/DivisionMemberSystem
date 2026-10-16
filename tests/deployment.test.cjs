@@ -47,13 +47,21 @@ test('admin transport detects deployment login pages and expires stale sessions 
   assert.match(source, /isGoogleAuthorisationPage/);
   assert.match(source, /Authorization needed/);
   assert.match(source, /Execute as Me \/ Anyone/);
-  assert.match(source, /AUTH_ERROR\.test\(message\)\) clearTokens\(\)/);
+  assert.match(source, /memoryTokens/);
+  assert.match(source, /action: 'portalLogin', idToken: tokens\.idToken/);
+  assert.match(source, /return callApi\(request, true\)/);
   assert.doesNotMatch(source, /setTimeout\(send, 400\);[\s\S]*?60000/);
   assert.doesNotMatch(source, /addEventListener\('load',[\s\S]*?markBridgeReady/);
   assert.match(source, /method:\s*'POST'/);
   assert.match(source, /'Content-Type':\s*'text\/plain;charset=UTF-8'/);
   assert.match(source, /return postApi\(body, base\)\.catch/);
   assert.doesNotMatch(source, /const attempts = \[bridgeCall/);
+});
+test('admin API falls back to a valid Google token when a portal session is missing', () => {
+  const source = read('apps-script/admin/Code.gs');
+  assert.match(source, /function portalRequestEmail_\(request\)/);
+  assert.match(source, /if \(request\.idToken\) return verifyGoogleIdToken_\(request\.idToken\)\.email/);
+  assert.ok((source.match(/portalRequestEmail_\(request\)/g) || []).length >= 3);
 });
 test('admin bridge derives an origin from the full GitHub Pages URL', () => {
   const source = read('apps-script/admin/Code.gs');

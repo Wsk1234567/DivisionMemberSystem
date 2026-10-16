@@ -20,6 +20,7 @@
     }
   }
   const store = sessionStore();
+  const memoryTokens = { sessionToken: '', idToken: '' };
   const DEPLOYMENT_ERROR = 'The admin service is not publicly reachable. Redeploy the Apps Script web app as Execute as Me / Anyone, then sign in again.';
   const AUTH_ERROR = /(?:sign[ -]?in required|login expired|please sign in again)/i;
   function apiUrl() {
@@ -27,8 +28,8 @@
     return config.adminUrl || config.apiUrl || '';
   }
   function getTokens() {
-    let sessionToken = store.get('tccd-session-token') || '';
-    let idToken = store.get('tccd-id-token') || '';
+    let sessionToken = store.get('tccd-session-token') || memoryTokens.sessionToken || '';
+    let idToken = store.get('tccd-id-token') || memoryTokens.idToken || '';
     if (typeof location !== 'undefined') {
       const hash = String(location.hash || '').replace(/^#/, '');
       if (hash.startsWith('session=')) {
@@ -47,13 +48,23 @@
         try { history.replaceState({}, '', location.pathname + location.search); } catch (error) { location.hash = ''; }
       }
     }
+    memoryTokens.sessionToken = sessionToken;
+    memoryTokens.idToken = idToken;
     return { sessionToken, idToken };
   }
   function saveTokens(tokens) {
-    if (tokens && tokens.sessionToken) store.set('tccd-session-token', String(tokens.sessionToken));
-    if (tokens && tokens.idToken) store.set('tccd-id-token', String(tokens.idToken));
+    if (tokens && tokens.sessionToken) {
+      memoryTokens.sessionToken = String(tokens.sessionToken);
+      store.set('tccd-session-token', memoryTokens.sessionToken);
+    }
+    if (tokens && tokens.idToken) {
+      memoryTokens.idToken = String(tokens.idToken);
+      store.set('tccd-id-token', memoryTokens.idToken);
+    }
   }
   function clearTokens() {
+    memoryTokens.sessionToken = '';
+    memoryTokens.idToken = '';
     store.remove('tccd-session-token');
     store.remove('tccd-id-token');
     store.remove('tccd-portal');
@@ -179,7 +190,7 @@
     if (!payload || payload.ok === false) throw new Error((payload && payload.error) || 'Request failed.');
     return payload.data;
   }
-  async function callApi(request) {
+  async function callApi(request, retried) {
     const tokens = getTokens();
     const body = Object.assign({}, request, {
       sessionToken: request.sessionToken || tokens.sessionToken || '',
@@ -187,9 +198,23 @@
     });
     const base = apiUrl();
     if (!base) throw new Error('Admin API URL is not configured.');
-    return postApi(body, base).catch(error => {
+    return postApi(body, base).catch(async error => {
       const message = String(error && error.message || error);
-      if (AUTH_ERROR.test(message)) clearTokens();
+      if (AUTH_ERROR.test(message) && !retried && request.action !== 'portalLogin' && tokens.idToken) {
+        memoryTokens.sessionToken = '';
+        store.remove('tccd-session-token');
+        try {
+          const login = await postApi({ action: 'portalLogin', idToken: tokens.idToken }, base);
+          if (login && login.sessionToken) {
+            saveTokens({ sessionToken: login.sessionToken, idToken: tokens.idToken });
+            return callApi(request, true);
+          }
+        } catch (loginError) {
+          const loginMessage = String(loginError && loginError.message || loginError);
+          if (!AUTH_ERROR.test(loginMessage) && !/Google sign-in failed/i.test(loginMessage)) throw new Error(loginMessage);
+        }
+      }
+      if (AUTH_ERROR.test(message) || /Google sign-in failed/i.test(message)) clearTokens();
       throw new Error(message);
     });
   }

@@ -550,6 +550,19 @@ function actorFromSessionToken_(token) {
   const session = readPortalSession_(String(token || ''));
   return actorFromEmail_(session.email);
 }
+function portalRequestEmail_(request) {
+  let sessionError = null;
+  if (request.sessionToken) {
+    try {
+      return readPortalSession_(String(request.sessionToken)).email;
+    } catch (error) {
+      sessionError = error;
+    }
+  }
+  if (request.idToken) return verifyGoogleIdToken_(request.idToken).email;
+  if (sessionError) throw sessionError;
+  throw new Error('Sign-in required.');
+}
 function authorizeExternalRequest() {
   return UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo', {
     muteHttpExceptions: true
@@ -587,10 +600,7 @@ function doPost(e) {
       }
       return apiJson_({ ok: true, data: { loggedOut: true } });
     }
-    let email = '';
-    if (request.sessionToken) email = readPortalSession_(String(request.sessionToken)).email;
-    else if (request.idToken) email = verifyGoogleIdToken_(request.idToken).email;
-    else throw new Error('Sign-in required.');
+    const email = portalRequestEmail_(request);
     const result = rpc(request, email);
     return apiJson_(result);
   } catch (error) {
@@ -617,9 +627,12 @@ function apiRpc(request) {
       return { ok: true, data: { loggedOut: true } };
     }
     let email = '';
-    if (request.sessionToken) email = readPortalSession_(String(request.sessionToken)).email;
-    else if (request.idToken) email = verifyGoogleIdToken_(request.idToken).email;
-    else email = String(Session.getActiveUser().getEmail() || '');
+    try {
+      email = portalRequestEmail_(request);
+    } catch (error) {
+      email = String(Session.getActiveUser().getEmail() || '');
+      if (!email) throw error;
+    }
     if (!email) return { ok: false, error: 'Sign-in required.' };
     return rpc(request, email);
   } catch (error) {
