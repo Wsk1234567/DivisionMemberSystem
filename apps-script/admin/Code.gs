@@ -550,6 +550,11 @@ function actorFromSessionToken_(token) {
   const session = readPortalSession_(String(token || ''));
   return actorFromEmail_(session.email);
 }
+function authorizeExternalRequest() {
+  return UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo', {
+    muteHttpExceptions: true
+  }).getResponseCode();
+}
 function portalLogin_(request) {
   const actor = verifyGoogleIdToken_(request.idToken);
   const state = loadState_();

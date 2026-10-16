@@ -29,6 +29,7 @@ test('public and admin Apps Script deployments have separate scope and execution
   assert.equal(admin.webapp.executeAs, 'USER_DEPLOYING');
   assert.equal(admin.webapp.access, 'ANYONE');
   assert.ok(admin.oauthScopes.includes('https://www.googleapis.com/auth/script.external_request'));
+  assert.match(read('apps-script/admin/Code.gs'), /function authorizeExternalRequest\(\)/);
   assert.equal(publicManifest.webapp.executeAs, 'USER_DEPLOYING');
   assert.equal(publicManifest.webapp.access, 'ANYONE_ANONYMOUS');
   assert.deepEqual(publicManifest.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets.readonly']);
