@@ -125,7 +125,24 @@
     return 'Guest';
   }
   function renderNavigation() {
-    byId('navigation').innerHTML = workspaceNav(workspaceMode).map(([key, label]) => '<button type="button" data-nav="' + key + '">' + icon + escape(label) + '</button>').join('');
+    const ocMode = workspaceMode === 'oc' || isOcOnly();
+    let html = workspaceNav(workspaceMode).map(([key, label]) => {
+      const text = key === 'Documents' && openDocPackageId ? 'All activities' : label;
+      return '<button type="button" data-nav="' + key + '">' + icon + escape(text) + '</button>';
+    }).join('');
+    if (ocMode && state && state.DocPackages) {
+      const packages = ocPackages();
+      if (packages.length) {
+        html += packages.map(pkg => {
+          const label = pkg.activityType + ' (' + pkg.year + ')';
+          return '<button type="button" class="doc-package-link" data-action="docOpen" data-id="' + escape(pkg.id) + '" data-package="' + escape(pkg.id) + '">' + icon + escape(label) + '</button>';
+        }).join('');
+      }
+    }
+    byId('navigation').innerHTML = html;
+    document.querySelectorAll('[data-package]').forEach(element => {
+      element.classList.toggle('active', !!openDocPackageId && element.dataset.package === openDocPackageId);
+    });
   }
   function applyWorkspaceTheme() {
     document.body.dataset.mode = isOcOnly() || workspaceMode === 'oc' ? 'oc' : workspaceMode;
@@ -450,6 +467,11 @@
       if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ') · Activity';
       else byId('page-title').textContent = 'Annual Activity';
       document.querySelector('.admin-top .eyebrow').textContent = 'Activity workspace';
+      const brandSub = document.querySelector('.sidebar .brand-sub');
+      if (brandSub) brandSub.textContent = 'Activity workspace';
+    } else {
+      const brandSub = document.querySelector('.sidebar .brand-sub');
+      if (brandSub && workspaceMode === 'admin') brandSub.textContent = 'Administration';
     }
     byId('content').innerHTML = views[view] ? views[view]() : '';
     byId('sync-notice').hidden = sync.ok;
@@ -908,8 +930,22 @@
     action(element).catch(error => { if (byId('editor').open) byId('editor-message').textContent = error.message; else notice(error.message, true); });
   });
   byId('navigation').addEventListener('click', event => {
+    const packageButton = event.target.closest('[data-package]');
+    if (packageButton) {
+      if (busy || !state) return;
+      const id = packageButton.dataset.id;
+      const pkg = state.DocPackages.find(row => row.id === id);
+      if (!canOpenPackage(pkg)) { notice('You can only open your own activity package.', true); return; }
+      openDocPackageId = id;
+      view = 'Documents';
+      if (isOcOnly() || workspaceMode === 'oc') workspaceMode = 'oc';
+      else if (user && (user.admin || user.owner)) workspaceMode = workspaceMode === 'portal' ? 'portal' : workspaceMode;
+      render();
+      return;
+    }
     const element = event.target.closest('[data-nav]');
     if (!element || busy || !state) return;
+    if (element.dataset.nav === 'Documents') openDocPackageId = null;
     view = element.dataset.nav; query = ''; page = 0; notice(''); render();
   });
   byId('close-editor').addEventListener('click', () => { if (!busy) byId('editor').close(); });
