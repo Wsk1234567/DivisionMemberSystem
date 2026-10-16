@@ -27,7 +27,7 @@ test('public and admin Apps Script deployments have separate scope and execution
   const publicManifest = JSON.parse(read('apps-script/public/appsscript.json'));
   // Admin API is called from GitHub Pages with session tokens; execute as deployer + Anyone.
   assert.equal(admin.webapp.executeAs, 'USER_DEPLOYING');
-  assert.equal(admin.webapp.access, 'ANYONE');
+  assert.equal(admin.webapp.access, 'ANYONE_ANONYMOUS');
   assert.ok(admin.oauthScopes.includes('https://www.googleapis.com/auth/script.external_request'));
   assert.match(read('apps-script/admin/Code.gs'), /function authorizeExternalRequest\(\)/);
   assert.equal(publicManifest.webapp.executeAs, 'USER_DEPLOYING');
