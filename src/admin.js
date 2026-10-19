@@ -1,15 +1,20 @@
 (function () {
   'use strict';
   const byId = id => document.getElementById(id);
+  const t = (key) => {
+    if (window.KPTI18n && window.KPTI18n.t) return window.KPTI18n.t(key);
+    return key;
+  };
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
-    admin: [['Overview', 'Dashboard'], ['Phase', 'TCCD Data System Phase'], ['Members', 'Members'], ['Activities', 'Attendance'], ['Exams', 'Examinations'], ['Duty', 'Annual Duty'], ['Awards', 'Awards'], ['Documents', 'Annual Activity'], ['Data', 'Data Center'], ['Setup', 'System Setup'], ['Import', 'Import & export'], ['Trash', 'Recycle Bin'], ['Settings', 'Settings & backups']],
-    owner: [['Owner', 'Owner access'], ['Settings', 'General settings']],
-    portal: [['Portal', 'Member System']],
+    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Trash', 'Trash'], ['Settings', 'Settings']],
+    owner: [['Owner', 'Owner'], ['Settings', 'Settings']],
+    portal: [['Portal', 'Portal']],
     oc: []
   };
-  const ocNav = [['Documents', 'Annual Activity']];
+  const ocNav = [['Documents', 'Documents']];
+  const navLabel = key => t('nav.' + key);
   const workspaceNav = mode => {
     if (mode === 'portal') return nav.portal;
     if (mode === 'oc') return ocNav;
@@ -31,8 +36,13 @@
     if (user.owner || user.admin) return true;
     return user.oc && String(pkg.ocEmail || '').toLowerCase() === String(user.email || '').toLowerCase();
   };
-  const titles = Object.fromEntries(Object.values(nav).flat().map(([key, label]) => [key, label]));
-  const workspaceTitles = mode => Object.fromEntries(workspaceNav(mode));
+  const titles = {};
+  Object.values(nav).flat().forEach(([key]) => { titles[key] = key; });
+  const workspaceTitles = mode => {
+    const map = {};
+    workspaceNav(mode).forEach(([key]) => { map[key] = navLabel(key); });
+    return map;
+  };
   const phases = [
     { title: '学生名单进入系统', owner: 'Secretary', goal: '先把学生名单安全地放进系统。', steps: ['在 Excel 的 Members sheet 填写 name 和 sjamId；sjamId 可以暂时留空。', 'id、version 和 status 留空，系统会自动建立内部 ID，并设为 Active。', '先按 Preview Import 检查，再按 Confirm Import 正式加入资料。'] },
     { title: '补完整学生资料', owner: 'Owner & Secretary', goal: '名单确认后，再慢慢补齐个人资料。', steps: ['补上 ic、race、form、joined 和正确的 status。', '不需要一次填完，空白资料以后仍然可以补上。', '补资料时使用系统内部 id，原本的历史记录不会断开。'] },
@@ -126,8 +136,8 @@
   }
   function renderNavigation() {
     const ocMode = workspaceMode === 'oc' || isOcOnly();
-    let html = workspaceNav(workspaceMode).map(([key, label]) => {
-      const text = key === 'Documents' && openDocPackageId ? 'All activities' : label;
+    let html = workspaceNav(workspaceMode).map(([key]) => {
+      const text = key === 'Documents' && openDocPackageId ? t('nav.AllActivities') : navLabel(key);
       return '<button type="button" data-nav="' + key + '">' + icon + escape(text) + '</button>';
     }).join('');
     if (ocMode && state && state.DocPackages) {
@@ -139,6 +149,8 @@
         }).join('');
       }
     }
+    const lang = (window.KPTI18n && window.KPTI18n.getLang()) || 'en';
+    html += '<button type="button" data-action="toggleLang" style="margin-top:auto">' + icon + (lang === 'zh' ? 'EN' : '中') + '</button>';
     byId('navigation').innerHTML = html;
     document.querySelectorAll('[data-package]').forEach(element => {
       element.classList.toggle('active', !!openDocPackageId && element.dataset.package === openDocPackageId);
@@ -344,19 +356,19 @@
   }
   function docActionsFor(item) {
     const tools = [];
-    if (item.fileId) tools.push(button('Download', 'docDownload', item.id));
+    if (item.fileId) tools.push(button(t('docs.download'), 'docDownload', item.id));
     if (item.status === 'Approved') {
-      if (user.owner || user.admin) tools.push(button('Reopen', 'docReopen', item.id));
+      if (user.owner || user.admin) tools.push(button(t('docs.reopen'), 'docReopen', item.id));
     } else if (item.status === 'Submitted') {
       if (user.owner || user.admin) {
-        tools.push(button('Approve', 'docApprove', item.id));
-        tools.push(button('Reject', 'docReject', item.id));
+        tools.push(button(t('docs.approve'), 'docApprove', item.id));
+        tools.push(button(t('docs.reject'), 'docReject', item.id));
       }
     } else {
-      tools.push('<label class="button small" for="doc-upload-' + escape(item.id) + '">Upload<input id="doc-upload-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
-      if (item.status === 'Draft' || item.status === 'Rejected') tools.push(button('Submit', 'docSubmit', item.id));
+      tools.push('<label class="button small" for="doc-upload-' + escape(item.id) + '">' + escape(t('docs.upload')) + '<input id="doc-upload-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
+      if (item.status === 'Draft' || item.status === 'Rejected') tools.push(button(t('docs.submit'), 'docSubmit', item.id));
     }
-    if (item.templateId) tools.push(button('Template', 'docDownloadTemplate', item.id));
+    if (item.templateId) tools.push(button(t('docs.template'), 'docDownloadTemplate', item.id));
     return tools.join(' ');
   }
   function documentsView() {
@@ -384,7 +396,7 @@
     const progress = docProgress(pkg);
     const items = progress.items.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
-    const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Next step</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? 'Download the template and upload your file' : nextItem.status === 'Draft' ? 'Ready to Submit' : nextItem.status === 'Rejected' ? 'Revise, re-upload, then Submit' : nextItem.status === 'Submitted' ? 'Waiting for Owner / Secretary approval' : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Completed</div><p>All required documents are approved.</p></section>' : '');
+    const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
     const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
     const rows = items.map(item => [
       String(item.sortOrder),
@@ -433,7 +445,7 @@
     applyWorkspaceTheme();
     const ocShell = isOcOnly() || workspaceMode === 'oc';
     const modeTitles = workspaceTitles(workspaceMode);
-    byId('page-title').innerHTML = escape(modeTitles[view] || titles[view] || view);
+    byId('page-title').innerHTML = escape(navLabel(view) || titles[view] || view);
     byId('mode-switcher-slot').innerHTML = ocShell ? '' : modeSwitcher();
     const yearField = document.querySelector('.admin-top .field');
     if (yearField) yearField.hidden = ocShell;
@@ -464,14 +476,14 @@
       view = 'Documents';
       if (openDocPackageId && !canOpenPackage(state.DocPackages.find(row => row.id === openDocPackageId))) openDocPackageId = null;
       const opened = openDocPackageId ? state.DocPackages.find(row => row.id === openDocPackageId) : null;
-      if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ') · Activity';
-      else byId('page-title').textContent = 'Annual Activity';
-      document.querySelector('.admin-top .eyebrow').textContent = 'Activity workspace';
+      if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ')';
+      else byId('page-title').textContent = t('docs.title');
+      document.querySelector('.admin-top .eyebrow').textContent = t('brand.ActivityWorkspace');
       const brandSub = document.querySelector('.sidebar .brand-sub');
-      if (brandSub) brandSub.textContent = 'Activity workspace';
+      if (brandSub) brandSub.textContent = t('brand.ActivityWorkspace');
     } else {
       const brandSub = document.querySelector('.sidebar .brand-sub');
-      if (brandSub && workspaceMode === 'admin') brandSub.textContent = 'Administration';
+      if (brandSub && workspaceMode === 'admin') brandSub.textContent = t('brand.Administration');
     }
     byId('content').innerHTML = views[view] ? views[view]() : '';
     byId('sync-notice').hidden = sync.ok;
@@ -821,6 +833,12 @@
     }
     if (name === 'reloadNow') {
       if (!busy) { importPreview = null; importFile = null; await refresh(); notice('Records reloaded with the current Google account.'); }
+      return;
+    }
+    if (name === 'toggleLang') {
+      if (window.KPTI18n) window.KPTI18n.toggleLang();
+      render();
+      notice((window.KPTI18n && window.KPTI18n.getLang() === 'zh') ? '语言已切换为中文' : 'Language switched to English');
       return;
     }
     if (name === 'docOpen') {
