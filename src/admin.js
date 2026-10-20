@@ -371,6 +371,25 @@
     if (item.templateId) tools.push(button(t('docs.template'), 'docDownloadTemplate', item.id));
     return tools.join(' ');
   }
+  function activityAboutCard(pkg) {
+    if (!pkg || !window.KPTActivityIntro) return '';
+    const lang = (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? 'zh' : 'en';
+    const copy = window.KPTActivityIntro.introFor(pkg.activityType, lang);
+    const icon = pkg.activityType === 'AGM'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="4" y="3" width="16" height="18" rx="2"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
+    return '<section class="activity-about" aria-label="' + escape(copy.eyebrow) + '">'
+      + '<div class="activity-about-rail" aria-hidden="true"></div>'
+      + '<div class="activity-about-body">'
+      + '<div class="activity-about-head"><span class="activity-about-icon" aria-hidden="true">' + icon + '</span><div><p class="activity-about-eyebrow">' + escape(copy.eyebrow) + '</p><h2>' + escape(pkg.activityType) + ' <span class="activity-about-year">' + pkg.year + '</span></h2></div><span class="activity-about-badge">' + escape(lang === 'zh' ? '先看这里' : 'Start here') + '</span></div>'
+      + '<ul class="activity-about-points">'
+      + '<li><span class="dot what"></span><div><strong>' + escape(lang === 'zh' ? '这是什么' : 'What it is') + '</strong><p>' + escape(copy.what) + '</p></div></li>'
+      + '<li><span class="dot why"></span><div><strong>' + escape(lang === 'zh' ? '为什么重要' : 'Why it matters') + '</strong><p>' + escape(copy.why) + '</p></div></li>'
+      + '<li><span class="dot do"></span><div><strong>' + escape(lang === 'zh' ? '你要做什么' : 'What you do') + '</strong><p>' + escape(copy.do) + '</p></div></li>'
+      + '</ul>'
+      + '<p class="activity-about-note"><span aria-hidden="true">⚠</span> ' + escape(copy.note) + '</p>'
+      + '</div></section>';
+  }
   function documentsView() {
     if (isOcOnly() && openDocPackageId) {
       const minePkg = state.DocPackages.find(row => row.id === openDocPackageId);
@@ -396,6 +415,7 @@
     const progress = docProgress(pkg);
     const items = progress.items.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
+    const aboutCard = activityAboutCard(pkg);
     const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
     const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
     const rows = items.map(item => [
@@ -409,7 +429,7 @@
     const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
     const templateSection = user.owner ? '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Official templates · ' + escape(pkg.activityType) + '</h2></div><p class="hint">Owner uploads master templates. Checklist items link when titles match.</p>' + (templates.length ? table(['Title', 'File', 'Version', 'Actions'], templates.map(row => [escape(row.title), escape(row.fileName), escape(row.versionLabel || '—'), '<label class="button small" for="tpl-' + escape(row.id) + '">Replace<input id="tpl-' + escape(row.id) + '" type="file" data-tpl-upload="' + escape(row.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>'])) : '<p class="muted">No templates yet for this activity.</p>') + '<form id="tpl-new-form" class="form-grid" style="margin-top:12px"><div class="field"><label for="tpl-new-title">New template title</label><input id="tpl-new-title" type="text" required placeholder="Match checklist title"></div><div class="field"><label for="tpl-new-file">File</label><input id="tpl-new-file" type="file" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" required></div><div class="field"><button class="button" type="submit">Add template</button></div></form></section>' : '';
     const folders = user.owner && !docFolders.templates ? '<section class="card" style="margin-top:16px"><h2>Document folders</h2><p class="muted">Drive folders are not initialised yet.</p><button class="button primary" type="button" data-action="initDocFolders">Initialize document folders</button></section>' : '';
-    return nextCard + meta + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+    return aboutCard + nextCard + meta + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
   }
   function portalView() {
     const packages = ocPackages();

@@ -41,6 +41,25 @@ body[data-mode="oc"] .main{max-width:none;margin:0;padding:30px 38px}
 body[data-mode="oc"] .brand-sub{color:var(--muted)}
 body[data-mode="oc"] .nav .doc-package-link{font-weight:600;color:var(--ink)}
 body[data-mode="oc"] .nav .doc-package-link.active{background:var(--soft);color:var(--accent)}
+.activity-about{display:grid;grid-template-columns:6px minmax(0,1fr);border:1px solid #e8c9c0;border-radius:14px;overflow:hidden;background:linear-gradient(135deg,#fff8f5 0%,#fff 55%,#f7fbf8 100%);margin-bottom:18px;box-shadow:0 10px 28px #852b3d12}
+.activity-about-rail{background:linear-gradient(180deg,#852b3d 0%,#c45c26 100%)}
+.activity-about-body{padding:20px 22px 18px}
+.activity-about-head{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.activity-about-icon{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:#852b3d;color:#fff;box-shadow:0 8px 18px #852b3d33;flex-shrink:0}
+.activity-about-icon svg{width:26px;height:26px}
+.activity-about-eyebrow{margin:0 0 4px;font-size:.72rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#852b3d}
+.activity-about-head h2{margin:0;font-size:1.55rem;line-height:1.2}
+.activity-about-year{font-weight:500;color:var(--muted);font-size:1rem}
+.activity-about-badge{margin-left:auto;align-self:flex-start;padding:6px 12px;border-radius:999px;font-size:.72rem;font-weight:800;letter-spacing:.04em;color:#fff;background:linear-gradient(90deg,#852b3d,#c45c26);box-shadow:0 6px 14px #c45c2640;white-space:nowrap}
+.activity-about-points{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.activity-about-points li{display:grid;grid-template-columns:12px minmax(0,1fr);gap:12px;align-items:start}
+.activity-about-points .dot{width:10px;height:10px;border-radius:50%;margin-top:6px;background:#852b3d;box-shadow:0 0 0 4px #852b3d18}
+.activity-about-points .dot.why{background:#c45c26;box-shadow:0 0 0 4px #c45c2618}
+.activity-about-points .dot.do{background:#2f7d4c;box-shadow:0 0 0 4px #2f7d4c18}
+.activity-about-points strong{display:block;font-size:.82rem;letter-spacing:.02em;margin-bottom:2px}
+.activity-about-points p{margin:0;font-size:.9rem;color:var(--ink);line-height:1.45}
+.activity-about-note{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:#fff5f3;border:1px solid #f0d2c8;color:#6d2e20;font-size:.82rem;line-height:1.45}
+@media(max-width:760px){.activity-about{grid-template-columns:5px minmax(0,1fr)}.activity-about-body{padding:16px}.activity-about-badge{display:none}}
 body[data-mode="owner"] a{color:#f5c542;font-weight:600}
 body[data-mode="owner"] label{color:#e8e8e8;font-weight:600}
 body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{background:#161616;border-color:#333}

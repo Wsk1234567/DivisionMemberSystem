@@ -25,6 +25,7 @@ const financePdf = await read('src/finance-pdf.js');
 const financeTemplates = await read('src/finance-templates.js');
 const admin = await read('src/admin.js');
 const i18n = await read('src/i18n.js');
+const activityIntro = await read('src/activity-intro.js');
 const library = await read('vendor/xlsx.full.min.js');
 const libraryHash = crypto.createHash('sha256').update(library).digest('hex');
 const expectedHash = (await read('vendor/SHA256.txt')).trim();
@@ -38,9 +39,9 @@ const assetVersion = crypto.createHash('sha256')
   .slice(0, 12);
 const versionedScript = name => '<script src="' + name + '?v=' + assetVersion + '"></script>';
 const configScript = '<script>window.KPT_CONFIG = ' + JSON.stringify(config).replace(/</g, '\\u003c') + ';</script>';
-const productionAdmin = adminTemplate.replace('__STYLE__', () => '<style>' + style + '</style>').replace('__CONFIG__', () => configScript).replace('__LIBRARY__', () => inline(library)).replace('__DOMAIN__', () => inline(domainCode)).replace('__WORKBOOK__', () => inline(workbook)).replace('__FINANCETPL__', () => inline(financeTemplates)).replace('__FINANCEWB__', () => inline(financeWorkbook)).replace('__FINANCEPDF__', () => inline(financePdf)).replace('__TRANSPORT__', () => inline(i18n) + inline(transport)).replace('__ADMIN__', () => inline(admin));
-const previewAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__CONFIG__', '<script src="config.js"></script>').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__FINANCETPL__', '<script src="finance-templates.js"></script>').replace('__FINANCEWB__', '<script src="finance-workbook.js"></script>').replace('__FINANCEPDF__', '<script src="finance-pdf.js"></script>').replace('__TRANSPORT__', '<script src="i18n.js"></script><script src="demo-transport.js"></script>').replace('__ADMIN__', '<script src="admin.js"></script>');
-const githubAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css?v=' + assetVersion + '">').replace('__CONFIG__', versionedScript('config.js')).replace('__LIBRARY__', versionedScript('xlsx.full.min.js')).replace('__DOMAIN__', versionedScript('domain.js')).replace('__WORKBOOK__', versionedScript('workbook.js')).replace('__FINANCETPL__', versionedScript('finance-templates.js')).replace('__FINANCEWB__', versionedScript('finance-workbook.js')).replace('__FINANCEPDF__', versionedScript('finance-pdf.js')).replace('__TRANSPORT__', versionedScript('i18n.js') + versionedScript('transport.js')).replace('__ADMIN__', versionedScript('admin.js'));
+const productionAdmin = adminTemplate.replace('__STYLE__', () => '<style>' + style + '</style>').replace('__CONFIG__', () => configScript).replace('__LIBRARY__', () => inline(library)).replace('__DOMAIN__', () => inline(domainCode)).replace('__WORKBOOK__', () => inline(workbook)).replace('__FINANCETPL__', () => inline(financeTemplates)).replace('__FINANCEWB__', () => inline(financeWorkbook)).replace('__FINANCEPDF__', () => inline(financePdf)).replace('__TRANSPORT__', () => inline(i18n) + inline(activityIntro) + inline(transport)).replace('__ADMIN__', () => inline(admin));
+const previewAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__CONFIG__', '<script src="config.js"></script>').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__FINANCETPL__', '<script src="finance-templates.js"></script>').replace('__FINANCEWB__', '<script src="finance-workbook.js"></script>').replace('__FINANCEPDF__', '<script src="finance-pdf.js"></script>').replace('__TRANSPORT__', '<script src="i18n.js"></script><script src="activity-intro.js"></script><script src="demo-transport.js"></script>').replace('__ADMIN__', '<script src="admin.js"></script>');
+const githubAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css?v=' + assetVersion + '">').replace('__CONFIG__', versionedScript('config.js')).replace('__LIBRARY__', versionedScript('xlsx.full.min.js')).replace('__DOMAIN__', versionedScript('domain.js')).replace('__WORKBOOK__', versionedScript('workbook.js')).replace('__FINANCETPL__', versionedScript('finance-templates.js')).replace('__FINANCEWB__', versionedScript('finance-workbook.js')).replace('__FINANCEPDF__', versionedScript('finance-pdf.js')).replace('__TRANSPORT__', versionedScript('i18n.js') + versionedScript('activity-intro.js') + versionedScript('transport.js')).replace('__ADMIN__', versionedScript('admin.js'));
 for (const dir of ['dist', 'preview']) {
   await write(dir + '/index.html', await read('src/public.html'));
   await write(dir + '/public.js', await read('src/public.js'));
@@ -49,10 +50,10 @@ for (const dir of ['dist', 'preview']) {
 }
 await write('dist/.nojekyll', '');
 await write('dist/admin.html', githubAdmin);
-for (const file of ['domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js']) await write('dist/' + file, await read('src/' + file));
+for (const file of ['domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js', 'activity-intro.js']) await write('dist/' + file, await read('src/' + file));
 await write('dist/xlsx.full.min.js', library);
 await write('preview/admin.html', previewAdmin);
-for (const file of ['domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'demo-transport.js', 'i18n.js']) await write('preview/' + file, await read('src/' + file));
+for (const file of ['domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'demo-transport.js', 'i18n.js', 'activity-intro.js']) await write('preview/' + file, await read('src/' + file));
 await write('preview/xlsx.full.min.js', library);
 const fixture = demo.fixture(500, 2022, 2026);
 domain.validateState(fixture);
@@ -61,7 +62,7 @@ await write('preview/demo-public.json', JSON.stringify(domain.projectPublic(fixt
 await write('build/apps-script/admin/Admin.html', productionAdmin);
 await write('build/apps-script/admin/Domain.gs', domainCode);
 for (const project of ['admin', 'public']) for (const file of ['Code.gs', 'appsscript.json']) await write('build/apps-script/' + project + '/' + file, await read('apps-script/' + project + '/' + file));
-const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css', 'admin.html', 'domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js', 'xlsx.full.min.js'];
+const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css', 'admin.html', 'domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js', 'activity-intro.js', 'xlsx.full.min.js'];
 const publicFiles = await fs.readdir(path.join(root, 'dist'));
 if (publicFiles.some(name => !approvedFiles.includes(name))) throw new Error('Unexpected file in public dist. Review before publishing.');
 console.log('Built TCCD public+admin site, preview, and Apps Script packages.');
