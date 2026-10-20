@@ -388,7 +388,24 @@
       + '<li><span class="dot do"></span><div><strong>' + escape(lang === 'zh' ? '你要做什么' : 'What you do') + '</strong><p>' + escape(copy.do) + '</p></div></li>'
       + '</ul>'
       + '<p class="activity-about-note"><span aria-hidden="true">⚠</span> ' + escape(copy.note) + '</p>'
+      + (copy.guide && copy.guide.length ? '<div class="activity-about-actions"><button type="button" class="button small primary" data-action="openActivityGuide" data-id="' + escape(pkg.activityType) + '">' + escape(lang === 'zh' ? '完整说明' : 'Full guide') + '</button></div>' : '')
       + '</div></section>';
+  }
+  function openActivityGuideDialog(activityType) {
+    const dialog = byId('editor');
+    const lang = (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? 'zh' : 'en';
+    const copy = window.KPTActivityIntro ? window.KPTActivityIntro.introFor(activityType, lang) : null;
+    if (!copy) return;
+    byId('editor-title').textContent = lang === 'zh' ? '活动完整说明' : 'Activity full guide';
+    const guide = copy.guide && copy.guide.length ? copy.guide : [
+      { title: lang === 'zh' ? '这是什么' : 'What it is', body: copy.what },
+      { title: lang === 'zh' ? '为什么重要' : 'Why it matters', body: copy.why },
+      { title: lang === 'zh' ? '你要做什么' : 'What you do', body: copy.do },
+      { title: lang === 'zh' ? '注意' : 'Note', body: copy.note }
+    ];
+    byId('editor-body').innerHTML = '<div class="activity-guide-list">' + guide.map(section => '<section class="activity-guide-section"><h3>' + escape(section.title) + '</h3><p>' + escape(section.body) + '</p></section>').join('') + '</div><div class="dialog-actions"><button class="button primary" type="button" data-action="close">Close</button></div>';
+    byId('editor-message').textContent = '';
+    if (dialog && !dialog.open) dialog.showModal();
   }
   function documentsView() {
     if (isOcOnly() && openDocPackageId) {
@@ -853,6 +870,10 @@
     }
     if (name === 'reloadNow') {
       if (!busy) { importPreview = null; importFile = null; await refresh(); notice('Records reloaded with the current Google account.'); }
+      return;
+    }
+    if (name === 'openActivityGuide') {
+      openActivityGuideDialog(id);
       return;
     }
     if (name === 'toggleLang') {

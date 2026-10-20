@@ -8,14 +8,32 @@
         what: 'Annual General Meeting — TCCD’s yearly meeting for reports, elections and handover.',
         why: 'Settle the year, elect the next committee, and lock next year’s plan.',
         do: 'Open this package → download templates → edit offline → upload → Submit.',
-        note: 'Owner or Secretary approves. Only this package’s OC email can open it. Rejected files show red remarks — fix and upload again.'
+        note: 'Owner or Secretary approves. Only this package’s OC email can open it. Rejected files show red remarks — fix and upload again.',
+        guide: [
+          { title: 'What', body: 'The Annual General Meeting (AGM) is TCCD’s division-wide yearly meeting.' },
+          { title: 'Purpose', body: 'Department reports, committee election, file handover, and next-year plan.' },
+          { title: 'Typical flow', body: 'Before the meeting: application letter and invitations. On the day: department reports → election → handover → speeches. After the meeting: minutes, committee board, archive.' },
+          { title: 'Must deliver', body: '1) Application letter to ASO  2) Email to ASO  3) Invitations (JDO / speaker / guests)  4) Agenda  5) Action Plan  6) Meeting Minutes  7) Committee Board. Optional: venue letter, photo pack, finance I&E.' },
+          { title: 'Roles', body: 'Owner creates the package and sets OC email. Secretary drafts and uploads. OC of this AGM uploads and follows due dates. Owner or Secretary approves. Treasurer stays out of this pack.' },
+          { title: 'System map', body: 'Activity type AGM · Annual Activity checklist · optional Attendance (not DIM) · Treasurer Work only if money is involved.' },
+          { title: 'Rules', body: 'Rejected files show red remarks — fix, re-upload, Submit again. When every required item is Approved, the package is complete. Package OC email must match the Gmail that signs in.' }
+        ]
       },
       zh: {
         eyebrow: '关于 · AGM',
         what: '年度大会（AGM）——本区一年一度的正式会议：报告、换届、交接。',
         why: '交代过去一年，选出新工委，并定下来年方向。',
         do: '打开本包 → 下载模板 → 本地改好 → 上传 → 提交。',
-        note: 'Owner 或 Secretary 批准。只有本包 OC 的 Gmail 能打开。退回看红字，改完再传。'
+        note: 'Owner 或 Secretary 批准。只有本包 OC 的 Gmail 能打开。退回看红字，改完再传。',
+        guide: [
+          { title: '是什么', body: '年度大会（AGM）是本区面向全区的年度正式会议。' },
+          { title: '目的', body: '各部门报告、换届、文件交接、通过来年方向。' },
+          { title: '流程', body: '开会前：申请信与邀请。当天：部门报告 → 选举 → 交接 → 致辞。开完后：会议记录、执委表、归档。' },
+          { title: '必须交', body: '1) 致 ASO 申请信  2) 致 ASO 邮件  3) 邀请函（JDO / 致辞嘉宾 / 来宾）  4) Agenda  5) Action Plan  6) 会议记录  7) 执委表。可选：场地申请、照片包、财务 I&E。' },
+          { title: '角色', body: 'Owner 开包并填 OC email。Secretary 起草上传。本包 OC 按截止日上传。Owner 或 Secretary 批准。Treasurer 不进本文件包。' },
+          { title: '系统对应', body: '活动类型 AGM · 年度活动清单 · 可选出勤（不算 DIM）· 若涉及金钱走 Treasurer Work。' },
+          { title: '规则', body: '退回看红字，改完再传。全部必交文件 Approved 后整包完成。包上 OC email 必须与登录 Gmail 一致。' }
+        ]
       }
     },
     CadetEnrolment: {
