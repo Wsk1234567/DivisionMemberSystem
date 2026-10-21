@@ -63,7 +63,7 @@ body[data-mode="oc"] .nav .doc-package-link.active{background:var(--soft);color:
 .activity-guide-list{display:grid;gap:14px}
 .activity-guide-section{padding:12px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
 .activity-guide-section h3{margin:0 0 6px;font-size:.95rem;color:#852b3d}
-.activity-guide-section p{margin:0;font-size:.88rem;line-height:1.5}
+.activity-guide-section p{margin:0;font-size:.88rem;line-height:1.5;white-space:pre-line}
 @media(max-width:760px){.activity-about{grid-template-columns:5px minmax(0,1fr)}.activity-about-body{padding:16px}.activity-about-badge{display:none}}
 body[data-mode="owner"] a{color:#f5c542;font-weight:600}
 body[data-mode="owner"] label{color:#e8e8e8;font-weight:600}

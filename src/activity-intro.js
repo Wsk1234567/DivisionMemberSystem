@@ -12,7 +12,9 @@
         guide: [
           { title: 'What', body: 'The Annual General Meeting (AGM) is TCCD’s division-wide yearly meeting.' },
           { title: 'Purpose', body: 'Department reports, committee election, file handover, and next-year plan.' },
-          { title: 'Typical flow', body: 'Before the meeting: application letter and invitations. On the day: department reports → election → handover → speeches. After the meeting: minutes, committee board, archive.' },
+          { title: 'Before the meeting', body: 'Send the application letter to ASO. Invite JDO, Teacher Advisor, speakers and guests. Finish Agenda and Action Plan. Collect department reports. Finish this Annual Activity package checklist.' },
+          { title: 'On the day (follow Action Plan)', body: '1) Preparation — seats, slides, microphones, name list\n2) MC opening\n3) Teacher Advisor speech\n4) Department reports in order: Secretary → Treasurer → CVS Coordinator → Storekeeper → First Aid Duty → Medicine Board → Activity → Training → Recruit → Notice Board\n5) Old committee dismiss\n6) Election — explain voting, hand ballots, vote\n7) Rest break\n8) JDO speech\n9) Announce new committee\n10) Handover ceremony — same order as reports\n11) Discuss next-year plan\n12) ASO Cadet speech\n13) Group photo if needed\n14) MC closes, dismiss' },
+          { title: 'After the meeting', body: 'Upload Meeting Minutes and Committee Board here. Archive photos. Put any costs in Treasurer Work. Hand files to the new committee.' },
           { title: 'Must deliver', body: '1) Application letter to ASO  2) Email to ASO  3) Invitations (JDO / speaker / guests)  4) Agenda  5) Action Plan  6) Meeting Minutes  7) Committee Board. Optional: venue letter, photo pack, finance I&E.' },
           { title: 'Roles', body: 'Owner creates the package and sets OC email. Secretary drafts and uploads. OC of this AGM uploads and follows due dates. Owner or Secretary approves. Treasurer stays out of this pack.' },
           { title: 'System map', body: 'Activity type AGM · Annual Activity checklist · optional Attendance (not DIM) · Treasurer Work only if money is involved.' },
@@ -28,7 +30,9 @@
         guide: [
           { title: '是什么', body: '年度大会（AGM）是本区面向全区的年度正式会议。' },
           { title: '目的', body: '各部门报告、换届、文件交接、通过来年方向。' },
-          { title: '流程', body: '开会前：申请信与邀请。当天：部门报告 → 选举 → 交接 → 致辞。开完后：会议记录、执委表、归档。' },
+          { title: '开会前要做什么', body: '寄出致 ASO 的申请信。邀请 JDO、Teacher Advisor、致辞嘉宾与来宾。完成 Agenda 与 Action Plan。收齐各部门报告。把本「年度活动」清单里的文件做完。' },
+          { title: '当天完整流程（照 Action Plan）', body: '1) 准备：排座位、投影与 Slide、麦克风、名册\n2) 司仪开场\n3) Teacher Advisor 致辞\n4) 部门报告（固定顺序）：Secretary → Treasurer → Cadet Voluntary Service Coordinator → Storekeeper → First Aid Room Duty → Medicine Board → Activity → Training → Recruit → Notice Board\n5) 旧委员会卸任\n6) 选举：解释投票、发选票、投票\n7) 中场休息\n8) JDO 致辞\n9) 宣布新委员会名单\n10) 交接典礼（顺序与部门报告相同）\n11) 讨论来年活动计划\n12) ASO Cadet 致辞\n13) 需要则大合照\n14) 司仪总结并散会' },
+          { title: '开完会要做什么', body: '把会议记录、执委表传到本包。照片归档。若有花费，记入 Treasurer Work。把资料交给新一届委员会。' },
           { title: '必须交', body: '1) 致 ASO 申请信  2) 致 ASO 邮件  3) 邀请函（JDO / 致辞嘉宾 / 来宾）  4) Agenda  5) Action Plan  6) 会议记录  7) 执委表。可选：场地申请、照片包、财务 I&E。' },
           { title: '角色', body: 'Owner 开包并填 OC email。Secretary 起草上传。本包 OC 按截止日上传。Owner 或 Secretary 批准。Treasurer 不进本文件包。' },
           { title: '系统对应', body: '活动类型 AGM · 年度活动清单 · 可选出勤（不算 DIM）· 若涉及金钱走 Treasurer Work。' },
