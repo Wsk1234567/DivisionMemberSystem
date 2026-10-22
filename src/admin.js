@@ -76,6 +76,8 @@
   let ocs = [];
   let docFolders = { templates: '', submissions: '' };
   let openDocPackageId = null;
+  let docEditOpen = false;
+  let docEditDraft = null;
   let workspaceMode = 'admin';
   let currentPhase = 1;
   let sync = { ok: true };
@@ -435,6 +437,35 @@
     const aboutCard = activityAboutCard(pkg);
     const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
     const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
+    const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
+    const canEditStructure = !!(user.owner || user.admin);
+    const templateSection = user.owner ? '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Official templates · ' + escape(pkg.activityType) + '</h2></div><p class="hint">Owner uploads master templates. Checklist items link when titles match.</p>' + (templates.length ? table(['Title', 'File', 'Version', 'Actions'], templates.map(row => [escape(row.title), escape(row.fileName), escape(row.versionLabel || '—'), '<label class="button small" for="tpl-' + escape(row.id) + '">Replace<input id="tpl-' + escape(row.id) + '" type="file" data-tpl-upload="' + escape(row.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>'])) : '<p class="muted">No templates yet for this activity.</p>') + '<form id="tpl-new-form" class="form-grid" style="margin-top:12px"><div class="field"><label for="tpl-new-title">New template title</label><input id="tpl-new-title" type="text" required placeholder="Match checklist title"></div><div class="field"><label for="tpl-new-file">File</label><input id="tpl-new-file" type="file" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" required></div><div class="field"><button class="button" type="submit">Add template</button></div></form></section>' : '';
+    const folders = user.owner && !docFolders.templates ? '<section class="card" style="margin-top:16px"><h2>Document folders</h2><p class="muted">Drive folders are not initialised yet.</p><button class="button primary" type="button" data-action="initDocFolders">Initialize document folders</button></section>' : '';
+    if (docEditOpen && docEditDraft) {
+      const editToolbar = '<div class="toolbar" style="margin-bottom:14px">' + button(canEditStructure ? '添加文件要求' : '保存截止日', 'docEditAddRow') + button('取消', 'docEditCancel') + '</div>';
+      const editRows = docEditDraft.items.map((row, index) => {
+        const locked = !canEditStructure;
+        return '<div class="form-grid" style="border-top:1px solid var(--line);padding:12px 0;align-items:end">'
+          + '<div class="field"><label>标题</label><input data-doc-edit="title" data-index="' + index + '" value="' + escape(row.title) + '"' + (locked ? ' readonly' : '') + '></div>'
+          + '<div class="field"><label>角色提示</label><input data-doc-edit="role" data-index="' + index + '" value="' + escape(row.role || '') + '"' + (locked ? ' readonly' : '') + '></div>'
+          + '<div class="field"><label>相对截止日（天）</label><input type="number" min="-365" max="365" data-doc-edit="dueOffsetDays" data-index="' + index + '" value="' + escape(String(row.dueOffsetDays)) + '"></div>'
+          + '<div class="field"><label>必交</label><label style="display:flex;gap:8px;align-items:center;min-height:44px"><input type="checkbox" data-doc-edit="required" data-index="' + index + '"' + (row.required ? ' checked' : '') + (locked ? ' disabled' : '') + '> required</label></div>'
+          + (canEditStructure ? '<div class="field"><button type="button" class="button small danger" data-action="docEditRemoveRow" data-id="' + escape(row.id) + '">删除</button></div>' : '')
+          + '</div>';
+      }).join('');
+      const addRows = canEditStructure ? (docEditDraft.addItems || []).map((row, index) => {
+        return '<div class="form-grid" style="border-top:1px dashed var(--line);padding:12px 0;align-items:end;background:#fbfbfc">'
+          + '<div class="field"><label>新文件标题</label><input data-doc-add="title" data-index="' + index + '" value="' + escape(row.title) + '"></div>'
+          + '<div class="field"><label>角色提示</label><input data-doc-add="role" data-index="' + index + '" value="' + escape(row.role || '') + '"></div>'
+          + '<div class="field"><label>相对截止日（天）</label><input type="number" min="-365" max="365" data-doc-add="dueOffsetDays" data-index="' + index + '" value="' + escape(String(row.dueOffsetDays == null ? -7 : row.dueOffsetDays)) + '"></div>'
+          + '<div class="field"><label>必交</label><label style="display:flex;gap:8px;align-items:center;min-height:44px"><input type="checkbox" data-doc-add="required" data-index="' + index + '"' + (row.required !== false ? ' checked' : '') + '> required</label></div>'
+          + '<div class="field"><button type="button" class="button small danger" data-action="docEditRemoveAddRow" data-id="' + index + '">移除</button></div>'
+          + '</div>';
+      }).join('') : '';
+      const editForm = '<section class="card" style="margin-bottom:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + (canEditStructure ? '编辑清单' : '编辑截止日') + '</div><h2 style="margin:0">' + escape(pkg.activityType + ' ' + pkg.year) + '</h2></div><div class="toolbar">' + button('保存', 'docEditSave') + button('取消', 'docEditCancel') + '</div></div><p class="hint">' + (canEditStructure ? '一次改完所有要求的文件、角色与相对截止日。OC 只能改截止日。' : '你是 OC：只能改相对截止日，不能改标题或增删文件。') + '</p>' + editToolbar + editRows + addRows + '<div style="margin-top:14px"><button type="button" class="button small" data-action="docEditSave">保存全部修改</button></div></section>';
+      return aboutCard + editForm;
+    }
+    const listToolbar = (canEditStructure || isOcOnly() || user.oc) ? '<div class="toolbar" style="margin-top:10px">' + button(canEditStructure ? '编辑清单' : '编辑截止日', 'docEditOpen') + '</div>' : '';
     const rows = items.map(item => [
       String(item.sortOrder),
       escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : ''),
@@ -443,10 +474,7 @@
       escape(item.fileName || '—'),
       '<div class="row-tools">' + docActionsFor(item) + '</div>'
     ]);
-    const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
-    const templateSection = user.owner ? '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Official templates · ' + escape(pkg.activityType) + '</h2></div><p class="hint">Owner uploads master templates. Checklist items link when titles match.</p>' + (templates.length ? table(['Title', 'File', 'Version', 'Actions'], templates.map(row => [escape(row.title), escape(row.fileName), escape(row.versionLabel || '—'), '<label class="button small" for="tpl-' + escape(row.id) + '">Replace<input id="tpl-' + escape(row.id) + '" type="file" data-tpl-upload="' + escape(row.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>'])) : '<p class="muted">No templates yet for this activity.</p>') + '<form id="tpl-new-form" class="form-grid" style="margin-top:12px"><div class="field"><label for="tpl-new-title">New template title</label><input id="tpl-new-title" type="text" required placeholder="Match checklist title"></div><div class="field"><label for="tpl-new-file">File</label><input id="tpl-new-file" type="file" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" required></div><div class="field"><button class="button" type="submit">Add template</button></div></form></section>' : '';
-    const folders = user.owner && !docFolders.templates ? '<section class="card" style="margin-top:16px"><h2>Document folders</h2><p class="muted">Drive folders are not initialised yet.</p><button class="button primary" type="button" data-action="initDocFolders">Initialize document folders</button></section>' : '';
-    return aboutCard + nextCard + meta + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+    return aboutCard + nextCard + meta + listToolbar + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
   }
   function portalView() {
     const packages = ocPackages();
@@ -876,6 +904,77 @@
       openActivityGuideDialog(id);
       return;
     }
+    if (name === 'docEditOpen') {
+      const pkg = state.DocPackages.find(row => row.id === openDocPackageId);
+      if (!pkg) return;
+      if (!(user.owner || user.admin || user.oc)) throw new Error('No access.');
+      docEditOpen = true;
+      docEditDraft = {
+        items: state.DocItems.filter(row => row.packageId === pkg.id && !row.archived)
+          .slice()
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map(row => ({ id: row.id, title: row.title, role: row.role || '', dueOffsetDays: row.dueOffsetDays, required: !!row.required, sortOrder: row.sortOrder })),
+        addItems: []
+      };
+      render();
+      return;
+    }
+    if (name === 'docEditCancel') { docEditOpen = false; docEditDraft = null; render(); return; }
+    if (name === 'docEditAddRow') {
+      if (!(user.owner || user.admin)) throw new Error('Only Owner or Secretary can add documents.');
+      if (docEditDraft) docEditDraft.addItems = (docEditDraft.addItems || []).concat([{ title: '', role: 'Secretary', dueOffsetDays: -7, required: true }]);
+      render();
+      return;
+    }
+    if (name === 'docEditRemoveRow') {
+      if (!(user.owner || user.admin)) throw new Error('Only Owner or Secretary can remove documents.');
+      if (docEditDraft) docEditDraft.items = docEditDraft.items.filter(row => row.id !== id);
+      render();
+      return;
+    }
+    if (name === 'docEditRemoveAddRow') {
+      if (!(user.owner || user.admin)) return;
+      if (docEditDraft) docEditDraft.addItems.splice(Number(id), 1);
+      render();
+      return;
+    }
+    if (name === 'docEditSave') {
+      if (!docEditDraft || !openDocPackageId) return;
+      const items = docEditDraft.items.map((row, index) => {
+        const src = state.DocItems.find(x => x.id === row.id);
+        return {
+          id: row.id,
+          title: row.title,
+          role: row.role,
+          dueOffsetDays: row.dueOffsetDays,
+          required: row.required,
+          sortOrder: src ? src.sortOrder : index + 1
+        };
+      });
+      const addItems = (docEditDraft.addItems || []).filter(row => row.title && row.title.trim()).map((row, index) => ({
+        title: row.title.trim(),
+        role: row.role || '',
+        dueOffsetDays: row.dueOffsetDays,
+        required: row.required !== false,
+        sortOrder: 9000 + index
+      }));
+      const originalIds = state.DocItems.filter(row => row.packageId === openDocPackageId && !row.archived).map(row => row.id);
+      const draftIds = new Set(docEditDraft.items.map(row => row.id));
+      const removeItemIds = originalIds.filter(id => !draftIds.has(id));
+      applySave(await call({
+        action: 'saveDocItemsMeta',
+        packageId: openDocPackageId,
+        items,
+        addItems,
+        removeItemIds,
+        revision: state.revision
+      }, 'Saving checklist…'));
+      docEditOpen = false;
+      docEditDraft = null;
+      render();
+      notice('Checklist saved.');
+      return;
+    }
     if (name === 'toggleLang') {
       if (window.KPTI18n) window.KPTI18n.toggleLang();
       render();
@@ -900,7 +999,7 @@
       showLoginGate('Signed out. Sign in again to continue.');
       return;
     }
-    if (name === 'docBack') { openDocPackageId = null; render(); return; }
+    if (name === 'docBack') { openDocPackageId = null; docEditOpen = false; docEditDraft = null; render(); return; }
     if (name === 'docSubmit') {
       applySave(await call({ action: 'docItemSubmit', itemId: id, revision: state.revision }));
       notice('Document submitted for approval.');
@@ -996,6 +1095,8 @@
       const pkg = state.DocPackages.find(row => row.id === id);
       if (!canOpenPackage(pkg)) { notice('You can only open your own activity package.', true); return; }
       openDocPackageId = id;
+      docEditOpen = false;
+      docEditDraft = null;
       view = 'Documents';
       if (isOcOnly() || workspaceMode === 'oc') workspaceMode = 'oc';
       else if (user && (user.admin || user.owner)) workspaceMode = workspaceMode === 'portal' ? 'portal' : workspaceMode;
@@ -1012,6 +1113,26 @@
   byId('year').addEventListener('change', () => { if (!Number.isInteger(year()) || year() < 1900 || year() > 2200) { notice('Choose a year between 1900 and 2200.', true); return; } page = 0; render(); });
   document.addEventListener('input', event => {
     if (event.target.id === 'filter') { const cursor = event.target.selectionStart; query = event.target.value; page = 0; render(); byId('filter').focus(); byId('filter').setSelectionRange(cursor, cursor); }
+    const docEdit = event.target.dataset && event.target.dataset.docEdit;
+    if (docEdit && docEditDraft) {
+      const index = Number(event.target.dataset.index);
+      const row = docEditDraft.items[index];
+      if (!row) return;
+      if (docEdit === 'required') row.required = event.target.checked;
+      else if (docEdit === 'dueOffsetDays') row.dueOffsetDays = Number(event.target.value);
+      else row[docEdit] = event.target.value;
+      return;
+    }
+    const docAdd = event.target.dataset && event.target.dataset.docAdd;
+    if (docAdd && docEditDraft && docEditDraft.addItems) {
+      const index = Number(event.target.dataset.index);
+      const row = docEditDraft.addItems[index];
+      if (!row) return;
+      if (docAdd === 'required') row.required = event.target.checked;
+      else if (docAdd === 'dueOffsetDays') row.dueOffsetDays = Number(event.target.value);
+      else row[docAdd] = event.target.value;
+      return;
+    }
     const fin = event.target.dataset && event.target.dataset.fin;
     if (!fin || !financeDraft) return;
     const key = event.target.dataset.key;

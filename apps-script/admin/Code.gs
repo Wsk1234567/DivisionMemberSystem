@@ -366,6 +366,9 @@ function rpc(request, apiEmail) {
       const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload'];
       if (packageScoped.includes(request.action)) requirePackageAccess_(state, actor, request.packageId, request.itemId);
       if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
+      if (request.action === 'saveDocItemsMeta') {
+        if (!(actor.owner || actor.admin)) request.canEditStructure = false;
+      }
       if (request.action === 'docItemUpload' && request.fileBase64 && !request.fileId) {
         requireDocuments_(actor);
         request.fileId = storeDocFile_(actor.config.submissionsId, request.fileName, request.fileBase64);

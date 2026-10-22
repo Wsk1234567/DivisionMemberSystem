@@ -417,16 +417,23 @@
     refreshDocPackageStatus(state, updated.id, context.now);
     return updated;
   }
+  function validateDocItemMeta(next) {
+    if (!Number.isInteger(next.sortOrder) || next.sortOrder < 0) fail('Document order must be a non-negative integer.');
+    if (!Number.isInteger(next.dueOffsetDays) || next.dueOffsetDays < -365 || next.dueOffsetDays > 365) fail('Due offset must be between -365 and 365 days.');
+    if (!str(next.title)) fail('Document title is required.');
+  }
   function saveDocItemsMeta(state, request, context) {
-    const rows = Array.isArray(request.items) ? request.items : [request.item || request];
-    if (!rows.length) fail('No document items provided.');
-    const packageId = request.packageId || (rows[0] && rows[0].packageId);
+    const rows = Array.isArray(request.items) ? request.items : (request.item ? [request.item] : []);
+    const addRows = Array.isArray(request.addItems) ? request.addItems : [];
+    const removeIds = Array.isArray(request.removeItemIds) ? request.removeItemIds.map(str).filter(Boolean) : [];
+    const canStructure = request.canEditStructure !== false;
+    const packageId = request.packageId || (rows[0] && rows[0].packageId) || (addRows[0] && addRows[0].packageId) || '';
     const pkg = findDocPackage(state, packageId);
     openDocPackage(pkg);
     if (pkg.status === 'Completed') fail('Reopen required items before editing a completed package.');
+    if (!rows.length && !addRows.length && !removeIds.length) fail('No document items provided.');
+    if (!canStructure && (addRows.length || removeIds.length)) fail('Only Owner or Secretary can add or remove documents.');
     rows.forEach(input => {
-      const current = findDocPackage(state, packageId);
-      openDocPackage(current);
       const item = findDocItem(state, input.id);
       if (item.packageId !== packageId) fail('Document item belongs to another package.');
       const next = Object.assign({}, item, {
@@ -436,8 +443,38 @@
         sortOrder: input.sortOrder === undefined ? item.sortOrder : Number(input.sortOrder),
         required: input.required === undefined ? item.required : input.required
       });
-      if (!Number.isInteger(next.sortOrder) || next.sortOrder < 0) fail('Document order must be a non-negative integer.');
-      if (!Number.isInteger(next.dueOffsetDays) || next.dueOffsetDays < -365 || next.dueOffsetDays > 365) fail('Due offset must be between -365 and 365 days.');
+      if (!canStructure) {
+        // OC: due date (and sort if provided) only — not title/role/required
+        next.title = item.title;
+        next.role = item.role;
+        next.required = item.required;
+      }
+      validateDocItemMeta(next);
+      upsert(state, 'DocItems', next, context.uuid);
+    });
+    removeIds.forEach(id => {
+      const item = findDocItem(state, id);
+      if (item.packageId !== packageId) fail('Document item belongs to another package.');
+      if (item.fileId) fail('Remove the uploaded file before deleting this document row.');
+      if (item.status === 'Approved' || item.status === 'Submitted') fail('Only pending or draft items can be removed.');
+      state.DocItems = state.DocItems.filter(row => row.id !== id);
+    });
+    let order = state.DocItems.filter(row => row.packageId === packageId).map(row => Number(row.sortOrder) || 0);
+    let nextOrder = (order.length ? Math.max.apply(null, order) : 0) + 1;
+    addRows.forEach(input => {
+      const next = {
+        packageId,
+        title: str(input.title),
+        role: str(input.role),
+        dueOffsetDays: str(input.dueOffsetDays) === '' ? 0 : Number(input.dueOffsetDays),
+        sortOrder: str(input.sortOrder) === '' ? nextOrder++ : Number(input.sortOrder),
+        required: input.required === undefined ? true : input.required,
+        templateId: '',
+        status: 'Pending', fileName: '', fileId: '',
+        uploadedBy: '', uploadedAt: '', submittedBy: '', submittedAt: '',
+        reviewedBy: '', reviewedAt: '', remarks: '', archived: false
+      };
+      validateDocItemMeta(next);
       upsert(state, 'DocItems', next, context.uuid);
     });
     refreshDocPackageStatus(state, packageId, context.now);

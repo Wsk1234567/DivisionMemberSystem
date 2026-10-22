@@ -75,6 +75,7 @@
           if (!(actor.owner || actor.admin || (pkg.ocEmail && String(pkg.ocEmail).toLowerCase() === String(actor.email).toLowerCase()))) {
             throw new Error('Access denied. You are not the Organizing Chairman for this activity.');
           }
+          if (request.action === 'saveDocItemsMeta' && !(actor.owner || actor.admin)) request.canEditStructure = false;
         }
         if (request.action === 'docDownload') {
           const item = request.itemId ? state.DocItems.find(row => row.id === request.itemId) : null;
