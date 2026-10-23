@@ -26,6 +26,21 @@
     const mail = String(email || '').toLowerCase();
     return [pkg.ocEmail, pkg.osEmail, pkg.otEmail].map(v => String(v || '').toLowerCase()).filter(Boolean).includes(mail);
   };
+  const packageRoleFor = (pkg, email) => {
+    if (!pkg || !user) return '';
+    const mail = String(email || user.email || '').toLowerCase();
+    if (user.owner || user.admin) return 'admin';
+    if (String(pkg.ocEmail || '').toLowerCase() === mail) return 'oc';
+    if (String(pkg.osEmail || '').toLowerCase() === mail) return 'os';
+    if (String(pkg.otEmail || '').toLowerCase() === mail) return 'ot';
+    return '';
+  };
+  const activePackageRole = () => {
+    const pkg = openDocPackageId ? (state && state.DocPackages || []).find(row => row.id === openDocPackageId) : null;
+    if (pkg) return packageRoleFor(pkg, user && user.email);
+    const mine = ocPackages()[0];
+    return mine ? packageRoleFor(mine, user && user.email) : (isOcOnly() ? 'oc' : '');
+  };
   const ocPackages = () => {
     if (!user || !state || !state.DocPackages) return [];
     const email = String(user.email || '').toLowerCase();
@@ -132,11 +147,13 @@
     if (user.owner) return 'Owner';
     if (user.admin && user.treasurer) return 'Admin · Treasurer';
     if (user.admin) return 'Administrator';
-    if (isOcOnly()) {
-      const mine = ocPackages()[0];
-      return 'Organizing Chairman' + (mine ? ' · ' + mine.activityType + ' (' + mine.year + ')' : '');
-    }
-    if (user.oc) return 'Organizing Chairman';
+    const role = activePackageRole();
+    const mine = (state && state.DocPackages && openDocPackageId) ? state.DocPackages.find(row => row.id === openDocPackageId) : ocPackages()[0];
+    const suffix = mine ? ' · ' + mine.activityType + ' (' + mine.year + ')' : '';
+    if (role === 'oc') return 'Organizing Chairman' + suffix;
+    if (role === 'os') return 'Organizing Secretary' + suffix;
+    if (role === 'ot') return 'Organizing Treasurer' + suffix;
+    if (isOcOnly() || user.oc) return 'Activity member' + suffix;
     if (user.treasurer) return 'Treasurer';
     return 'Guest';
   }
@@ -464,7 +481,7 @@
       if (isOcOnly()) {
         return packages.length
           ? '<section class="card"><div class="section-heading" style="margin-top:0"><h2>Annual Activity</h2></div><div class="activity-line-wrap">' + packages.map(pkg => { const progress = docProgress(pkg); return '<div class="activity-line"><div><strong>' + escape(pkg.activityType + ' (' + pkg.year + ')') + '</strong><small>' + escape((pkg.eventDate || 'Date TBC') + ' · ' + progress.approved + '/' + progress.total + ' approved') + '</small></div>' + button('Open', 'docOpen', pkg.id) + '</div>'; }).join('') + '</div></section>'
-          : '<section class="card"><h2>No annual activity yet</h2><p class="muted">When the Owner assigns you as Organizing Chairman, the activity will appear on this page.</p></section>';
+          : '<section class="card"><h2>No annual activity yet</h2><p class="muted">When the Owner assigns you as Organizing Chairman, Secretary or Treasurer on an activity, it will appear here.</p></section>';
       }
       const guide = '<section class="card" style="margin-bottom:20px"><div class="eyebrow">How it works</div><h2>Annual Activity</h2><ol class="rule-list"><li><span>1</span><strong>Owner opens an activity for the year (optional: clone last year structure)</strong></li><li><span>2</span><strong>Download templates, edit locally, upload, then Submit</strong></li><li><span>3</span><strong>Owner or Secretary Approves · Organizing Chairman edits due dates</strong></li></ol><p class="hint">Treasurer accounts cannot open Annual Activity. Each OC only sees activities assigned to their Gmail account.</p></section>';
       const create = user.owner ? '<section class="card"><div class="section-heading" style="margin-top:0"><h2>Start new package</h2></div><form id="doc-package-form" class="form-grid"><div class="field"><label for="doc-activity">Activity</label><select id="doc-activity">' + options(KPT.docActivityTypes.map(value => [value, value === 'AGM' ? 'AGM (Annual General Meeting)' : value]), 'AGM') + '</select></div><div class="field"><label for="doc-year">Year</label><input id="doc-year" type="number" min="1900" max="2200" value="' + year() + '" required></div><div class="field"><label for="doc-event-date">Event date (optional)</label><input id="doc-event-date" type="date"></div><div class="field"><label for="doc-oc-email">Organizing Chairman (OC) email</label><input id="doc-oc-email" type="email" placeholder="organizer@gmail.com"></div><div class="field"><label for="doc-base">Base structure</label><select id="doc-base"><option value="">First package (default checklist)</option>' + packages.filter(row => !row.archived).map(row => '<option value="' + escape(row.id) + '">' + escape(row.activityType + ' ' + row.year) + '</option>').join('') + '</select></div><div class="field"><button class="button primary" type="submit">Create package</button></div></form></section>' : '';
@@ -481,7 +498,9 @@
     const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
     const aboutCard = activityAboutCard(pkg);
     const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
-    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="oc@gmail.com"></label><label class="field"><span>OS email</span><input id="doc-os-edit" type="email" value="' + escape(pkg.osEmail || '') + '" placeholder="os@gmail.com"></label><label class="field"><span>OT email</span><input id="doc-ot-edit" type="email" value="' + escape(pkg.otEmail || '') + '" placeholder="ot@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || '—') + '</strong> · OS <strong>' + escape(pkg.osEmail || '—') + '</strong> · OT <strong>' + escape(pkg.otEmail || '—') + '</strong></p></section>';
+    const activeRole = activePackageRole();
+    const roleTitle = activeRole === 'os' ? 'Organizing Secretary workplace' : activeRole === 'ot' ? 'Organizing Treasurer workplace' : activeRole === 'oc' ? 'Organizing Chairman workplace' : 'Activity workplace';
+    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(roleTitle) + ' · ' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="oc@gmail.com"></label><label class="field"><span>OS email</span><input id="doc-os-edit" type="email" value="' + escape(pkg.osEmail || '') + '" placeholder="os@gmail.com"></label><label class="field"><span>OT email</span><input id="doc-ot-edit" type="email" value="' + escape(pkg.otEmail || '') + '" placeholder="ot@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || '—') + '</strong> · OS <strong>' + escape(pkg.osEmail || '—') + '</strong> · OT <strong>' + escape(pkg.otEmail || '—') + '</strong></p></section>';
     const financeCard = activityFinanceCard(pkg);
     const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
     const canEditStructure = !!(user.owner || user.admin);
@@ -511,7 +530,7 @@
       const editForm = '<section class="card" style="margin-bottom:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + (canEditStructure ? '编辑清单' : '编辑截止日') + '</div><h2 style="margin:0">' + escape(pkg.activityType + ' ' + pkg.year) + '</h2></div><div class="toolbar">' + button('保存', 'docEditSave') + button('取消', 'docEditCancel') + '</div></div><p class="hint">' + (canEditStructure ? '一次改完所有要求的文件、角色与相对截止日。OC 只能改截止日。' : '你是 OC：只能改相对截止日，不能改标题或增删文件。') + '</p>' + editToolbar + editRows + addRows + '<div style="margin-top:14px"><button type="button" class="button small" data-action="docEditSave">保存全部修改</button></div></section>';
       return aboutCard + editForm;
     }
-    const listToolbar = (canEditStructure || isOcOnly() || user.oc) ? '<div class="toolbar" style="margin-top:10px">' + button(canEditStructure ? '编辑清单' : '编辑截止日', 'docEditOpen') + '</div>' : '';
+    const listToolbar = (canEditStructure || activePackageRole() === 'oc') ? '<div class="toolbar" style="margin-top:10px">' + button(canEditStructure ? '编辑清单' : '编辑截止日', 'docEditOpen') + '</div>' : '';
     const rows = items.map(item => [
       String(item.sortOrder),
       escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : '') + (item.assignee ? '<br><small>PIC · ' + escape(item.assignee) + '</small>' : ''),
