@@ -21,17 +21,24 @@ function actorFromEmail_(email) {
     owner: isOwner,
     admin: isOwner || isAdmin,
     treasurer: isOwner || isTreasurer,
-    oc: isOwner || inOcList || (!isOwner && !isAdmin && !isTreasurer && isPackageRoleEmail_(normalized)),
+    oc: isOwner || inOcList,
     config
   };
 }
-function isPackageRoleEmail_(email) {
-  try {
-    const state = loadState_();
-    return (state.DocPackages || []).some(pkg => !pkg.archived && pkg.status !== 'Archived' && packageRoleEmails_(pkg).includes(email));
-  } catch (error) {
-    return false;
-  }
+function registerPackageRoleEmails_(emails) {
+  const props = properties_();
+  let ocs = [];
+  try { ocs = JSON.parse(props.getProperty('OC_EMAILS') || '[]'); } catch (error) { ocs = []; }
+  const set = new Set(ocs.map(v => String(v).trim().toLowerCase()).filter(Boolean));
+  let changed = false;
+  (emails || []).forEach(raw => {
+    const value = String(raw || '').trim().toLowerCase();
+    if (value && /^[^\s@]+@gmail\.com$/.test(value) && !set.has(value)) {
+      set.add(value);
+      changed = true;
+    }
+  });
+  if (changed) props.setProperty('OC_EMAILS', JSON.stringify([...set].slice(0, 40)));
 }
 function identity_(ownerOnly, requireAccess, apiEmail) {
   const config = configuration_();
@@ -48,18 +55,10 @@ function identity_(ownerOnly, requireAccess, apiEmail) {
   const isOwner = email === config.owner;
   const isAdmin = config.admins.includes(email);
   const isTreasurer = config.treasurers.includes(email);
-  const inOcList = config.ocs.includes(email);
-  const onPackage = !isOwner && !isAdmin && !isTreasurer && !inOcList ? isPackageRoleEmail_(email) : true;
-  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !inOcList && !onPackage) throw new Error('Access denied. This Google account is not assigned to the system or any activity package.');
+  const isOc = isOwner || config.ocs.includes(email);
+  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email)) throw new Error('Access denied. This Google account is not an administrator, officer or treasurer.');
   if (ownerOnly && !isOwner) throw new Error('Only the owner can perform this action.');
-  return {
-    email,
-    owner: isOwner,
-    admin: isOwner || isAdmin,
-    treasurer: isOwner || isTreasurer,
-    oc: isOwner || inOcList || !!onPackage,
-    config
-  };
+  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOc, config };
 }
 function requireFinance_(actor) {
   if (!actor.owner && !actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
@@ -393,6 +392,9 @@ function rpc(request, apiEmail) {
       const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload'];
       if (packageScoped.includes(request.action)) requirePackageAccess_(state, actor, request.packageId, request.itemId);
       if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
+      if (request.action === 'saveDocPackageMeta') {
+        requirePackageAccess_(state, actor, request.packageId, request.itemId);
+      }
       if (request.action === 'saveDocItemsMeta') {
         if (!(actor.owner || actor.admin)) request.canEditStructure = false;
         // Only OC (and Owner/Secretary) may change due dates — OS/OT may not.
@@ -421,6 +423,9 @@ function rpc(request, apiEmail) {
       }
       if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'reviewFinBook', 'reopenFinBook'].includes(request.action)) {
         const next = KPT.mutate(state, request, context);
+        if (request.action === 'createDocPackage' || request.action === 'saveDocPackageMeta') {
+          registerPackageRoleEmails_([request.ocEmail, request.osEmail, request.otEmail]);
+        }
         commit_(next);
         const sync = sync_(next);
         return { ok: true, data: { state: next, sync } };

@@ -35,6 +35,12 @@
     return id;
   }
   function backup(reason) { const item = { id: 'backup-' + ++counter, name: 'Preview backup · ' + reason + ' · r' + state.revision, at: new Date().toISOString(), state: copy(state) }; backups.unshift(item); return item; }
+  function registerOcEmails(emails) {
+    (emails || []).forEach(raw => {
+      const value = String(raw || '').trim().toLowerCase();
+      if (value && !ocs.includes(value)) ocs.push(value);
+    });
+  }
   window.KPTTransport = {
     demo: true,
     publicUrl: 'index.html',
@@ -97,6 +103,9 @@
         }
         if (request.action === 'docItemUpload' && request.fileBase64 && !request.fileId) {
           request = Object.assign({}, request, { fileId: storeFile(request.fileName, request.fileBase64) });
+        }
+        if (request.action === 'createDocPackage' || request.action === 'saveDocPackageMeta') {
+          registerOcEmails([request.ocEmail, request.osEmail, request.otEmail]);
         }
         if (request.action === 'saveDocTemplate' && request.fileBase64) {
           request = Object.assign({}, request, { row: Object.assign({}, request.row, { fileId: storeFile(request.row.fileName, request.fileBase64) }) });
