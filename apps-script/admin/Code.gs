@@ -40,6 +40,17 @@ function registerPackageRoleEmails_(emails) {
   });
   if (changed) props.setProperty('OC_EMAILS', JSON.stringify([...set].slice(0, 40)));
 }
+function isPackageRoleEmail_(email) {
+  try {
+    const state = loadState_();
+    return (state.DocPackages || []).some(pkg => {
+      if (pkg.archived || pkg.status === 'Archived') return false;
+      return ['ocEmail', 'osEmail', 'otEmail'].map(key => String(pkg[key] || '').trim().toLowerCase()).filter(Boolean).includes(email);
+    });
+  } catch (error) {
+    return false;
+  }
+}
 function identity_(ownerOnly, requireAccess, apiEmail) {
   const config = configuration_();
   let email;
