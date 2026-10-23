@@ -21,9 +21,17 @@ function actorFromEmail_(email) {
     owner: isOwner,
     admin: isOwner || isAdmin,
     treasurer: isOwner || isTreasurer,
-    oc: isOwner || inOcList,
+    oc: isOwner || inOcList || (!isOwner && !isAdmin && !isTreasurer && isPackageRoleEmail_(normalized)),
     config
   };
+}
+function isPackageRoleEmail_(email) {
+  try {
+    const state = loadState_();
+    return (state.DocPackages || []).some(pkg => !pkg.archived && pkg.status !== 'Archived' && packageRoleEmails_(pkg).includes(email));
+  } catch (error) {
+    return false;
+  }
 }
 function identity_(ownerOnly, requireAccess, apiEmail) {
   const config = configuration_();
@@ -40,10 +48,18 @@ function identity_(ownerOnly, requireAccess, apiEmail) {
   const isOwner = email === config.owner;
   const isAdmin = config.admins.includes(email);
   const isTreasurer = config.treasurers.includes(email);
-  const isOc = isOwner || config.ocs.includes(email);
-  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email)) throw new Error('Access denied. This Google account is not an administrator, officer or treasurer.');
+  const inOcList = config.ocs.includes(email);
+  const onPackage = !isOwner && !isAdmin && !isTreasurer && !inOcList ? isPackageRoleEmail_(email) : true;
+  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !inOcList && !onPackage) throw new Error('Access denied. This Google account is not assigned to the system or any activity package.');
   if (ownerOnly && !isOwner) throw new Error('Only the owner can perform this action.');
-  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOc, config };
+  return {
+    email,
+    owner: isOwner,
+    admin: isOwner || isAdmin,
+    treasurer: isOwner || isTreasurer,
+    oc: isOwner || inOcList || !!onPackage,
+    config
+  };
 }
 function requireFinance_(actor) {
   if (!actor.owner && !actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
