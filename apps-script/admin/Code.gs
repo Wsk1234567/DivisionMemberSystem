@@ -56,9 +56,16 @@ function identity_(ownerOnly, requireAccess, apiEmail) {
   const isAdmin = config.admins.includes(email);
   const isTreasurer = config.treasurers.includes(email);
   const isOc = isOwner || config.ocs.includes(email);
-  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email)) throw new Error('Access denied. This Google account is not an administrator, officer or treasurer.');
+  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email)) {
+    // Portal/API path: allow anyone already assigned as OC/OS/OT on a package, then register for future logins.
+    if (apiEmail && isPackageRoleEmail_(email)) {
+      registerPackageRoleEmails_([email]);
+    } else {
+      throw new Error('Access denied. This Google account is not an administrator, officer or treasurer.');
+    }
+  }
   if (ownerOnly && !isOwner) throw new Error('Only the owner can perform this action.');
-  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOc, config };
+  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOwner || config.ocs.includes(email) || (!isOwner && !isAdmin && !isTreasurer && isPackageRoleEmail_(email)), config };
 }
 function requireFinance_(actor) {
   if (!actor.owner && !actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
