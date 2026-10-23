@@ -407,7 +407,7 @@ function rpc(request, apiEmail) {
       if (documentApproveActions.includes(request.action)) requireDocumentApprover_(actor);
       const state = loadState_();
       const context = context_(actor.email);
-      const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload'];
+      const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload', 'setDocItemTaskStatus'];
       if (packageScoped.includes(request.action)) requirePackageAccess_(state, actor, request.packageId, request.itemId);
       if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
       if (request.action === 'saveDocPackageMeta') {
@@ -439,7 +439,7 @@ function rpc(request, apiEmail) {
         if (!actor.config.templatesId) throw new Error('Document folders are not initialised. Owner must run Initialize document folders.');
         request.row = Object.assign({}, request.row, { fileId: storeDocFile_(actor.config.templatesId, request.row.fileName, request.fileBase64) });
       }
-      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'reviewFinBook', 'reopenFinBook'].includes(request.action)) {
+      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'reviewFinBook', 'reopenFinBook', 'setDocItemTaskStatus'].includes(request.action)) {
         const next = KPT.mutate(state, request, context);
         if (request.action === 'createDocPackage' || request.action === 'saveDocPackageMeta') {
           registerPackageRoleEmails_([request.ocEmail, request.osEmail, request.otEmail]);

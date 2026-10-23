@@ -377,6 +377,47 @@
     if (item.templateId) tools.push(button(t('docs.template'), 'docDownloadTemplate', item.id));
     return tools.join(' ');
   }
+  function docDueBadge(pkg, item) {
+    const base = docDueLabel(pkg, item);
+    if (item.taskStatus === 'Done') return base + ' · Done';
+    if (item.taskStatus === 'Cancelled') return base + ' · Cancelled';
+    if (!pkg.eventDate) return base;
+    const due = new Date(pkg.eventDate + 'T00:00:00');
+    due.setDate(due.getDate() + Number(item.dueOffsetDays || 0));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const days = Math.round((due - today) / 86400000);
+    if (days < 0) return base + ' · OverDue';
+    if (days <= 3) return base + ' · On due';
+    return base;
+  }
+  function taskStatusPill(item) {
+    const st = item.taskStatus || 'Open';
+    const cls = st === 'Done' ? 'Approved' : st === 'Cancelled' ? 'Rejected' : 'Pending';
+    return '<span class="pill ' + cls + '">' + escape(st) + '</span>';
+  }
+  function ocDashboardCard(pkg, items) {
+    const open = items.filter(row => (row.taskStatus || 'Open') === 'Open');
+    const done = items.filter(row => row.taskStatus === 'Done');
+    const cancelled = items.filter(row => row.taskStatus === 'Cancelled');
+    const overdue = open.filter(row => {
+      if (!pkg.eventDate) return false;
+      const due = new Date(pkg.eventDate + 'T00:00:00');
+      due.setDate(due.getDate() + Number(row.dueOffsetDays || 0));
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      return due < today;
+    });
+    const pendingReview = items.filter(row => row.status === 'Submitted');
+    const total = items.length;
+    const pct = total ? Math.round(done.length / total * 100) : 0;
+    return '<section class="card" style="margin-bottom:18px"><div class="eyebrow">Dashboard · ' + escape(pkg.activityType + ' ' + pkg.year) + '</div><h2 style="margin:0 0 12px">Progress</h2>'
+      + '<div class="metrics" style="margin:0">'
+      + '<div class="metric"><div class="label">Completed</div><div class="value">' + done.length + '/' + total + '</div><small>task marked Done</small></div>'
+      + '<div class="metric"><div class="label">Open</div><div class="value">' + open.length + '</div><small>not finished</small></div>'
+      + '<div class="metric"><div class="label">Overdue</div><div class="value">' + overdue.length + '</div><small>past due date</small></div>'
+      + '<div class="metric"><div class="label">Pending review</div><div class="value">' + pendingReview.length + '</div><small>waiting approval</small></div>'
+      + '</div><div class="progress" style="margin:14px 0 0"><span style="width:' + pct + '%"></span></div><p class="muted" style="margin-top:8px">Overall progress ' + pct + '% · cancelled ' + cancelled.length + '</p></section>';
+  }
   function activityAboutCard(pkg) {
     if (!pkg || !window.KPTActivityIntro) return '';
     const lang = (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? 'zh' : 'en';
@@ -473,13 +514,14 @@
     const listToolbar = (canEditStructure || isOcOnly() || user.oc) ? '<div class="toolbar" style="margin-top:10px">' + button(canEditStructure ? '编辑清单' : '编辑截止日', 'docEditOpen') + '</div>' : '';
     const rows = items.map(item => [
       String(item.sortOrder),
-      escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : ''),
-      escape(docDueLabel(pkg, item)),
-      pill(item.status) + (item.remarks ? '<br><small style="color:#852b3d">' + escape(item.remarks) + '</small>' : ''),
+      escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : '') + (item.assignee ? '<br><small>PIC · ' + escape(item.assignee) + '</small>' : ''),
+      escape(docDueBadge(pkg, item)),
+      taskStatusPill(item) + ' ' + pill(item.status) + (item.remarks ? '<br><small style="color:#852b3d">' + escape(item.remarks) + '</small>' : ''),
       escape(item.fileName || '—'),
-      '<div class="row-tools">' + docActionsFor(item) + '</div>'
+      '<div class="row-tools">' + (item.taskStatus === 'Done' ? button('Reopen', 'taskOpen', item.id) : button('Done', 'taskDone', item.id)) + (item.taskStatus !== 'Cancelled' ? button('Cancel', 'taskCancel', item.id) : button('Uncancel', 'taskOpen', item.id)) + docActionsFor(item) + '</div>'
     ]);
-    return aboutCard + nextCard + meta + financeCard + listToolbar + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+    const dashboard = (user.owner || user.admin || user.oc) ? ocDashboardCard(pkg, items) : '';
+    return aboutCard + dashboard + nextCard + meta + financeCard + listToolbar + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
   }
   function activityFinanceCard(pkg) {
     if (!state || !state.FinBooks) return '';
@@ -929,6 +971,12 @@
     }
     if (name === 'openActivityGuide') {
       openActivityGuideDialog(id);
+      return;
+    }
+    if (name === 'taskDone' || name === 'taskCancel' || name === 'taskOpen') {
+      const taskStatus = name === 'taskDone' ? 'Done' : name === 'taskCancel' ? 'Cancelled' : 'Open';
+      applySave(await call({ action: 'setDocItemTaskStatus', itemId: id, taskStatus, revision: state.revision }));
+      notice('Task marked ' + taskStatus + '.');
       return;
     }
     if (name === 'finSubmit') {

@@ -15,7 +15,7 @@
     FinReimbursements: ['id', 'version', 'bookId', 'formSeq', 'treasurerName', 'formDate', 'purpose', 'chequeNo', 'amount'],
     FinReimburseLines: ['id', 'version', 'reimbursementId', 'lineNo', 'date', 'invoiceNo', 'particular', 'total'],
     DocPackages: ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'basePackageId', 'ocEmail', 'osEmail', 'otEmail', 'createdBy', 'createdAt', 'approvedAt', 'archived'],
-    DocItems: ['id', 'version', 'packageId', 'sortOrder', 'title', 'role', 'dueOffsetDays', 'required', 'templateId', 'status', 'fileName', 'fileId', 'uploadedBy', 'uploadedAt', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt', 'remarks', 'archived'],
+    DocItems: ['id', 'version', 'packageId', 'sortOrder', 'title', 'role', 'assignee', 'dueOffsetDays', 'required', 'templateId', 'status', 'taskStatus', 'fileName', 'fileId', 'uploadedBy', 'uploadedAt', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt', 'remarks', 'archived'],
     DocTemplates: ['id', 'version', 'activityType', 'title', 'fileName', 'mime', 'fileId', 'versionLabel', 'active', 'archived']
   };
   const money = value => {
@@ -34,6 +34,7 @@
   const docPackageStatuses = ['Open', 'Completed', 'Archived'];
   const docUploadMimes = ['.docx', '.xlsx', '.pdf', '.pptx', '.jpg', '.jpeg', '.png', '.zip'];
   const finStatuses = ['Draft', 'Submitted', 'Approved', 'Rejected'];
+  const taskStatuses = ['Open', 'Done', 'Cancelled'];
   const recommendedCatalog = [];
   const addRecommended = (code, sortOrder, kind, category, name, level, eligibilityMetric, eligibilityThreshold) => recommendedCatalog.push({ code, sortOrder, kind, category, name, level: level || '', eligibilityMetric: eligibilityMetric || '', eligibilityThreshold: eligibilityThreshold == null ? null : eligibilityThreshold, archived: false });
   ['EFA (New)', 'EFA (Recert)', 'BFA (New)', 'BFA (Recert)', 'BFA (Renew)', 'Home Nursing', 'AFA'].forEach((name, index) => addRecommended('EXAM_' + name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase(), index + 1, 'Exam', '', name));
@@ -104,6 +105,7 @@
     if (table === 'DocItems') {
       row.sortOrder = str(input.sortOrder) === '' ? 0 : Number(input.sortOrder);
       row.dueOffsetDays = str(input.dueOffsetDays) === '' ? 0 : Number(input.dueOffsetDays);
+      row.taskStatus = str(input.taskStatus || '') || 'Open';
     }
     return row;
   }
@@ -209,6 +211,7 @@
           if (!docItemStatuses.includes(row.status)) fail('Invalid document status.');
           if (!Number.isInteger(row.sortOrder) || row.sortOrder < 0) fail('Document order must be a non-negative integer.');
           if (!Number.isInteger(row.dueOffsetDays) || row.dueOffsetDays < -365 || row.dueOffsetDays > 365) fail('Due offset must be between -365 and 365 days.');
+          if (!taskStatuses.includes(str(row.taskStatus) || 'Open')) fail('Invalid task status.');
           if (!row.title) fail('Document title is required.');
           if (row.templateId && !state.DocTemplates.some(item => item.id === row.templateId)) fail('Unknown document template.');
           if (row.status === 'Submitted' && !row.fileId) fail('Submitted items need an uploaded file.');
@@ -342,6 +345,15 @@
       book.reviewedBy = '';
       book.reviewedAt = '';
       book.version++;
+    } else if (request.action === 'setDocItemTaskStatus') {
+      const item = findDocItem(state, request.itemId);
+      const pkg = findDocPackage(state, item.packageId);
+      openDocPackage(pkg);
+      const taskStatus = str(request.taskStatus);
+      if (!taskStatuses.includes(taskStatus)) fail('Use Open, Done or Cancelled.');
+      item.taskStatus = taskStatus;
+      item.version++;
+      refreshDocPackageStatus(state, pkg.id, context.now);
     } else fail('Unsupported action.');
     return finish(state, context.actor, request.action + ':' + (table || request.activityType || request.itemId || request.packageId || request.action), context.now);
   }
@@ -465,6 +477,7 @@
       const next = Object.assign({}, item, {
         title: str(input.title === undefined ? item.title : input.title) || item.title,
         role: str(input.role === undefined ? item.role : input.role),
+        assignee: str(input.assignee === undefined ? item.assignee : input.assignee),
         dueOffsetDays: input.dueOffsetDays === undefined ? item.dueOffsetDays : Number(input.dueOffsetDays),
         sortOrder: input.sortOrder === undefined ? item.sortOrder : Number(input.sortOrder),
         required: input.required === undefined ? item.required : input.required
@@ -494,11 +507,14 @@
         packageId,
         title: str(input.title),
         role: str(input.role),
+        assignee: str(input.assignee),
         dueOffsetDays: str(input.dueOffsetDays) === '' ? 0 : Number(input.dueOffsetDays),
         sortOrder: str(input.sortOrder) === '' ? nextOrder++ : Number(input.sortOrder),
         required: input.required === undefined ? true : input.required,
         templateId: '',
-        status: 'Pending', fileName: '', fileId: '',
+        status: 'Pending',
+        taskStatus: 'Open',
+        fileName: '', fileId: '',
         uploadedBy: '', uploadedAt: '', submittedBy: '', submittedAt: '',
         reviewedBy: '', reviewedAt: '', remarks: '', archived: false
       };

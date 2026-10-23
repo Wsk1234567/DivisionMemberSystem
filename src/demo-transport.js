@@ -63,7 +63,7 @@
         state = KPT.mutate(state, request, context());
         return { state: copy(state), sync: { ok: true, revision: state.revision } };
       }
-      const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload', 'docItemReview', 'submitFinBook', 'reviewFinBook', 'reopenFinBook'];
+      const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload', 'docItemReview', 'submitFinBook', 'reviewFinBook', 'reopenFinBook', 'setDocItemTaskStatus'];
       if (documentActions.includes(request.action)) {
         requireDocuments(actor);
         if (request.action === 'docItemReview') requireApprover(actor);
@@ -71,7 +71,7 @@
         if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
         if (request.action === 'reviewFinBook' && !(actor.owner || actor.admin || actor.treasurer)) throw new Error('Access denied. Treasurer review is required.');
         if (request.action === 'reopenFinBook' && !(actor.owner || actor.admin)) throw new Error('Access denied. Owner or Secretary can reopen.');
-        const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload'];
+        const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload', 'setDocItemTaskStatus'];
         if (packageScoped.includes(request.action)) {
           let packageId = request.packageId || '';
           if (!packageId && request.itemId) {
