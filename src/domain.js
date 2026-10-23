@@ -9,12 +9,12 @@
     Awards: ['id', 'version', 'memberId', 'catalogId', 'category', 'name', 'date', 'level', 'certificate', 'notes', 'archived'],
     Enrolments: ['id', 'version', 'memberId', 'year', 'form', 'status'],
     Catalog: ['id', 'version', 'code', 'sortOrder', 'kind', 'category', 'name', 'level', 'eligibilityMetric', 'eligibilityThreshold', 'archived'],
-    FinBooks: ['id', 'version', 'activityName'],
+    FinBooks: ['id', 'version', 'activityName', 'status', 'remarks', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt'],
     FinIncomes: ['id', 'version', 'bookId', 'date', 'description', 'amount'],
     FinExpenses: ['id', 'version', 'bookId', 'date', 'item', 'description', 'quantity', 'unitCost', 'amount'],
     FinReimbursements: ['id', 'version', 'bookId', 'formSeq', 'treasurerName', 'formDate', 'purpose', 'chequeNo', 'amount'],
     FinReimburseLines: ['id', 'version', 'reimbursementId', 'lineNo', 'date', 'invoiceNo', 'particular', 'total'],
-    DocPackages: ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'basePackageId', 'ocEmail', 'createdBy', 'createdAt', 'approvedAt', 'archived'],
+    DocPackages: ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'basePackageId', 'ocEmail', 'osEmail', 'otEmail', 'createdBy', 'createdAt', 'approvedAt', 'archived'],
     DocItems: ['id', 'version', 'packageId', 'sortOrder', 'title', 'role', 'dueOffsetDays', 'required', 'templateId', 'status', 'fileName', 'fileId', 'uploadedBy', 'uploadedAt', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt', 'remarks', 'archived'],
     DocTemplates: ['id', 'version', 'activityType', 'title', 'fileName', 'mime', 'fileId', 'versionLabel', 'active', 'archived']
   };
@@ -33,6 +33,7 @@
   const docItemStatuses = ['Pending', 'Draft', 'Submitted', 'Approved', 'Rejected', 'NotRequired'];
   const docPackageStatuses = ['Open', 'Completed', 'Archived'];
   const docUploadMimes = ['.docx', '.xlsx', '.pdf', '.pptx', '.jpg', '.jpeg', '.png', '.zip'];
+  const finStatuses = ['Draft', 'Submitted', 'Approved', 'Rejected'];
   const recommendedCatalog = [];
   const addRecommended = (code, sortOrder, kind, category, name, level, eligibilityMetric, eligibilityThreshold) => recommendedCatalog.push({ code, sortOrder, kind, category, name, level: level || '', eligibilityMetric: eligibilityMetric || '', eligibilityThreshold: eligibilityThreshold == null ? null : eligibilityThreshold, archived: false });
   ['EFA (New)', 'EFA (Recert)', 'BFA (New)', 'BFA (Recert)', 'BFA (Renew)', 'Home Nursing', 'AFA'].forEach((name, index) => addRecommended('EXAM_' + name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase(), index + 1, 'Exam', '', name));
@@ -95,6 +96,7 @@
       row.lineNo = str(input.lineNo) === '' ? 0 : Number(input.lineNo);
     }
     if (table === 'FinReimbursements') row.formSeq = str(input.formSeq) === '' ? 0 : Number(input.formSeq);
+    if (table === 'FinBooks') row.status = str(input.status || '') || 'Draft';
     if (table === 'Catalog') {
       row.sortOrder = str(input.sortOrder) === '' ? 0 : Number(input.sortOrder);
       row.eligibilityThreshold = str(input.eligibilityThreshold) === '' ? null : Number(input.eligibilityThreshold);
@@ -154,6 +156,8 @@
         if (table === 'Enrolments' && !statuses.includes(row.status)) fail('Invalid annual member status.');
         if (table === 'FinBooks') {
           if (!row.activityName) fail('Activity name is required.');
+          const status = str(row.status || 'Draft');
+          if (!finStatuses.includes(status)) fail('Invalid finance approval status.');
         }
         if (table === 'FinIncomes') {
           if (!row.bookId || !state.FinBooks.some(item => item.id === row.bookId)) fail('Unknown finance book.');
@@ -196,7 +200,9 @@
           if (!docActivityTypes.includes(row.activityType)) fail('Unknown activity type.');
           if (!docPackageStatuses.includes(row.status)) fail('Invalid package status.');
           if (row.eventDate && !dateValid(row.eventDate)) fail('Event date must be YYYY-MM-DD.');
-          if (row.ocEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.ocEmail)) fail('Organizing Chairman email is invalid.');
+          ['ocEmail', 'osEmail', 'otEmail'].forEach(emailKey => {
+            if (row[emailKey] && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row[emailKey])) fail('Organizing role email is invalid.');
+          });
         }
         if (table === 'DocItems') {
           if (!state.DocPackages.some(item => item.id === row.packageId)) fail('Unknown document package.');
@@ -323,6 +329,19 @@
       docPackageArchive(state, request, context);
     } else if (request.action === 'saveDocTemplate') {
       upsert(state, 'DocTemplates', request.row, context.uuid);
+    } else if (request.action === 'submitFinBook') {
+      submitFinBook(state, request, context);
+    } else if (request.action === 'reviewFinBook') {
+      reviewFinBook(state, request, context);
+    } else if (request.action === 'reopenFinBook') {
+      const book = state.FinBooks.find(row => row.id === request.bookId);
+      if (!book) fail('Finance book not found.');
+      if (book.status !== 'Approved' && book.status !== 'Rejected') fail('Only approved or rejected books can be reopened.');
+      book.status = 'Draft';
+      book.remarks = '';
+      book.reviewedBy = '';
+      book.reviewedAt = '';
+      book.version++;
     } else fail('Unsupported action.');
     return finish(state, context.actor, request.action + ':' + (table || request.activityType || request.itemId || request.packageId || request.action), context.now);
   }
@@ -386,6 +405,8 @@
       activityType, year, eventDate, status: 'Open',
       basePackageId: source ? source.id : '',
       ocEmail: str(request.ocEmail).toLowerCase(),
+      osEmail: str(request.osEmail).toLowerCase(),
+      otEmail: str(request.otEmail).toLowerCase(),
       createdBy: context.actor, createdAt: context.now, approvedAt: '', archived: false
     }, context.uuid);
     const templates = state.DocTemplates.filter(row => row.activityType === activityType && !row.archived);
@@ -412,8 +433,12 @@
     const eventDate = str(request.eventDate === undefined ? pkg.eventDate : request.eventDate);
     if (eventDate && !dateValid(eventDate)) fail('Event date must be YYYY-MM-DD.');
     const ocEmail = str(request.ocEmail === undefined ? pkg.ocEmail : request.ocEmail).toLowerCase();
-    if (ocEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ocEmail)) fail('Organizing Chairman email is invalid.');
-    const updated = upsert(state, 'DocPackages', Object.assign({}, pkg, { eventDate, ocEmail }), context.uuid);
+    const osEmail = str(request.osEmail === undefined ? pkg.osEmail : request.osEmail).toLowerCase();
+    const otEmail = str(request.otEmail === undefined ? pkg.otEmail : request.otEmail).toLowerCase();
+    [['ocEmail', ocEmail], ['osEmail', osEmail], ['otEmail', otEmail]].forEach(([key, value]) => {
+      if (value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) fail('Organizing role email is invalid.');
+    });
+    const updated = upsert(state, 'DocPackages', Object.assign({}, pkg, { eventDate, ocEmail, osEmail, otEmail }), context.uuid);
     refreshDocPackageStatus(state, updated.id, context.now);
     return updated;
   }
@@ -427,6 +452,7 @@
     const addRows = Array.isArray(request.addItems) ? request.addItems : [];
     const removeIds = Array.isArray(request.removeItemIds) ? request.removeItemIds.map(str).filter(Boolean) : [];
     const canStructure = request.canEditStructure !== false;
+    const canEditDue = request.canEditDue !== false;
     const packageId = request.packageId || (rows[0] && rows[0].packageId) || (addRows[0] && addRows[0].packageId) || '';
     const pkg = findDocPackage(state, packageId);
     openDocPackage(pkg);
@@ -444,10 +470,12 @@
         required: input.required === undefined ? item.required : input.required
       });
       if (!canStructure) {
-        // OC: due date (and sort if provided) only — not title/role/required
         next.title = item.title;
         next.role = item.role;
         next.required = item.required;
+      }
+      if (!canEditDue) {
+        next.dueOffsetDays = item.dueOffsetDays;
       }
       validateDocItemMeta(next);
       upsert(state, 'DocItems', next, context.uuid);
@@ -551,6 +579,34 @@
     pkg.version++;
     if (!archive) refreshDocPackageStatus(state, pkg.id, context.now);
     return pkg;
+  }
+
+  function submitFinBook(state, request, context) {
+    const book = state.FinBooks.find(row => row.id === request.bookId);
+    if (!book) fail('Finance book not found.');
+    if (book.archived) fail('Finance book is archived.');
+    if (book.status === 'Approved') fail('This finance book is already approved.');
+    if (book.status === 'Submitted') fail('This finance book is already waiting for review.');
+    book.status = 'Submitted';
+    book.remarks = str(request.remarks || '');
+    book.submittedBy = context.actor;
+    book.submittedAt = context.now;
+    book.reviewedBy = '';
+    book.reviewedAt = '';
+    book.version++;
+  }
+  function reviewFinBook(state, request, context) {
+    const book = state.FinBooks.find(row => row.id === request.bookId);
+    if (!book) fail('Finance book not found.');
+    if (book.status !== 'Submitted') fail('Only submitted finance books can be reviewed.');
+    const approve = !!request.approve;
+    const remarks = str(request.remarks);
+    if (!approve && !remarks) fail('A reason is required when rejecting.');
+    book.status = approve ? 'Approved' : 'Rejected';
+    book.remarks = approve ? '' : remarks;
+    book.reviewedBy = context.actor;
+    book.reviewedAt = context.now;
+    book.version++;
   }
   function saveFinanceBook(state, request, context) {
     const payload = request.book;

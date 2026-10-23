@@ -22,19 +22,23 @@
     return nav[mode] || nav.admin;
   };
   const isOcOnly = () => !!(user && user.oc && !user.admin && !user.owner && !user.treasurer);
+  const packageRoleMatch = (pkg, email) => {
+    const mail = String(email || '').toLowerCase();
+    return [pkg.ocEmail, pkg.osEmail, pkg.otEmail].map(v => String(v || '').toLowerCase()).filter(Boolean).includes(mail);
+  };
   const ocPackages = () => {
     if (!user || !state || !state.DocPackages) return [];
     const email = String(user.email || '').toLowerCase();
     return state.DocPackages.filter(pkg => {
       if (pkg.archived || pkg.status === 'Archived') return false;
       if (user.owner || user.admin) return true;
-      return String(pkg.ocEmail || '').toLowerCase() === email;
+      return packageRoleMatch(pkg, email);
     }).sort((a, b) => b.year - a.year || String(a.activityType).localeCompare(String(b.activityType)));
   };
   const canOpenPackage = pkg => {
     if (!pkg || !user) return false;
     if (user.owner || user.admin) return true;
-    return user.oc && String(pkg.ocEmail || '').toLowerCase() === String(user.email || '').toLowerCase();
+    return packageRoleMatch(pkg, user.email);
   };
   const titles = {};
   Object.values(nav).flat().forEach(([key]) => { titles[key] = key; });
@@ -436,7 +440,8 @@
     const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
     const aboutCard = activityAboutCard(pkg);
     const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
-    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="organizer@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || 'not assigned') + '</strong></p></section>';
+    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="oc@gmail.com"></label><label class="field"><span>OS email</span><input id="doc-os-edit" type="email" value="' + escape(pkg.osEmail || '') + '" placeholder="os@gmail.com"></label><label class="field"><span>OT email</span><input id="doc-ot-edit" type="email" value="' + escape(pkg.otEmail || '') + '" placeholder="ot@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || '—') + '</strong> · OS <strong>' + escape(pkg.osEmail || '—') + '</strong> · OT <strong>' + escape(pkg.otEmail || '—') + '</strong></p></section>';
+    const financeCard = activityFinanceCard(pkg);
     const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
     const canEditStructure = !!(user.owner || user.admin);
     const templateSection = user.owner ? '<section class="card" style="margin-top:20px"><div class="section-heading" style="margin-top:0"><h2>Official templates · ' + escape(pkg.activityType) + '</h2></div><p class="hint">Owner uploads master templates. Checklist items link when titles match.</p>' + (templates.length ? table(['Title', 'File', 'Version', 'Actions'], templates.map(row => [escape(row.title), escape(row.fileName), escape(row.versionLabel || '—'), '<label class="button small" for="tpl-' + escape(row.id) + '">Replace<input id="tpl-' + escape(row.id) + '" type="file" data-tpl-upload="' + escape(row.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>'])) : '<p class="muted">No templates yet for this activity.</p>') + '<form id="tpl-new-form" class="form-grid" style="margin-top:12px"><div class="field"><label for="tpl-new-title">New template title</label><input id="tpl-new-title" type="text" required placeholder="Match checklist title"></div><div class="field"><label for="tpl-new-file">File</label><input id="tpl-new-file" type="file" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" required></div><div class="field"><button class="button" type="submit">Add template</button></div></form></section>' : '';
@@ -474,7 +479,29 @@
       escape(item.fileName || '—'),
       '<div class="row-tools">' + docActionsFor(item) + '</div>'
     ]);
-    return aboutCard + nextCard + meta + listToolbar + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+    return aboutCard + nextCard + meta + financeCard + listToolbar + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+  }
+  function activityFinanceCard(pkg) {
+    if (!state || !state.FinBooks) return '';
+    const books = state.FinBooks.filter(row => !row.archived && String(row.activityName || '').includes(pkg.activityType));
+    const book = books[0] || state.FinBooks.find(row => String(row.activityName || '').includes(String(pkg.year))) || books[0];
+    const status = book ? (book.status || 'Draft') : 'Draft';
+    const pillClass = status === 'Approved' ? 'Approved' : status === 'Rejected' ? 'Rejected' : status === 'Submitted' ? 'Pending' : '';
+    const canReview = !!(user.owner || user.admin || user.treasurer);
+    const canSubmitFinance = !!(user.owner || user.admin || user.treasurer || user.oc);
+    return '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><h2>Activity finance · I&E / Reimbursement / Receipts</h2><div class="toolbar">'
+      + (book ? button('Open finance', 'financeOpenBook', book.id) : (user.owner || user.admin || user.treasurer ? button('Create finance book', 'financeAddBook') : ''))
+      + '</div></div>'
+      + '<p class="muted">OT fills Income &amp; Expenses, Reimbursement forms and Receipts here. Submit the whole activity book for Treasurer review.</p>'
+      + (book ? '<p>Finance status: <span class="pill ' + pillClass + '">' + escape(status) + '</span>'
+        + (book.remarks ? '<br><small style="color:#852b3d">' + escape(book.remarks) + '</small>' : '')
+        + '</p><div class="toolbar">'
+        + (canSubmitFinance && status !== 'Submitted' && status !== 'Approved' ? button('Submit activity finance', 'finSubmit', book.id) : '')
+        + (canReview && status === 'Submitted' ? button('Approve', 'finApprove', book.id) + button('Reject', 'finReject', book.id) : '')
+        + (canReview && status === 'Approved' && (user.owner || user.admin) ? button('Reopen', 'finReopen', book.id) : '')
+        + '</div>'
+        : '<p class="muted">No activity finance book yet. Create one when the first cost appears.</p>')
+      + '</section>';
   }
   function portalView() {
     const packages = ocPackages();
@@ -904,6 +931,32 @@
       openActivityGuideDialog(id);
       return;
     }
+    if (name === 'finSubmit') {
+      applySave(await call({ action: 'submitFinBook', bookId: id, revision: state.revision }));
+      notice('Activity finance submitted for Treasurer review.');
+      return;
+    }
+    if (name === 'finApprove') {
+      if (!(user.owner || user.admin || user.treasurer)) throw new Error('Treasurer review is required.');
+      applySave(await call({ action: 'reviewFinBook', bookId: id, approve: true, revision: state.revision }));
+      notice('Activity finance approved.');
+      return;
+    }
+    if (name === 'finReject') {
+      if (!(user.owner || user.admin || user.treasurer)) throw new Error('Treasurer review is required.');
+      const remarks = prompt('Reason for rejecting this activity finance:');
+      if (remarks === null) return;
+      if (!String(remarks).trim()) { notice('A reason is required when rejecting.', true); return; }
+      applySave(await call({ action: 'reviewFinBook', bookId: id, approve: false, remarks: String(remarks).trim(), revision: state.revision }));
+      notice('Activity finance rejected.');
+      return;
+    }
+    if (name === 'finReopen') {
+      if (!(user.owner || user.admin)) throw new Error('Owner or Secretary can reopen.');
+      applySave(await call({ action: 'reopenFinBook', bookId: id, revision: state.revision }));
+      notice('Activity finance reopened as Draft.');
+      return;
+    }
     if (name === 'docEditOpen') {
       const pkg = state.DocPackages.find(row => row.id === openDocPackageId);
       if (!pkg) return;
@@ -1255,6 +1308,8 @@
           packageId: openDocPackageId,
           eventDate: byId('doc-event-edit').value,
           ocEmail: byId('doc-oc-edit') ? byId('doc-oc-edit').value.trim() : undefined,
+          osEmail: byId('doc-os-edit') ? byId('doc-os-edit').value.trim() : undefined,
+          otEmail: byId('doc-ot-edit') ? byId('doc-ot-edit').value.trim() : undefined,
           revision: state.revision
         }));
         notice('Package details saved.');

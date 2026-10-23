@@ -59,6 +59,9 @@ function requireDocumentApprover_(actor) {
   if (actor.owner || actor.admin) return;
   throw new Error('Access denied. Only Owner or Secretary can approve documents.');
 }
+function packageRoleEmails_(pkg) {
+  return ['ocEmail', 'osEmail', 'otEmail'].map(key => String(pkg[key] || '').trim().toLowerCase()).filter(Boolean);
+}
 function requirePackageAccess_(state, actor, packageId, itemId) {
   let id = packageId;
   if (!id && itemId) {
@@ -68,9 +71,17 @@ function requirePackageAccess_(state, actor, packageId, itemId) {
   const pkg = id ? state.DocPackages.find(row => row.id === id) : null;
   if (!pkg) throw new Error('Document package not found.');
   if (actor.owner || actor.admin) return pkg;
-  const ocEmail = String(pkg.ocEmail || '').toLowerCase();
-  if (ocEmail && ocEmail === String(actor.email || '').toLowerCase()) return pkg;
-  throw new Error('Access denied. You are not the Organizing Chairman for this activity.');
+  const email = String(actor.email || '').toLowerCase();
+  if (email && packageRoleEmails_(pkg).includes(email)) return pkg;
+  throw new Error('Access denied. You are not assigned to this activity package.');
+}
+function packageRole_(pkg, actor) {
+  const email = String(actor.email || '').toLowerCase();
+  if (actor.owner || actor.admin) return 'admin';
+  if (String(pkg.ocEmail || '').toLowerCase() === email) return 'oc';
+  if (String(pkg.osEmail || '').toLowerCase() === email) return 'os';
+  if (String(pkg.otEmail || '').toLowerCase() === email) return 'ot';
+  return '';
 }
 function portalPublicUrl_() {
   return String(properties_().getProperty('PUBLIC_SITE_URL') || properties_().getProperty('PORTAL_RETURN_URL') || 'https://wsk1234567.github.io/DivisionMemberSystem/');
@@ -96,18 +107,18 @@ function createPortalSession_(actor, state) {
   const packages = state.DocPackages.filter(pkg => {
     if (pkg.archived || pkg.status === 'Archived') return false;
     const email = String(actor.email || '').trim().toLowerCase();
-    const ocEmail = String(pkg.ocEmail || '').trim().toLowerCase();
     if (!email) return false;
-    // Owner/Admin see all packages; OC only sees packages they are assigned to.
     if (actor.owner || actor.admin) return true;
-    return ocEmail === email;
+    return packageRoleEmails_(pkg).includes(email);
   }).map(pkg => ({
     id: pkg.id,
     label: pkg.activityType + ' (' + pkg.year + ')',
     activityType: pkg.activityType,
     year: pkg.year,
     eventDate: pkg.eventDate || '',
-    ocEmail: pkg.ocEmail || ''
+    ocEmail: pkg.ocEmail || '',
+    osEmail: pkg.osEmail || '',
+    otEmail: pkg.otEmail || ''
   }));
   const map = portalSessionList_();
   map[token] = {
@@ -368,7 +379,21 @@ function rpc(request, apiEmail) {
       if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
       if (request.action === 'saveDocItemsMeta') {
         if (!(actor.owner || actor.admin)) request.canEditStructure = false;
+        // Only OC (and Owner/Secretary) may change due dates — OS/OT may not.
+        if (!(actor.owner || actor.admin)) {
+          const itemId = (request.items && request.items[0] && request.items[0].id) || '';
+          const item = itemId ? state.DocItems.find(row => row.id === itemId) : null;
+          const pkg = item ? state.DocPackages.find(row => row.id === item.packageId) : (request.packageId ? state.DocPackages.find(row => row.id === request.packageId) : null);
+          request.canEditDue = packageRole_(pkg || {}, actor) === 'oc';
+        }
       }
+      if (request.action === 'submitFinBook' && !(actor.owner || actor.admin || actor.treasurer)) {
+        requireDocuments_(actor);
+      }
+      if (request.action === 'reviewFinBook') {
+        if (!(actor.owner || actor.admin || actor.treasurer)) throw new Error('Access denied. Treasurer review is required.');
+      }
+      if (request.action === 'reopenFinBook' && !(actor.owner || actor.admin)) throw new Error('Access denied. Owner or Secretary can reopen.');
       if (request.action === 'docItemUpload' && request.fileBase64 && !request.fileId) {
         requireDocuments_(actor);
         request.fileId = storeDocFile_(actor.config.submissionsId, request.fileName, request.fileBase64);
@@ -378,7 +403,7 @@ function rpc(request, apiEmail) {
         if (!actor.config.templatesId) throw new Error('Document folders are not initialised. Owner must run Initialize document folders.');
         request.row = Object.assign({}, request.row, { fileId: storeDocFile_(actor.config.templatesId, request.row.fileName, request.fileBase64) });
       }
-      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate'].includes(request.action)) {
+      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'reviewFinBook', 'reopenFinBook'].includes(request.action)) {
         const next = KPT.mutate(state, request, context);
         commit_(next);
         const sync = sync_(next);

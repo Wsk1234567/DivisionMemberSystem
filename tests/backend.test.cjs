@@ -163,7 +163,7 @@ test('OC can edit document checklist but cannot approve; treasurer cannot use do
   env.actor = 'oc@gmail.com';
   const denied = sandbox.rpc({ action: 'docItemUpload', itemId: otherItemId, fileName: 'nope.pdf', fileBase64: 'QUJD', revision: other.data.state.revision });
   assert.equal(denied.ok, false);
-  assert.match(denied.error, /Organizing Chairman|Documents access|not found/);
+  assert.match(denied.error, /Organizing Chairman|Documents access|not found|not assigned/);
   env.actor = 'treasurer@gmail.com';
   const treasurerDocs = sandbox.rpc({ action: 'createDocPackage', activityType: 'AGM', year: 2027, revision: other.data.state.revision });
   assert.equal(treasurerDocs.ok, false);
