@@ -41,6 +41,8 @@ try {
   await button('telegramCreate').click();
   const link = page.locator('#editor-body a[href^="https://t.me/"]');
   assert.equal(await link.getAttribute('href'), 'https://t.me/tccdnotifybot?start=fictional_test_only');
+  assert.equal(await page.locator('#telegram-binding-command').inputValue(), '/start fictional_test_only');
+  assert.equal(await page.locator('#telegram-binding-command').getAttribute('readonly'), '');
   assert.equal(await button('telegramConfirm').count(), 0, 'Start link alone does not confirm the identity.');
   await page.evaluate(() => { telegramTestState.pending = { id: 'fictional-confirm', userId: '123456', username: 'fictional_user', displayName: '<img src=x onerror=alert(1)>', expiresAt: new Date(Date.now() + 600000).toISOString() }; });
   await button('telegramRefresh').click();
@@ -56,6 +58,7 @@ try {
   await button('telegramCreate').click();
   await button('telegramCancel').click();
   assert.equal(await page.locator('#editor-body a[href^="https://t.me/"]').count(), 0);
+  assert.equal(await page.locator('#telegram-binding-command').count(), 0, 'Cancel clears the private fallback command.');
   const requests = await page.evaluate(() => telegramTestRequests);
   assert.ok(requests.some(request => request.action === 'confirmTelegramBinding' && request.bindingId === 'fictional-confirm'));
   assert.equal(requests.some(request => 'email' in request || 'chatId' in request || 'token' in request), false);
