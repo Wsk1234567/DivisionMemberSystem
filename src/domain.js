@@ -60,7 +60,7 @@
   const yearOf = value => Number(str(value).slice(0, 4));
   const tables = Object.keys(fields);
   function empty() {
-    const state = { schema: 1, revision: 0, sequence: 0, updatedAt: '', publishedRevision: -1, audit: [] };
+    const state = { schema: 1, revision: 0, sequence: 0, updatedAt: '', publishedRevision: -1, audit: [], trash: [], notificationEvents: [], finAttachments: [] };
     tables.forEach(table => { state[table] = []; });
     ['EFA', 'BFA', 'Home Nursing', 'AFA'].forEach((name, index) => state.Catalog.push({ id: 'CAT-' + (index + 1), version: 1, code: '', sortOrder: index + 1, kind: 'Exam', category: '', name, level: '', eligibilityMetric: '', eligibilityThreshold: null, archived: false }));
     return state;
@@ -68,6 +68,8 @@
   function upgradeState(input) {
     const state = copy(input);
     state.trash = Array.isArray(state.trash) ? state.trash : [];
+    state.notificationEvents = Array.isArray(state.notificationEvents) ? state.notificationEvents : [];
+    state.finAttachments = Array.isArray(state.finAttachments) ? state.finAttachments : [];
     tables.forEach(table => { if (!Array.isArray(state[table])) state[table] = []; });
     state.Catalog = (state.Catalog || []).map((row, index) => Object.assign({ code: '', sortOrder: index + 1, eligibilityMetric: '', eligibilityThreshold: null }, row));
     state.Awards = (state.Awards || []).map(row => {
@@ -114,6 +116,16 @@
     if (state.schema !== 1) fail('Unsupported backup schema.');
     if (!Number.isInteger(state.revision) || state.revision < 0 || !Number.isInteger(state.sequence) || state.sequence < 0) fail('Invalid data revision or student sequence.');
     tables.forEach(table => { if (!Array.isArray(state[table])) fail('Missing table: ' + table); });
+    if (state.notificationEvents != null && !Array.isArray(state.notificationEvents)) fail('notificationEvents must be an array.');
+    if (state.finAttachments != null && !Array.isArray(state.finAttachments)) fail('finAttachments must be an array.');
+    if (Array.isArray(state.finAttachments)) {
+      state.finAttachments.forEach(row => {
+        if (!row || typeof row !== 'object') fail('Invalid finance attachment record.');
+        if (!row.id || !row.bookId) fail('Finance attachment requires id and bookId.');
+        if (!Number.isInteger(row.version) || row.version < 1) fail('Invalid finance attachment version.');
+        if (row.bytes != null && (!Number.isFinite(row.bytes) || row.bytes < 0)) fail('Invalid finance attachment size.');
+      });
+    }
     const members = new Set(state.Members.map(row => row.id));
     const activities = new Map(state.Activities.map(row => [row.id, row]));
     const unique = (rows, getKey, label) => {
@@ -362,6 +374,10 @@
       book.reviewedBy = '';
       book.reviewedAt = '';
       book.version++;
+    } else if (request.action === 'uploadFinanceAttachment') {
+      uploadFinanceAttachment(state, request, context);
+    } else if (request.action === 'removeFinanceAttachment') {
+      removeFinanceAttachment(state, request, context);
     } else if (request.action === 'setDocItemTaskStatus') {
       const item = findDocItem(state, request.itemId);
       const pkg = findDocPackage(state, item.packageId);
@@ -806,6 +822,65 @@
     });
     return book;
   }
+  const finAttachmentAllowed = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.pdf': 'application/pdf' };
+  const finAttachmentMaxBytes = 5 * 1024 * 1024;
+  const finAttachmentMaxCount = 30;
+  const finAttachmentMaxTotalBytes = 50 * 1024 * 1024;
+  function attachmentBookStatusEditable_(status) {
+    return status === 'Draft' || status === 'Rejected';
+  }
+  function uploadFinanceAttachment(state, request, context) {
+    const book = state.FinBooks.find(row => row.id === request.bookId);
+    if (!book) fail('Finance book not found.');
+    if (!attachmentBookStatusEditable_(book.status)) fail('Only draft or returned finance books can change attachments.');
+    const fileName = str(request.fileName);
+    const mime = str(request.mime);
+    const fileId = str(request.fileId);
+    const bytes = Number(request.bytes);
+    if (!fileName) fail('File name is required.');
+    if (!fileId) fail('Attachment storage failed.');
+    if (!Number.isFinite(bytes) || bytes <= 0) fail('Attachment content is empty.');
+    if (bytes > finAttachmentMaxBytes) fail('Attachment exceeds the 5 MiB limit.');
+    const dot = fileName.lastIndexOf('.');
+    const extension = dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
+    const expectedMime = finAttachmentAllowed[extension];
+    if (!expectedMime) fail('Allowed attachments: JPG, PNG, PDF.');
+    if (mime && mime !== expectedMime) fail('Declared type does not match the file extension.');
+    if (!mime) request.mime = expectedMime;
+    const active = (state.finAttachments || []).filter(row => row.bookId === book.id && row.active);
+    if (active.length >= finAttachmentMaxCount) fail('A finance book allows at most 30 active attachments.');
+    const total = active.reduce((sum, row) => sum + (Number(row.bytes) || 0), 0);
+    if (total + bytes > finAttachmentMaxTotalBytes) fail('A finance book allows at most 50 MiB of attachments.');
+    state.finAttachments = Array.isArray(state.finAttachments) ? state.finAttachments : [];
+    const attachment = {
+      id: 'FAT-' + context.uuid(),
+      version: 1,
+      bookId: book.id,
+      fileName,
+      fileId,
+      mime: mime || expectedMime,
+      bytes,
+      uploadedBy: str(context.actor),
+      uploadedAt: context.now,
+      active: true
+    };
+    state.finAttachments.push(attachment);
+    book.version++;
+    return attachment;
+  }
+  function removeFinanceAttachment(state, request, context) {
+    const attachmentId = str(request.attachmentId);
+    const attachment = (state.finAttachments || []).find(row => row.id === attachmentId);
+    if (!attachment) fail('Finance attachment not found.');
+    if (!attachment.active) fail('Finance attachment is already removed.');
+    const book = state.FinBooks.find(row => row.id === attachment.bookId);
+    if (!book) fail('Finance book not found.');
+    if (!attachmentBookStatusEditable_(book.status)) fail('Only draft or returned finance books can change attachments.');
+    attachment.active = false;
+    attachment.version++;
+    book.version++;
+    return attachment;
+  }
   function summary(state, memberId, year) {
     const activities = new Map(state.Activities.filter(row => !row.archived && yearOf(row.date) === Number(year)).map(row => [row.id, row]));
     const attended = new Set(state.Attendance.filter(row => row.memberId === memberId && row.present && activities.has(row.activityId)).map(row => row.activityId));
@@ -1024,6 +1099,9 @@
       ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'archived'].forEach(key => { if (Object.prototype.hasOwnProperty.call(pkg, key)) safe[key] = pkg[key]; });
       return safe;
     });
+    view.finAttachments = (state.finAttachments || [])
+      .filter(row => row && row.active && bookIds.has(row.bookId))
+      .map(row => copy(row));
     return view;
   }
   function purgeTrash(original, trashId, context) {
@@ -1035,7 +1113,307 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money };
+  // --- Hub notifications (pure helpers) ---
+  const hubKinds = ['DraftSaved', 'SubmittedToOC', 'OCChecked', 'ReturnedByOC', 'ForwardedForApproval', 'Approved', 'ReturnedByFinal'];
+  function hubEmail_(value) { return str(value).toLowerCase(); }
+  function hubAccessList_(value) {
+    if (value == null) return [];
+    return (Array.isArray(value) ? value : [value]).map(hubEmail_).filter(Boolean);
+  }
+  function hubPackageOf_(state, entityType, entityId) {
+    if (entityType === 'document') {
+      const item = (state.DocItems || []).find(row => row.id === entityId);
+      return item ? (state.DocPackages || []).find(row => row.id === item.packageId) || null : null;
+    }
+    if (entityType === 'finance') {
+      const book = (state.FinBooks || []).find(row => row.id === entityId);
+      return book && book.packageId ? (state.DocPackages || []).find(row => row.id === book.packageId) || null : null;
+    }
+    return null;
+  }
+  function hubEntity_(state, entityType, entityId) {
+    if (entityType === 'document') return (state.DocItems || []).find(row => row.id === entityId) || null;
+    if (entityType === 'finance') return (state.FinBooks || []).find(row => row.id === entityId) || null;
+    return null;
+  }
+  function hubEntityTitle_(entityType, entity) {
+    if (!entity) return '';
+    return entityType === 'document' ? str(entity.title) : str(entity.activityName);
+  }
+  function hubEntityVersion_(entityType, entity) {
+    if (!entity) return 0;
+    return Number(entity.version) || 0;
+  }
+  function hubRoleForEmail_(pkg, email, entityType, preferRole) {
+    if (preferRole === 'owner' || preferRole === 'admin' || preferRole === 'treasurer') return preferRole;
+    if (!pkg) return preferRole || '';
+    const target = hubEmail_(email);
+    if (hubEmail_(pkg.ocEmail) === target) return 'oc';
+    if (entityType === 'document' && hubEmail_(pkg.osEmail) === target) return 'os';
+    if (entityType === 'finance' && hubEmail_(pkg.otEmail) === target) return 'ot';
+    if (hubEmail_(pkg.osEmail) === target) return 'os';
+    if (hubEmail_(pkg.otEmail) === target) return 'ot';
+    return preferRole || '';
+  }
+  function hubFinContentSignature_(state, bookId) {
+    const book = (state.FinBooks || []).find(row => row.id === bookId);
+    if (!book) return '';
+    const pick = (rows, keys) => rows.map(row => keys.map(key => str(row[key]))).sort();
+    const incomes = pick((state.FinIncomes || []).filter(row => row.bookId === bookId), ['date', 'description', 'amount']);
+    const expenses = pick((state.FinExpenses || []).filter(row => row.bookId === bookId), ['date', 'item', 'description', 'quantity', 'unitCost', 'amount']);
+    const forms = (state.FinReimbursements || []).filter(row => row.bookId === bookId).map(form => {
+      const lines = pick((state.FinReimburseLines || []).filter(row => row.reimbursementId === form.id), ['lineNo', 'date', 'invoiceNo', 'particular', 'total']);
+      return [String(str(form.formSeq)), str(form.treasurerName), str(form.formDate), str(form.purpose), str(form.chequeNo), str(form.amount), JSON.stringify(lines)];
+    }).sort();
+    return JSON.stringify({ name: str(book.activityName), remarks: str(book.remarks), incomes, expenses, forms });
+  }
+  function hubPushEvent_(events, draft, context) {
+    const recipient = hubEmail_(draft.recipientEmail);
+    if (!recipient) return;
+    const existing = events.find(row =>
+      hubEmail_(row.recipientEmail) === recipient &&
+      row.kind === draft.kind &&
+      row.entityId === draft.entityId &&
+      row.destination === draft.destination
+    );
+    if (existing) {
+      existing.entityVersion = draft.entityVersion;
+      existing.createdAt = draft.createdAt;
+      existing.entityTitle = draft.entityTitle;
+      existing.actorEmail = draft.actorEmail;
+      existing.packageId = draft.packageId;
+      existing.entityType = draft.entityType;
+      existing.role = draft.role;
+      return;
+    }
+    events.push(Object.assign({ id: 'EVT-' + context.uuid() }, draft, { recipientEmail: recipient }));
+  }
+  function hubPruneEvents_(events, now) {
+    const baseTime = Date.parse(now) || Date.now();
+    const cutoff = baseTime - 90 * 24 * 60 * 60 * 1000;
+    return events
+      .filter(row => {
+        const time = Date.parse(row.createdAt);
+        return !Number.isFinite(time) || time >= cutoff;
+      })
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, 2000);
+  }
+  function hubResolveSubmitter_(state, entityType, entity, pkg, actorEmail) {
+    const submittedBy = hubEmail_(entity && entity.submittedBy);
+    const assigned = pkg ? [pkg.osEmail, pkg.otEmail, pkg.ocEmail].map(hubEmail_).filter(Boolean) : [];
+    if (submittedBy && (!pkg || assigned.includes(submittedBy))) return submittedBy;
+    // Revoked or missing submitter: fall back to current OS/OT only, never a revoked email.
+    if (!pkg) return hubEmail_(actorEmail);
+    const fallbackKey = entityType === 'finance' ? 'otEmail' : 'osEmail';
+    return hubEmail_(pkg[fallbackKey]) || hubEmail_(actorEmail) || '';
+  }
+  function appendHubEvents(before, after, request, actor, access, context) {
+    if (!after || typeof after !== 'object') return after;
+    if (!Array.isArray(after.notificationEvents)) after.notificationEvents = [];
+    const action = str(request && request.action);
+    const now = (context && context.now) || new Date().toISOString();
+    const actorEmail = hubEmail_(typeof actor === 'string' ? actor : actor && actor.email);
+    const accessMap = access || {};
+    const ownerList = hubAccessList_(accessMap.owner);
+    const adminList = hubAccessList_(accessMap.admins);
+    const treasurerList = hubAccessList_(accessMap.treasurers);
+    const plan = [];
+    const detect = (actionName, entityType, idFromRequest) => {
+      if (action !== actionName) return null;
+      const entityId = str(idFromRequest);
+      const entityAfter = hubEntity_(after, entityType, entityId);
+      if (!entityAfter) return null;
+      return { entityType, entityId, entityAfter, entityBefore: hubEntity_(before, entityType, entityId) };
+    };
+    let info = detect('docItemUpload', 'document', request.itemId);
+    if (info) plan.push({ kind: 'DraftSaved', info });
+    info = detect('uploadFinanceAttachment', 'finance', request.bookId);
+    if (info) plan.push({ kind: 'DraftSaved', info });
+    if (action === 'removeFinanceAttachment') {
+      const attachment = (before.finAttachments || []).find(row => row.id === str(request.attachmentId));
+      info = detect('removeFinanceAttachment', 'finance', request.bookId || (attachment && attachment.bookId));
+      if (info) plan.push({ kind: 'DraftSaved', info });
+    }
+    if (action === 'saveFinanceBook') {
+      const requestedId = str(request.book && request.book.id) || str(request.bookId);
+      let bookId = requestedId;
+      let entityAfter = bookId ? hubEntity_(after, 'finance', bookId) : null;
+      if (!entityAfter) {
+        const beforeIds = new Set((before.FinBooks || []).map(row => row.id));
+        const created = (after.FinBooks || []).filter(row => !beforeIds.has(row.id));
+        if (created.length) {
+          entityAfter = created[created.length - 1];
+          bookId = entityAfter.id;
+        }
+      }
+      if (entityAfter && hubFinContentSignature_(before, bookId) !== hubFinContentSignature_(after, bookId)) {
+        plan.push({ kind: 'DraftSaved', info: { entityType: 'finance', entityId: bookId, entityAfter, entityBefore: hubEntity_(before, 'finance', bookId) } });
+      }
+    }
+    info = detect('docItemSubmit', 'document', request.itemId);
+    if (info) plan.push({ kind: 'SubmittedToOC', info });
+    info = detect('submitFinBook', 'finance', request.bookId);
+    if (info) plan.push({ kind: 'SubmittedToOC', info });
+    if (action === 'docItemCheck') {
+      info = detect('docItemCheck', 'document', request.itemId);
+      if (info) plan.push({ kind: request.approve ? 'OCChecked' : 'ReturnedByOC', info });
+    }
+    if (action === 'checkFinBook') {
+      info = detect('checkFinBook', 'finance', request.bookId);
+      if (info) plan.push({ kind: request.approve ? 'OCChecked' : 'ReturnedByOC', info });
+    }
+    info = detect('docItemForward', 'document', request.itemId);
+    if (info) plan.push({ kind: 'ForwardedForApproval', info });
+    info = detect('forwardFinBook', 'finance', request.bookId);
+    if (info) plan.push({ kind: 'ForwardedForApproval', info });
+    if (action === 'docItemReview') {
+      info = detect('docItemReview', 'document', request.itemId);
+      if (info) plan.push({ kind: request.approve ? 'Approved' : 'ReturnedByFinal', info });
+    }
+    if (action === 'reviewFinBook') {
+      info = detect('reviewFinBook', 'finance', request.bookId);
+      if (info) plan.push({ kind: request.approve ? 'Approved' : 'ReturnedByFinal', info });
+    }
+    plan.forEach(entry => {
+      const kind = entry.kind;
+      const detail = entry.info;
+      const entityType = detail.entityType;
+      const entityId = detail.entityId;
+      const entityAfter = detail.entityAfter;
+      const pkg = hubPackageOf_(after, entityType, entityId);
+      const base = {
+        kind,
+        packageId: pkg ? pkg.id : str(entityAfter.packageId || ''),
+        entityType,
+        entityId,
+        entityVersion: hubEntityVersion_(entityType, entityAfter),
+        entityTitle: hubEntityTitle_(entityType, entityAfter),
+        actorEmail,
+        createdAt: now
+      };
+      const push = (email, destination, role) => {
+        const recipientEmail = hubEmail_(email);
+        if (!recipientEmail) return;
+        hubPushEvent_(after.notificationEvents, Object.assign({}, base, {
+          recipientEmail,
+          destination,
+          role: role || hubRoleForEmail_(pkg, recipientEmail, entityType, role)
+        }), context);
+      };
+      const ocEmail = pkg ? hubEmail_(pkg.ocEmail) : '';
+      const submitter = hubResolveSubmitter_(after, entityType, entityAfter, pkg, actorEmail);
+      if (kind === 'DraftSaved') {
+        if (actorEmail) push(actorEmail, 'hall', hubRoleForEmail_(pkg, actorEmail, entityType, entityType === 'finance' ? 'ot' : 'os'));
+        if (ocEmail) push(ocEmail, 'studio', 'oc');
+      } else if (kind === 'SubmittedToOC') {
+        if (ocEmail) push(ocEmail, 'studio', 'oc');
+      } else if (kind === 'OCChecked') {
+        if (submitter) push(submitter, 'hall', hubRoleForEmail_(pkg, submitter, entityType, entityType === 'finance' ? 'ot' : 'os'));
+        const ocSelf = actorEmail || ocEmail;
+        if (ocSelf) push(ocSelf, 'hall', 'oc');
+      } else if (kind === 'ReturnedByOC') {
+        if (submitter) push(submitter, 'studio', hubRoleForEmail_(pkg, submitter, entityType, entityType === 'finance' ? 'ot' : 'os'));
+      } else if (kind === 'ForwardedForApproval') {
+        ownerList.forEach(email => push(email, 'hall', 'owner'));
+        const extra = entityType === 'finance' ? treasurerList : adminList;
+        extra.forEach(email => push(email, 'hall', entityType === 'finance' ? 'treasurer' : 'admin'));
+      } else if (kind === 'Approved' || kind === 'ReturnedByFinal') {
+        if (submitter) push(submitter, 'hall', hubRoleForEmail_(pkg, submitter, entityType, entityType === 'finance' ? 'ot' : 'os'));
+        if (ocEmail) push(ocEmail, 'hall', 'oc');
+      }
+    });
+    after.notificationEvents = hubPruneEvents_(after.notificationEvents, now);
+    return after;
+  }
+  function hubRoleHeld_(state, actor, email, entityType, entityId, targetRole) {
+    if (actor.owner) return true;
+    if (!targetRole) return true;
+    if (targetRole === 'owner') return !!actor.owner;
+    if (targetRole === 'admin') return !!actor.admin;
+    if (targetRole === 'treasurer') return !!actor.treasurer;
+    const pkg = hubPackageOf_(state, entityType, entityId);
+    if (!pkg) return false;
+    const target = hubEmail_(email);
+    if (targetRole === 'oc') return hubEmail_(pkg.ocEmail) === target;
+    if (targetRole === 'os') return hubEmail_(pkg.osEmail) === target;
+    if (targetRole === 'ot') return hubEmail_(pkg.otEmail) === target;
+    return false;
+  }
+  function hubNotificationFeed(state, actor, readMap, now) {
+    actor = actor || {};
+    const email = hubEmail_(typeof actor === 'string' ? actor : actor.email);
+    const map = readMap && typeof readMap === 'object' ? readMap : {};
+    const events = Array.isArray(state.notificationEvents) ? state.notificationEvents : [];
+    const isOwner = !!actor.owner;
+    const isAdmin = !!actor.admin;
+    const isTreasurer = !!actor.treasurer;
+    const visible = events.filter(row => {
+      if (hubEmail_(row.recipientEmail) !== email) return false;
+      const pkg = hubPackageOf_(state, row.entityType, row.entityId);
+      const entity = hubEntity_(state, row.entityType, row.entityId);
+      if (!entity) return false;
+      // Entity read scope must match projectForActor.
+      if (row.entityType === 'document') {
+        if (!pkg) return false;
+        const inScope = isOwner || isAdmin || hubEmail_(pkg.osEmail) === email || hubEmail_(pkg.ocEmail) === email;
+        if (!inScope) return false;
+      } else if (row.entityType === 'finance') {
+        const inScope = isOwner || isTreasurer || (!!pkg && (hubEmail_(pkg.otEmail) === email || hubEmail_(pkg.ocEmail) === email));
+        if (!inScope) return false;
+      } else {
+        return false;
+      }
+      // Event target role must still be held; former OC turned OT loses OC-only notices.
+      return hubRoleHeld_(state, actor, email, row.entityType, row.entityId, row.role);
+    });
+    const refTime = Date.parse(now || state.updatedAt) || 0;
+    const cutoff = refTime ? refTime - 90 * 24 * 60 * 60 * 1000 : 0;
+    const items = visible
+      .filter(row => !cutoff || (Date.parse(row.createdAt) || 0) >= cutoff)
+      .map(row => {
+        const claimed = Number(map[row.id]);
+        const entityVersion = Number(row.entityVersion) || 0;
+        // Do not trust read marks that claim a version beyond the event.
+        const seenVersion = Number.isFinite(claimed) && claimed >= 0 && claimed <= entityVersion ? claimed : -1;
+        return {
+          id: row.id,
+          kind: row.kind,
+          packageId: row.packageId,
+          entityType: row.entityType,
+          entityId: row.entityId,
+          entityVersion,
+          entityTitle: row.entityTitle,
+          actorEmail: row.actorEmail,
+          createdAt: row.createdAt,
+          unread: entityVersion > seenVersion,
+          destination: row.destination,
+          role: row.role
+        };
+      })
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || String(b.id).localeCompare(String(a.id)));
+    const recent = items.slice(0, 100);
+    // Counts only cover the returned list so hidden events cannot leave unfixable red dots.
+    const unreadItems = recent.filter(item => item.unread);
+    const activityUnread = {};
+    const studioUnread = {};
+    unreadItems.forEach(item => {
+      if (item.destination === 'hall') {
+        const key = item.packageId || '';
+        activityUnread[key] = (activityUnread[key] || 0) + 1;
+      } else if (item.destination === 'studio') {
+        const key = item.role || '';
+        studioUnread[key] = (studioUnread[key] || 0) + 1;
+      }
+    });
+    return Object.freeze({
+      notifications: Object.freeze(recent.map(item => Object.freeze(item))),
+      unreadCount: unreadItems.length,
+      activityUnread: Object.freeze(activityUnread),
+      studioUnread: Object.freeze(studioUnread)
+    });
+  }
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

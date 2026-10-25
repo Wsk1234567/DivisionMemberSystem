@@ -1,4 +1,6 @@
 function properties_() { return PropertiesService.getScriptProperties(); }
+function installTelegramNotifications() { return TCCDTelegram.install(); }
+function processTelegramNotifications() { return TCCDTelegram.process(); }
 function configuration_() {
   const props = properties_();
   const owner = String(props.getProperty('OWNER_EMAIL') || '').trim().toLowerCase();
@@ -148,7 +150,15 @@ function requirePackageRole_(state, actor, packageId, itemId, allowed) {
 }
 // Real book ownership always wins. A forged packageId must never retarget an existing book.
 function resolveFinBook_(state, request) {
-  const bookId = request.bookId || (request.book && request.book.id) || '';
+  let bookId = request.bookId || (request.book && request.book.id) || '';
+  if (request.attachmentId) {
+    const attachment = (state.finAttachments || []).find(row => row.id === request.attachmentId);
+    if (attachment) {
+      const derived = String(attachment.bookId || '');
+      if (bookId && derived && bookId !== derived) throw new Error('Finance attachment belongs to another book.');
+      bookId = derived || bookId;
+    }
+  }
   const claimed = request.packageId || (request.book && request.book.packageId) || '';
   const book = bookId ? state.FinBooks.find(row => row.id === bookId) : null;
   if (bookId && !book) throw new Error('Finance book not found.');
@@ -178,7 +188,7 @@ function requireFinBookAccess_(state, actor, request) {
     throw new Error('Access denied. Only the assigned OC can check or forward this finance book.');
   }
   // save/submit: assigned OT, or Divisional Treasurer finance duties.
-  if (action === 'saveFinanceBook' || action === 'submitFinBook') {
+  if (action === 'saveFinanceBook' || action === 'submitFinBook' || action === 'uploadFinanceAttachment' || action === 'removeFinanceAttachment') {
     if (roles.indexOf('ot') >= 0) return book;
     if (actor.treasurer) return book;
     throw new Error('Access denied. Only the assigned OT can work on this activity finance book.');
@@ -423,6 +433,114 @@ function docDownload_(state, request) {
   const file = DriveApp.getFileById(fileId);
   return { fileName: file.getName() || fallbackName, mime: file.getMimeType(), contentBase64: Utilities.base64Encode(file.getBlob().getBytes()) };
 }
+function hubReadsHeader_() { return ['userEmail', 'eventId', 'seenVersion']; }
+function hubEnsureReadsSheet_(book) {
+  let sheet = book.getSheetByName('HubNotificationReads');
+  if (!sheet) {
+    sheet = book.insertSheet('HubNotificationReads');
+    sheet.getRange(1, 1, 1, 3).setValues([hubReadsHeader_()]);
+    return sheet;
+  }
+  if (sheet.getLastRow() < 1) sheet.getRange(1, 1, 1, 3).setValues([hubReadsHeader_()]);
+  return sheet;
+}
+function hubLoadReadMap_(book, email) {
+  const sheet = book.getSheetByName('HubNotificationReads');
+  if (!sheet) return {};
+  const last = sheet.getLastRow();
+  if (last < 2) return {};
+  const rows = sheet.getRange(2, 1, last - 1, 3).getDisplayValues();
+  const map = {};
+  rows.forEach(row => {
+    if (String(row[0]).trim().toLowerCase() === email) {
+      const seen = Number(row[2]);
+      if (row[1] && Number.isFinite(seen)) map[String(row[1])] = seen;
+    }
+  });
+  return map;
+}
+function hubMarkRead_(book, email, entries, state, actor) {
+  const feed = KPT.hubNotificationFeed(state, actor, hubLoadReadMap_(book, email), new Date().toISOString());
+  const visibleById = new Map(feed.notifications.map(item => [item.id, item]));
+  const merged = new Map();
+  (entries || []).slice(0, 200).forEach(entry => {
+    const id = String(entry && entry.id || '');
+    if (!id) return;
+    const item = visibleById.get(id);
+    if (!item) return;
+    const requested = Number(entry.entityVersion);
+    if (!Number.isInteger(requested) || requested < 1 || requested > Number(item.entityVersion)) return;
+    if (!merged.has(id) && merged.size >= 100) return;
+    const prior = merged.get(id) || 0;
+    merged.set(id, Math.max(prior, requested));
+  });
+  if (!merged.size) return hubLoadReadMap_(book, email);
+  const sheet = hubEnsureReadsSheet_(book);
+  const last = sheet.getLastRow();
+  const existing = last > 1 ? sheet.getRange(2, 1, last - 1, 3).getDisplayValues() : [];
+  const rowIndex = new Map();
+  existing.forEach((row, i) => {
+    const key = String(row[0]).trim().toLowerCase() + '|' + String(row[1]);
+    rowIndex.set(key, i);
+  });
+  const appends = [];
+  const updates = [];
+  merged.forEach((version, id) => {
+    const key = email + '|' + id;
+    if (rowIndex.has(key)) {
+      const i = rowIndex.get(key);
+      const prior = Number(existing[i][2]);
+      const stored = Number.isFinite(prior) ? Math.max(prior, version) : version;
+      if (stored !== prior) {
+        existing[i][2] = String(stored);
+        updates.push(true);
+      }
+    } else {
+      appends.push([email, id, String(version)]);
+    }
+  });
+  if (updates.length && existing.length) {
+    sheet.getRange(2, 1, existing.length, 3).setValues(existing.map(row => [row[0], row[1], String(row[2])]));
+  }
+  if (appends.length) {
+    const needed = sheet.getLastRow() + appends.length;
+    if (needed > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), needed - sheet.getMaxRows());
+    sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, 3).setValues(appends);
+  }
+  return hubLoadReadMap_(book, email);
+}
+function finReceiptsFolderId_() {
+  const props = properties_();
+  let folderId = props.getProperty('FIN_RECEIPTS_FOLDER_ID');
+  if (folderId) return folderId;
+  const folder = DriveApp.createFolder('TCCD Finance Receipts');
+  folder.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+  folderId = folder.getId();
+  props.setProperty('FIN_RECEIPTS_FOLDER_ID', folderId);
+  return folderId;
+}
+function finByteAt_(bytes, index) {
+  const value = bytes[index];
+  return (typeof value === 'number' ? value : Number(value)) & 255;
+}
+function finAttachmentMimeFromHeader_(bytes) {
+  if (!bytes || bytes.length < 3) return '';
+  const b0 = finByteAt_(bytes, 0), b1 = finByteAt_(bytes, 1), b2 = finByteAt_(bytes, 2), b3 = bytes.length > 3 ? finByteAt_(bytes, 3) : -1, b4 = bytes.length > 4 ? finByteAt_(bytes, 4) : -1;
+  if (b0 === 0xFF && b1 === 0xD8 && b2 === 0xFF) return 'image/jpeg';
+  if (bytes.length >= 8 && b0 === 0x89 && b1 === 0x50 && b2 === 0x4E && b3 === 0x47 && b4 === 0x0D && finByteAt_(bytes, 5) === 0x0A && finByteAt_(bytes, 6) === 0x1A && finByteAt_(bytes, 7) === 0x0A) return 'image/png';
+  if (b0 === 0x25 && b1 === 0x50 && b2 === 0x44 && b3 === 0x46 && b4 === 0x2D) return 'application/pdf';
+  return '';
+}
+function finAttachmentAllowed_(fileName) {
+  const name = String(fileName || '');
+  const dot = name.lastIndexOf('.');
+  const extension = dot >= 0 ? name.slice(dot).toLowerCase() : '';
+  const map = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.pdf': 'application/pdf' };
+  return map[extension] || '';
+}
+function finAttachmentEditable_(book) {
+  return book && (book.status === 'Draft' || book.status === 'Rejected');
+}
 function withLock_(work) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Another save is in progress. Please retry shortly.');
@@ -483,7 +601,7 @@ function rpcInternal_(request, apiEmail) {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
     const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash', 'initDocFolders'];
     const adminOnlyActions = ['previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults'];
-    const financeActions = ['saveFinanceBook', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook'];
+    const financeActions = ['saveFinanceBook', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook', 'uploadFinanceAttachment', 'removeFinanceAttachment'];
     const memberDataActions = ['save', 'attendance'];
     const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload'];
     const documentApproveActions = ['docItemReview'];
@@ -503,6 +621,9 @@ function rpcInternal_(request, apiEmail) {
       if (documentApproveActions.includes(request.action)) requireDocumentApprover_(actor);
       const state = loadState_();
       const context = context_(actor.email);
+      if (['getTelegramStatus', 'createTelegramBinding', 'confirmTelegramBinding', 'cancelTelegramBinding', 'setTelegramEnabled', 'unlinkTelegram'].includes(request.action)) {
+        return { ok: true, data: TCCDTelegram.rpc(request, state, actor) };
+      }
       const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload', 'setDocItemTaskStatus'];
       if (packageScoped.includes(request.action)) requirePackageAccess_(state, actor, request.packageId, request.itemId);
       if (documentOcActions.includes(request.action)) requirePackageRole_(state, actor, request.packageId, request.itemId, ['oc']);
@@ -540,14 +661,68 @@ function rpcInternal_(request, apiEmail) {
         if (!actor.config.templatesId) throw new Error('Document folders are not initialised. Owner must run Initialize document folders.');
         request.row = Object.assign({}, request.row, { fileId: storeDocFile_(actor.config.templatesId, request.row.fileName, request.fileBase64) });
       }
-      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook', 'setDocItemTaskStatus'].includes(request.action)) {
+      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook', 'setDocItemTaskStatus', 'uploadFinanceAttachment', 'removeFinanceAttachment'].includes(request.action)) {
+        if (request.action === 'uploadFinanceAttachment') {
+          if (request.fileId || request.bytes != null) throw new Error('Caller-supplied internal attachment fields are not allowed.');
+          if (request.revision !== state.revision) throw new Error('Conflict: newer data is available. Reload before uploading.');
+          const preBook = state.FinBooks.find(row => row.id === request.bookId);
+          if (!preBook) throw new Error('Finance book not found.');
+          if (!finAttachmentEditable_(preBook)) throw new Error('Only draft or returned finance books can change attachments.');
+          const activeList = (state.finAttachments || []).filter(row => row.bookId === preBook.id && row.active);
+          if (activeList.length >= 30) throw new Error('A finance book allows at most 30 active attachments.');
+          const existingBytes = activeList.reduce((sum, row) => sum + (Number(row.bytes) || 0), 0);
+          if (!request.contentBase64) throw new Error('Attachment content is required.');
+          const declaredMime = finAttachmentAllowed_(request.fileName);
+          if (!declaredMime) throw new Error('Allowed attachments: JPG, PNG, PDF.');
+          if (request.mime && request.mime !== declaredMime) throw new Error('Declared type does not match the file extension.');
+          const bytes = Utilities.base64Decode(String(request.contentBase64 || ''));
+          if (!bytes || !bytes.length) throw new Error('Attachment content is empty.');
+          if (bytes.length > 5 * 1024 * 1024) throw new Error('Attachment exceeds the 5 MiB limit.');
+          if (existingBytes + bytes.length > 50 * 1024 * 1024) throw new Error('A finance book allows at most 50 MiB of attachments.');
+          const headerMime = finAttachmentMimeFromHeader_(bytes);
+          if (headerMime !== declaredMime) throw new Error('Attachment content does not match the declared type.');
+          const folderId = finReceiptsFolderId_();
+          const blob = Utilities.newBlob(bytes, declaredMime, String(request.fileName));
+          const file = DriveApp.getFolderById(folderId).createFile(blob);
+          request.fileId = file.getId();
+          request.bytes = bytes.length;
+          request.mime = declaredMime;
+          delete request.contentBase64;
+        }
+        if (request.action === 'removeFinanceAttachment') {
+          const attachment = (state.finAttachments || []).find(row => row.id === request.attachmentId);
+          if (!attachment) throw new Error('Finance attachment not found.');
+          const ownerBook = state.FinBooks.find(row => row.id === attachment.bookId);
+          if (!finAttachmentEditable_(ownerBook)) throw new Error('Only draft or returned finance books can change attachments.');
+        }
         const next = KPT.mutate(state, request, context);
         if (request.action === 'createDocPackage' || request.action === 'saveDocPackageMeta') {
           registerPackageRoleEmails_([request.ocEmail, request.osEmail, request.otEmail]);
         }
+        KPT.appendHubEvents(state, next, request, actor.email, { owner: actor.config.owner, admins: actor.config.admins, treasurers: actor.config.treasurers }, context);
         commit_(next);
         const sync = sync_(next);
+        if (request.action === 'uploadFinanceAttachment') {
+          const attachment = (next.finAttachments || []).find(row => row.bookId === request.bookId && row.fileId === request.fileId && row.active);
+          return { ok: true, data: { state: next, sync, attachment } };
+        }
         return { ok: true, data: { state: next, sync } };
+      }
+      if (request.action === 'getHubNotifications') {
+        const readMap = hubLoadReadMap_(book_(actor.config.privateId), actor.email);
+        return { ok: true, data: KPT.hubNotificationFeed(state, actor, readMap, new Date().toISOString()) };
+      }
+      if (request.action === 'markHubNotificationsRead') {
+        const entries = Array.isArray(request.notifications) ? request.notifications.slice(0, 200) : [];
+        const readMap = hubMarkRead_(book_(actor.config.privateId), actor.email, entries, state, actor);
+        return { ok: true, data: KPT.hubNotificationFeed(state, actor, readMap, new Date().toISOString()) };
+      }
+      if (request.action === 'downloadFinanceAttachment') {
+        const visible = KPT.projectForActor(state, actor);
+        const attachment = (visible.finAttachments || []).find(row => row.id === request.attachmentId && row.active);
+        if (!attachment) throw new Error('Access denied. Attachment is outside your reading scope.');
+        const file = DriveApp.getFileById(attachment.fileId);
+        return { ok: true, data: { fileName: file.getName() || attachment.fileName, mime: file.getMimeType() || attachment.mime, contentBase64: Utilities.base64Encode(file.getBlob().getBytes()) } };
       }
       if (request.action === 'docDownload') {
         requireDocuments_(actor);

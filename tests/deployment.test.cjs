@@ -7,6 +7,15 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const read = name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
 
+test('Telegram implementation is bundled into the private Admin script and never published to Pages', () => {
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: path.join(__dirname, '..') });
+  const bundled = read('build/apps-script/admin/Code.gs');
+  assert.ok(bundled.endsWith(read('apps-script/admin/Telegram.gs')));
+  assert.doesNotThrow(() => new vm.Script(bundled));
+  assert.equal(fs.existsSync(path.join(__dirname, '../dist/Telegram.gs')), false);
+  assert.doesNotMatch(read('dist/admin.html'), /TELEGRAM_BOT_TOKEN|TCCDTelegram/);
+});
+
 test('built admin page embeds literal scripts without unresolved placeholders', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: path.join(__dirname, '..') });
   const html = read('build/apps-script/admin/Admin.html');

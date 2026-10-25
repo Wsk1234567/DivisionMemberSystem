@@ -10,6 +10,7 @@
   let demoRole = 'owner';
   let docFolders = { templates: 'demo-templates', submissions: 'demo-submissions' };
   const demoFiles = new Map();
+  const hubReadMaps = new Map();
   const emails = {
     owner: 'preview-owner@example.test',
     admin: 'preview-secretary@example.test',
@@ -18,7 +19,7 @@
     os: 'preview-os@example.test',
     ot: 'preview-ot@example.test'
   };
-  const context = () => ({ actor: identity().email, now: new Date().toISOString(), uuid: () => 'demo-' + ++counter });
+  const context = actor => ({ actor: (actor || identity()).email, now: new Date().toISOString(), uuid: () => 'demo-' + ++counter });
   const identity = () => ({
     email: emails[demoRole] || emails.owner,
     owner: demoRole === 'owner',
@@ -28,7 +29,7 @@
     roles: demoRole === 'owner' ? ['owner', 'admin', 'treasurer', 'oc'] : [demoRole]
   });
   const copy = value => KPT.copy(value);
-  const requireDocuments = actor => { if (!(actor.owner || actor.admin || actor.oc || demoRole === 'os' || demoRole === 'ot')) throw new Error('Access denied. Documents access is required.'); };
+  const requireDocuments = actor => { if (!(actor.owner || actor.admin || actor.oc || actor.roles.includes('os') || actor.roles.includes('ot'))) throw new Error('Access denied. Documents access is required.'); };
   const requireApprover = actor => { if (!(actor.owner || actor.admin)) throw new Error('Access denied. Only Owner or Secretary can approve documents.'); };
   const requireFinanceApprover = actor => { if (!(actor.owner || actor.treasurer)) throw new Error('Access denied. Only Owner or Divisional Treasurer can approve finance.'); };
   const requireOwner = actor => { if (!actor.owner) throw new Error('Only the owner can perform this action.'); };
@@ -60,9 +61,8 @@
     if (!pkg) throw new Error('Document package not found.');
     return pkg;
   };
-  const requirePackageRole = (packageId, itemId, allowed) => {
+  const requirePackageRole = (packageId, itemId, allowed, actor) => {
     const pkg = resolveDocPackage(packageId, itemId);
-    const actor = identity();
     if (actor.owner || actor.admin) return pkg;
     const roles = packageRolesForEmail(pkg, actor.email);
     for (let i = 0; i < roles.length; i++) {
@@ -82,8 +82,7 @@
     }
     return { id: '', packageId: String(claimed || '') };
   };
-  const requireFinBookAccess = request => {
-    const actor = identity();
+  const requireFinBookAccess = (request, actor) => {
     const action = String(request.action || '');
     const book = resolveFinBook(request);
     const packageId = String(book.packageId || '');
@@ -119,6 +118,31 @@
     demoFiles.set(id, { fileName, contentBase64: String(base64 || 'demo'), mime: 'application/octet-stream' });
     return id;
   }
+  function mutateWithHub(request, actor) {
+    const ctx = context(actor);
+    const next = KPT.mutate(state, request, ctx);
+    KPT.appendHubEvents(state, next, request, actor, { owner: emails.owner, admins, treasurers }, ctx);
+    state = next;
+  }
+  function notificationFeed(actor) {
+    return KPT.hubNotificationFeed(state, actor, hubReadMaps.get(actor.email) || {}, new Date().toISOString());
+  }
+  function receiptContent(request) {
+    const fileName = String(request.fileName || '').trim();
+    const mime = String(request.mime || '').trim();
+    const expected = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' }[(fileName.split('.').pop() || '').toLowerCase()];
+    if (!expected || expected !== mime) throw new Error('Choose a JPG, PNG or PDF with a matching file type.');
+    const content = String(request.contentBase64 || '');
+    if (!content || content.length > Math.ceil(5 * 1024 * 1024 / 3) * 4 || content.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(content)) throw new Error('Attachment is empty, invalid or exceeds 5 MiB.');
+    const bytes = atob(content);
+    if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('Attachment is empty or exceeds 5 MiB.');
+    const signature = Array.from(bytes.slice(0, 8), char => char.charCodeAt(0));
+    const valid = mime === 'image/jpeg' ? signature[0] === 255 && signature[1] === 216 && signature[2] === 255
+      : mime === 'image/png' ? [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => signature[index] === value)
+        : bytes.startsWith('%PDF-');
+    if (!valid) throw new Error('File contents do not match its JPG, PNG or PDF type.');
+    return { fileName, mime, contentBase64: content, bytes: bytes.length };
+  }
   function backup(reason) { const item = { id: 'backup-' + ++counter, name: 'Preview backup · ' + reason + ' · r' + state.revision, at: new Date().toISOString(), state: copy(state) }; backups.unshift(item); return item; }
   function registerOcEmails(emails) {
     (emails || []).forEach(raw => {
@@ -144,18 +168,57 @@
     }
     return out;
   }
-  async function execute(request) {
+  async function execute(request, actor) {
       if (!state) { const response = await fetch('demo-private.json'); if (!response.ok) throw new Error('Preview data could not be loaded.'); state = KPT.upgradeState(await response.json()); }
       await new Promise(resolve => setTimeout(resolve, 30));
-      const actor = identity();
       if (request.action === 'bootstrap') {
         return { state: copy(state), user: actor, sync: { ok: true, revision: state.revision }, admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs), currentPhase, docFolders: copy(docFolders) };
       }
+      if (request.action === 'getHubNotifications') return notificationFeed(actor);
+      if (request.action === 'getTelegramStatus') return { configured: false, botUsername: 'tccdnotifybot', linked: false, enabled: false, telegramUser: null, pending: null, delivery: { pending: 0, failed: 0, lastError: '' }, workerInstalled: false };
+      if (['createTelegramBinding', 'confirmTelegramBinding', 'cancelTelegramBinding', 'setTelegramEnabled', 'unlinkTelegram'].includes(request.action)) throw new Error('Telegram linking is available in the deployed system. Local preview does not contact Telegram.');
+      if (request.action === 'markHubNotificationsRead') {
+        if (!Array.isArray(request.notifications) || request.notifications.length > 100) throw new Error('Choose at most 100 notifications to mark read.');
+        const visible = new Map(notificationFeed(actor).notifications.map(row => [row.id, row]));
+        const reads = Object.assign({}, hubReadMaps.get(actor.email) || {});
+        request.notifications.forEach(row => {
+          const event = row && visible.get(row.id);
+          const version = Number(row && row.entityVersion);
+          if (!event || !Number.isInteger(version) || version < 1 || version > event.entityVersion) return;
+          reads[event.id] = Math.max(Number(reads[event.id]) || 0, version);
+        });
+        hubReadMaps.set(actor.email, reads);
+        return notificationFeed(actor);
+      }
+      if (['uploadFinanceAttachment', 'removeFinanceAttachment', 'downloadFinanceAttachment'].includes(request.action)) {
+        if (request.fileId || request.url || request.bytes != null) throw new Error('Access denied. Attachment storage fields are managed by the server.');
+        const attachment = (state.finAttachments || []).find(row => row.id === request.attachmentId && row.active);
+        if (request.action === 'downloadFinanceAttachment') {
+          const visible = KPT.projectForActor(state, actor);
+          if (!attachment || !(visible.finAttachments || []).some(row => row.id === attachment.id)) throw new Error('Access denied. Attachment is outside your reading scope.');
+          const stored = demoFiles.get(attachment.fileId);
+          if (!stored) throw new Error('Attachment file is unavailable.');
+          return { fileName: stored.fileName, mime: stored.mime, contentBase64: stored.contentBase64 };
+        }
+        const bookId = request.action === 'uploadFinanceAttachment' ? request.bookId : attachment && attachment.bookId;
+        if (!bookId) throw new Error('Finance attachment not found.');
+        requireFinBookAccess({ action: 'saveFinanceBook', bookId }, actor);
+        if (request.action === 'uploadFinanceAttachment') {
+          const file = receiptContent(request);
+          const fileId = 'demo-file-' + ++counter;
+          mutateWithHub(Object.assign({}, request, { fileId, bytes: file.bytes }), actor);
+          demoFiles.set(fileId, file);
+          const saved = state.finAttachments.find(row => row.fileId === fileId);
+          return { state: copy(state), sync: { ok: true, revision: state.revision }, attachment: copy(saved) };
+        }
+        mutateWithHub(Object.assign({}, request, { bookId }), actor);
+        return { state: copy(state), sync: { ok: true, revision: state.revision } };
+      }
       if (['save', 'attendance', 'saveFinanceBook'].includes(request.action)) {
         if (request.action === 'saveFinanceBook') {
-          requireFinBookAccess(request);
+          requireFinBookAccess(request, actor);
         } else if (!actor.admin) throw new Error('Access denied. Administrator access is required.');
-        state = KPT.mutate(state, request, context());
+        mutateWithHub(request, actor);
         return { state: copy(state), sync: { ok: true, revision: state.revision } };
       }
       const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload', 'docItemReview', 'setDocItemTaskStatus'];
@@ -163,8 +226,8 @@
       if (financeFlowActions.includes(request.action)) {
         if (request.action === 'reviewFinBook') requireFinanceApprover(actor);
         if (request.action === 'reopenFinBook' && !(actor.owner || actor.admin)) throw new Error('Access denied. Owner or Secretary can reopen.');
-        requireFinBookAccess(request);
-        state = KPT.mutate(state, request, context());
+        requireFinBookAccess(request, actor);
+        mutateWithHub(request, actor);
         return { state: copy(state), sync: { ok: true, revision: state.revision } };
       }
       if (documentActions.includes(request.action)) {
@@ -181,10 +244,10 @@
             throw new Error('Access denied. You are not assigned to this activity package.');
           }
           if (['docItemCheck', 'docItemForward'].includes(request.action)) {
-            requirePackageRole(request.packageId, request.itemId, ['oc']);
+            requirePackageRole(request.packageId, request.itemId, ['oc'], actor);
           }
           if (['docItemUpload', 'docItemSubmit'].includes(request.action) && !(actor.owner || actor.admin)) {
-            requirePackageRole(request.packageId, request.itemId, ['os', 'oc']);
+            requirePackageRole(request.packageId, request.itemId, ['os', 'oc'], actor);
           }
           if (request.action === 'saveDocItemsMeta' && !(actor.owner || actor.admin)) {
             request.canEditStructure = false;
@@ -227,7 +290,7 @@
           request = Object.assign({}, request, { row: Object.assign({}, request.row, { fileId: storeFile(request.row.fileName, request.fileBase64) }) });
         }
         if (request.action === 'createDocPackage' && !request.revision) request = Object.assign({}, request, { revision: state.revision });
-        state = KPT.mutate(state, request, context());
+        mutateWithHub(request, actor);
         if (request.action === 'createDocPackage') {
           const created = state.DocPackages[state.DocPackages.length - 1];
           return { state: copy(state), sync: { ok: true, revision: state.revision }, packageId: created.id };
@@ -255,7 +318,7 @@
       }
       if (request.action === 'previewImport' || request.action === 'commitImport') {
         if (request.revision !== state.revision) throw new Error('Conflict: reload current data before importing.');
-        const preview = KPT.importRows(state, request.workbook, context());
+        const preview = KPT.importRows(state, request.workbook, context(actor));
         if (request.action === 'previewImport') return { changes: preview.changes, errors: preview.errors, revision: preview.revision };
         if (preview.errors.length) throw new Error('Import has validation errors.');
         if (preview.changes.length) { backup('Before import'); state = preview.state; }
@@ -264,7 +327,7 @@
       if (request.action === 'previewSetupDefaults') return KPT.setupPreview(state);
       if (request.action === 'applySetupDefaults') {
         backup('Before recommended setup');
-        state = KPT.applyRecommendedSetup(state, Object.assign(context(), { revision: request.revision }));
+        state = KPT.applyRecommendedSetup(state, Object.assign(context(actor), { revision: request.revision }));
         return { state: copy(state), sync: { ok: true, revision: state.revision } };
       }
       if (request.action === 'retrySync') {
@@ -320,8 +383,9 @@
       return identity();
     },
     async call(request) {
-      const response = await execute(request);
-      return projectResponse(response, identity(), request);
+      const actor = identity();
+      const response = await execute(request, actor);
+      return projectResponse(response, actor, request);
     }
   };
 })();

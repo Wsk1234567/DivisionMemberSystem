@@ -58,12 +58,14 @@
     return state.DocPackages.filter(pkg => {
       if (pkg.archived || pkg.status === 'Archived') return false;
       if (user.owner || user.admin) return true;
+      if (user.treasurer && state.FinBooks.some(book => book.packageId === pkg.id)) return true;
       return packageRoleMatch(pkg, email);
     }).sort((a, b) => b.year - a.year || String(a.activityType).localeCompare(String(b.activityType)));
   };
   const canOpenPackage = pkg => {
     if (!pkg || !user) return false;
     if (user.owner || user.admin) return true;
+    if (user.treasurer && state.FinBooks.some(book => book.packageId === pkg.id)) return true;
     return packageRoleMatch(pkg, user.email);
   };
   const titles = {};
@@ -125,7 +127,359 @@
   let busy = false;
   let financeDraft = null;
   let financeReceiptFiles = [];
-  byId('navigation').innerHTML = '';
+  // Hub (studio / hall / notifications) — package-role workspace
+  let hubTab = 'studio';
+  let hubSelectedId = null;
+  let hubNotifications = { notifications: [], unreadCount: 0, activityUnread: {}, studioUnread: {} };
+  let hubNotifyLoading = false;
+  let hubNotifyTimer = null;
+  let hubDirty = false;
+  let hubReceiptBusy = false;
+  let telegramBinding = null;
+  function renderTelegramSettings(status) {
+    const preview = !!window.KPTTransport.demo;
+    const who = value => escape((value.displayName || '') + (value.username ? ' @' + value.username : '') + ' · ID ' + value.id);
+    let html = '<p>' + escape(langLabel('Private reminders for your current activity roles. Approvals stay in this system.', '按你当前的活动岗位接收私人提醒，审批仍在本系统完成。')) + '</p>';
+    html += '<p class="hint">' + escape(langLabel('Formal submissions, returns and approval updates only. Draft saves continue to use in-app notifications.', 'Telegram 提醒正式提交、退回和审批变化；草稿保存继续使用站内通知。')) + '</p>';
+    if (preview) html += '<p class="message warning">' + escape(langLabel('Local preview does not contact Telegram.', '本地预览不会连接 Telegram。')) + '</p>';
+    if (!status.configured) html += '<p class="message warning">' + escape(langLabel('Telegram notifications have not been configured by the administrator.', '管理员尚未配置 Telegram 通知。')) + '</p>';
+    if (!status.workerInstalled) html += '<p class="hint">' + escape(langLabel('Background processing is not enabled yet. Ask the Owner to enable it before linking.', '后台处理尚未启用，请先让 Owner 启用后再绑定。')) + '</p>';
+    if (status.linked && status.telegramUser) {
+      html += '<section class="card"><h3>' + escape(langLabel('Linked Telegram account', '已绑定的 Telegram 账号')) + '</h3><p>' + who(status.telegramUser) + '</p><p>' + escape(status.enabled ? langLabel('Notifications on', '通知已开启') : langLabel('Notifications paused', '通知已暂停')) + '</p><div class="toolbar">'
+        + button(status.enabled ? langLabel('Pause notifications', '暂停通知') : langLabel('Enable notifications', '开启通知'), 'telegramEnable', status.enabled ? 'false' : 'true')
+        + button(langLabel('Unlink account', '解除绑定'), 'telegramUnlink') + '</div></section>';
+    }
+    if (status.pending) {
+      html += '<section class="card"><h3>' + escape(langLabel('Confirm this Telegram identity', '确认这个 Telegram 身份')) + '</h3><p>' + escape((status.pending.displayName || '') + (status.pending.username ? ' @' + status.pending.username : '') + ' · ID ' + status.pending.userId) + '</p><p>' + escape(langLabel('Confirm only if this is your own account. Starting the bot alone does not link it.', '请确认这是你本人的账号。只在 Bot 点击 Start 不会完成绑定。')) + '</p><div class="toolbar">'
+        + button(langLabel('Confirm account', '确认绑定'), 'telegramConfirm', status.pending.id) + button(langLabel('Reject request', '拒绝请求'), 'telegramCancel') + '</div></section>';
+    }
+    if (telegramBinding && Date.parse(telegramBinding.expiresAt) <= Date.now()) telegramBinding = null;
+    if (telegramBinding && !status.pending) {
+      const url = new URL(telegramBinding.url);
+      if (url.origin !== 'https://t.me' || url.pathname !== '/' + status.botUsername || !/^[A-Za-z0-9_-]{1,64}$/.test(url.searchParams.get('start') || '')) throw new Error('Invalid Telegram binding link.');
+      html += '<section class="card"><h3>' + escape(langLabel('Open the bot, then return here', '打开 Bot 后返回这里')) + '</h3><p>' + escape(langLabel('Press Start in Telegram. Wait for background sync, then refresh below and confirm your identity.', '在 Telegram 点击 Start，等待后台同步后，在下方刷新并确认身份。')) + '</p><a class="button primary" href="' + escape(url.href) + '" target="_blank" rel="noopener noreferrer">' + escape(langLabel('Open @' + status.botUsername, '打开 @' + status.botUsername)) + '</a></section>';
+    }
+    const delivery = status.delivery || {};
+    html += '<p class="hint">' + escape(langLabel('Pending delivery: ', '待发送：')) + Number(delivery.pending || 0) + ' · ' + escape(langLabel('Failed: ', '失败：')) + Number(delivery.failed || 0) + '</p>';
+    if (delivery.lastError) html += '<p class="message warning">' + escape(delivery.lastError) + '</p>';
+    html += '<div class="toolbar">' + (status.configured ? button(status.linked ? langLabel('Link a different account', '更换绑定账号') : langLabel('Link Telegram', '绑定 Telegram'), 'telegramCreate') : '')
+      + button(langLabel('Refresh status', '刷新状态'), 'telegramRefresh') + (telegramBinding && !status.pending ? button(langLabel('Cancel link request', '取消绑定请求'), 'telegramCancel') : '') + '</div>';
+    byId('editor-title').textContent = langLabel('Telegram private notifications', 'Telegram 私人通知');
+    byId('editor-message').textContent = '';
+    byId('editor-body').innerHTML = html;
+    if (!byId('editor').open) byId('editor').showModal();
+  }
+  const hubRoles = () => {
+    if (!user) return [];
+    // Concurrent roles are a union — never collapse OS/OT/OC into one.
+    const roles = [];
+    const add = role => { if (role && roles.indexOf(role) < 0) roles.push(role); };
+    if (user.owner) {
+      ['owner', 'admin', 'treasurer', 'oc', 'os', 'ot'].forEach(add);
+    } else {
+      if (user.admin) add('admin');
+      if (user.treasurer) add('treasurer');
+      const selected = (state && state.DocPackages || []).find(pkg => pkg.id === (hubSelectedId || openDocPackageId)) || (ocPackages().length === 1 ? ocPackages()[0] : null);
+      const set = packageRolesFor(selected, user.email);
+      set.forEach(add);
+    }
+    return roles;
+  };
+  const hubHas = role => hubRoles().indexOf(role) >= 0;
+  const hubPackage = () => {
+    if (!state || !state.DocPackages) return null;
+    if (hubSelectedId) return state.DocPackages.find(row => row.id === hubSelectedId && !row.archived) || null;
+    const mine = ocPackages();
+    // Auto-open only when there is exactly one activity; multi-activity must pick.
+    if (mine.length === 1) {
+      hubSelectedId = mine[0].id;
+      openDocPackageId = mine[0].id;
+      return mine[0];
+    }
+    return null;
+  };
+  const hubPackages = () => ocPackages();
+  const hubFinAttachments = bookId => bookId ? ((state && state.finAttachments) || []).filter(row => row.active && row.bookId === bookId) : [];
+  function loadFinanceDraft(book) {
+    financeDraft = Object.assign({}, book, {
+      incomes: state.FinIncomes.filter(row => row.bookId === book.id).map(KPT.copy),
+      expenses: state.FinExpenses.filter(row => row.bookId === book.id).map(KPT.copy),
+      reimbursements: state.FinReimbursements.filter(row => row.bookId === book.id).map(row => Object.assign(KPT.copy(row), { lines: state.FinReimburseLines.filter(line => line.reimbursementId === row.id).map(KPT.copy) }))
+    });
+  }
+  function hubConfirmLeave() {
+    if (!hubDirty) return true;
+    if (!confirm(t('hub.unsavedTitle') + '\n' + t('hub.unsavedBody'))) return false;
+    financeDraft = null;
+    hubDirty = false;
+    return true;
+  }
+  async function hubMarkEntityRead(entityId, version) {
+    const entries = (hubNotifications.notifications || []).filter(row => row.unread && row.entityId === entityId && row.entityVersion <= version).map(row => ({ id: row.id, entityVersion: row.entityVersion }));
+    if (!entries.length) return;
+    const result = await window.KPTTransport.call({ action: 'markHubNotificationsRead', notifications: entries });
+    hubNotifications = result;
+    hubRefreshBadges();
+  }
+  const hubStageOf = status => {
+    if (status === 'Approved') return 'done';
+    if (status === 'Submitted') return 'review';
+    if (status === 'OCChecked') return 'checked';
+    if (status === 'AwaitingOC') return 'withOc';
+    return 'draft';
+  };
+  const hubCounters = () => {
+    const pkg = hubPackage();
+    if (!pkg || !state) return { pendingSubmit: 0, pendingCheck: 0, pendingReview: 0 };
+    const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived);
+    const book = (state.FinBooks || []).find(row => row.packageId === pkg.id && !row.archived);
+    let pendingSubmit = items.filter(row => row.status === 'Draft' || row.status === 'Rejected').length;
+    let pendingCheck = items.filter(row => row.status === 'AwaitingOC').length;
+    let pendingReview = items.filter(row => row.status === 'Submitted' || row.status === 'OCChecked').length;
+    if (book) {
+      if (book.status === 'Draft' || book.status === 'Rejected') pendingSubmit += 1;
+      if (book.status === 'AwaitingOC') pendingCheck += 1;
+      if (book.status === 'OCChecked' || book.status === 'Submitted') pendingReview += 1;
+    }
+    return { pendingSubmit, pendingCheck, pendingReview };
+  };
+  function hubRoleChip() {
+    const roles = user && user.owner ? ['owner'] : hubRoles();
+    return roles.map(role => '<span class="hub-role-chip ' + escape(role) + '"><span class="hub-dot none" aria-hidden="true"></span>' + escape(t('hub.role.' + role)) + '</span>').join(' ');
+  }
+  function hubTabsBar() {
+    const counts = hubCounters();
+    const unread = hubNotifications.unreadCount || 0;
+    return '<div class="hub-tabs" role="navigation" aria-label="' + escape(t('hub.studio')) + '">'
+      + '<button type="button" class="button' + (hubTab === 'studio' ? ' primary' : '') + '" data-action="hubTab" data-id="studio" aria-current="' + (hubTab === 'studio' ? 'page' : 'false') + '">' + escape(t('hub.studio')) + '</button>'
+      + '<button type="button" class="button' + (hubTab === 'hall' ? ' primary' : '') + '" data-action="hubTab" data-id="hall" aria-current="' + (hubTab === 'hall' ? 'page' : 'false') + '">' + escape(t('hub.hall')) + (counts.pendingSubmit || counts.pendingCheck || counts.pendingReview ? ' <span class="hub-badge quiet">' + (counts.pendingSubmit + counts.pendingCheck + counts.pendingReview) + '</span>' : '') + '</button>'
+      + '<button type="button" class="button' + (hubTab === 'notifications' ? ' primary' : '') + '" data-action="hubTab" data-id="notifications" aria-current="' + (hubTab === 'notifications' ? 'page' : 'false') + '">' + escape(t('hub.notifications')) + (unread ? ' <span class="hub-badge">' + unread + '</span>' : '') + '</button>'
+      + button(window.KPTI18n && window.KPTI18n.getLang() === 'zh' ? 'English' : '中文', 'toggleLang')
+      + button('Telegram', 'telegramSettings')
+      + '</div>';
+  }
+  function hubActivityPicker() {
+    const packages = hubPackages();
+    if (!packages.length) return '<section class="card"><h2>' + escape(t('hub.pickActivity')) + '</h2><p class="muted">' + escape(t('hub.pickActivityHint')) + '</p></section>';
+    if (packages.length === 1 && !hubSelectedId) {
+      hubSelectedId = packages[0].id;
+      openDocPackageId = packages[0].id;
+    }
+    return '<section class="card"><div class="section-heading" style="margin-top:0"><h2>' + escape(t('hub.pickActivity')) + '</h2></div><div class="hub-card-grid">'
+      + packages.map(pkg => {
+        const progress = docProgress(pkg);
+        const roles = user && user.owner ? ['admin'] : packageRolesFor(pkg, user && user.email);
+        const role = roles[0] || 'oc';
+        return '<article class="hub-task-card"><h3>' + escape(pkg.activityType + ' ' + pkg.year) + '</h3><p class="meta">' + escape(t('hub.identity')) + ' · ' + escape(t('hub.role.' + role)) + '</p>'
+          + '<div class="hub-progress" aria-hidden="true"><span style="width:' + (progress.total ? Math.round(progress.approved / progress.total * 100) : 0) + '%"></span></div>'
+          + '<p class="meta">' + progress.approved + ' / ' + progress.total + ' ' + escape(t('docs.requiredApproved')) + '</p>'
+          + '<button type="button" class="button primary" data-action="hubPick" data-id="' + escape(pkg.id) + '">' + escape(t('docs.open')) + '</button></article>';
+      }).join('') + '</div></section>';
+  }
+  function hubStudioBody(pkg) {
+    const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived).sort((a, b) => a.sortOrder - b.sortOrder);
+    const book = (state.FinBooks || []).find(row => row.packageId === pkg.id && !row.archived) || null;
+    // Capability is a union of real roles. Admin is not auto finance editor/approver.
+    const canOs = hubHas('os') || hubHas('owner') || hubHas('admin');
+    const canOt = hubHas('ot') || hubHas('owner');
+    const canOc = hubHas('oc') || hubHas('owner') || hubHas('admin');
+    const canFinEdit = hubHas('ot') || hubHas('owner') || hubHas('treasurer');
+    let body = '<section class="card"><div class="eyebrow">' + escape(t('hub.doWork')) + '</div><h2 style="margin-top:0">' + escape(t('hub.identity')) + ' · ' + hubRoleChip() + '</h2><p class="muted">' + escape(t('hub.doWorkHint')) + '</p></section>';
+    if (canOs || canOc) {
+      const rows = items.filter(row => (canOs && ['Pending', 'Draft', 'Rejected'].indexOf(row.status) >= 0) || (canOc && ['Pending', 'Draft', 'Rejected', 'AwaitingOC'].includes(row.status)));
+      body += '<section class="card"><h2>' + escape(t('docs.checklist')) + '</h2>' + table(['#', t('docs.document'), t('docs.due'), t('docs.statusCol'), t('docs.actions')], rows.map(item => {
+        const tools = [];
+        if (item.fileId) tools.push(button(t('docs.download'), 'docDownload', item.id));
+        if (item.templateId) tools.push(button(t('docs.template'), 'docDownloadTemplate', item.id));
+        if (canOs && ['Pending', 'Draft', 'Rejected'].indexOf(item.status) >= 0) {
+          tools.push('<label class="button small" for="hub-up-' + escape(item.id) + '">' + escape(t('docs.upload')) + '<input id="hub-up-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
+        }
+        // Check / return live in Studio; formal submit/forward stay in Hall.
+        if (canOc && item.status === 'AwaitingOC') {
+          tools.push('<button type="button" class="button small btn-check" data-action="docCheck" data-id="' + escape(item.id) + '" data-table="pass">' + escape(t('hub.checkPass')) + '</button>');
+          tools.push('<button type="button" class="button small btn-return" data-action="docCheck" data-id="' + escape(item.id) + '">' + escape(t('hub.return')) + '</button>');
+        }
+        return [String(item.sortOrder), '<span data-hub-entity="' + escape(item.id) + '">' + escape(item.title) + '</span>', escape(docDueBadge(pkg, item)), pill(workflowStatusLabel(item.status)), '<div class="row-tools">' + tools.join(' ') + '</div>'];
+      })) + '</section>';
+    }
+    if (canOt || canFinEdit) {
+      if (book && (!financeDraft || financeDraft.packageId !== pkg.id)) loadFinanceDraft(book);
+      body += financeDraft && financeDraft.packageId === pkg.id ? financeEditor() : '<section class="card"><h2>' + escape(t('hub.noFinanceBook')) + '</h2><button class="button primary" type="button" data-action="financeAddBook">' + escape(t('hub.createFinanceBook')) + '</button></section>';
+    } else if (canOc && book) {
+      body += financeDraft && financeDraft.id === book.id ? financeEditor() : '<section class="card"><h2>' + escape(t('hub.openFinance')) + '</h2><p class="muted">' + escape(workflowStatusLabel(book.status || 'Draft')) + '</p>'
+        + '<div class="toolbar">' + button(t('hub.openFinance'), 'financeOpenBook', book.id) + '</div></section>';
+    }
+    if (canOc && book && book.status === 'AwaitingOC') {
+      body += '<section class="card"><div class="eyebrow">' + escape(t('hub.role.oc')) + '</div><h2>' + escape(t('hub.checkPass')) + '</h2>'
+        + '<div class="toolbar"><button type="button" class="button btn-check" data-action="finCheck" data-id="' + escape(book.id) + '" data-table="pass">' + escape(t('hub.checkPass')) + '</button>'
+        + '<button type="button" class="button btn-return" data-action="finCheck" data-id="' + escape(book.id) + '">' + escape(t('hub.return')) + '</button></div></section>';
+    }
+    const counts = hubCounters();
+    body += '<section class="card"><h2>' + escape(t('hub.progress')) + '</h2>'
+      + '<div class="hub-count-row"><span class="hub-count">' + escape(t('hub.count.pendingSubmit')) + ' <strong>' + counts.pendingSubmit + '</strong></span>'
+      + '<span class="hub-count">' + escape(t('hub.count.pendingCheck')) + ' <strong>' + counts.pendingCheck + '</strong></span>'
+      + '<span class="hub-count">' + escape(t('hub.count.pendingReview')) + ' <strong>' + counts.pendingReview + '</strong></span></div>'
+      + '<button type="button" class="button" data-action="hubTab" data-id="hall">' + escape(t('hub.hall')) + '</button></section>';
+    return body;
+  }
+  function hubHallBody(pkg) {
+    const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived).sort((a, b) => a.sortOrder - b.sortOrder);
+    const book = (state.FinBooks || []).find(row => row.packageId === pkg.id && !row.archived) || null;
+    const canOs = hubHas('os') || hubHas('owner') || hubHas('admin');
+    const canOt = hubHas('ot') || hubHas('owner') || hubHas('treasurer');
+    const canOc = hubHas('oc') || hubHas('owner') || hubHas('admin');
+    const canFinalDoc = hubHas('owner') || hubHas('admin');
+    const canFinalFin = hubHas('owner') || hubHas('treasurer');
+    const counts = hubCounters();
+    let body = '<section class="card"><div class="eyebrow">' + escape(t('hub.handoff')) + '</div><h2 style="margin-top:0">' + escape(t('hub.tasks')) + ' · ' + escape(pkg.activityType + ' ' + pkg.year) + '</h2>'
+      + '<div class="hub-count-row"><span class="hub-count">' + escape(t('hub.count.pendingSubmit')) + ' <strong>' + counts.pendingSubmit + '</strong></span>'
+      + '<span class="hub-count">' + escape(t('hub.count.pendingCheck')) + ' <strong>' + counts.pendingCheck + '</strong></span>'
+      + '<span class="hub-count">' + escape(t('hub.count.pendingReview')) + ' <strong>' + counts.pendingReview + '</strong></span></div>'
+      + '<p class="muted">' + escape(t('hub.handoffHint')) + '</p></section>';
+    const docRows = items.map(item => {
+      const tools = [];
+      if (item.fileId) tools.push(button(t('docs.download'), 'docDownload', item.id));
+      if (canOs && (item.status === 'Draft' || item.status === 'Rejected')) tools.push('<button type="button" class="button small btn-submit" data-action="docSubmit" data-id="' + escape(item.id) + '">' + escape(t('hub.submitToOc')) + '</button>');
+      if (canOc && item.status === 'AwaitingOC') tools.push('<button type="button" class="button small" data-action="hubTab" data-id="studio">' + escape(t('hub.doWork')) + ' · ' + escape(t('hub.checkPass')) + '</button>');
+      if (canOc && item.status === 'OCChecked') tools.push('<button type="button" class="button small btn-submit" data-action="docForward" data-id="' + escape(item.id) + '">' + escape(t('hub.forward')) + '</button>');
+      if (canFinalDoc && item.status === 'Submitted') {
+        tools.push(button(t('docs.approve'), 'docApprove', item.id));
+        tools.push(button(t('docs.reject'), 'docReject', item.id));
+      }
+      return [String(item.sortOrder), '<span data-hub-entity="' + escape(item.id) + '">' + escape(item.title) + '</span>', escape(t('hub.stage.' + hubStageOf(item.status))), pill(workflowStatusLabel(item.status)), '<div class="row-tools">' + tools.join(' ') + '</div>'];
+    });
+    body += '<section class="card"><h2>' + escape(t('docs.checklist')) + '</h2>' + table(['#', t('docs.document'), t('hub.stage'), t('docs.statusCol'), t('docs.actions')], docRows) + '</section>';
+    if (book) {
+      const st = book.status || 'Draft';
+      const tools = [];
+      if (canOt && (st === 'Draft' || st === 'Rejected')) tools.push('<button type="button" class="button small btn-submit" data-action="finSubmit" data-id="' + escape(book.id) + '">' + escape(t('hub.submitToOc')) + '</button>');
+      if (canOc && st === 'AwaitingOC') tools.push('<button type="button" class="button small" data-action="hubTab" data-id="studio">' + escape(t('hub.doWork')) + ' · ' + escape(t('hub.checkPass')) + '</button>');
+      if (canOc && st === 'OCChecked') tools.push('<button type="button" class="button small btn-submit" data-action="finForward" data-id="' + escape(book.id) + '">' + escape(t('hub.forward')) + '</button>');
+      if (canFinalFin && st === 'Submitted') {
+        tools.push(button('Approve', 'finApprove', book.id));
+        tools.push(button('Reject', 'finReject', book.id));
+      }
+      body += '<section class="card"><h2>' + escape(t('hub.openFinance')) + '</h2><p>' + escape(workflowStatusLabel(st)) + '</p><div class="toolbar">'
+        + button(t('hub.openFinance'), 'financeOpenBook', book.id) + tools.join(' ') + '</div></section>';
+    }
+    return body;
+  }
+  function hubNotificationsBody() {
+    const list = hubNotifications.notifications || [];
+    return '<section class="card"><div class="section-heading" style="margin-top:0"><h2>' + escape(t('hub.notifications')) + '</h2><div class="toolbar">'
+      + (list.length ? '<button type="button" class="button" data-action="hubMarkRead">' + escape(t('hub.markAllRead')) + '</button>' : '')
+      + '</div></div>'
+      + (list.length ? '<div class="hub-notif-list">' + list.slice(0, 100).map(row => {
+        const kind = t('hub.kind.' + row.kind) || row.kind;
+        return '<article class="hub-notif' + (row.unread ? ' unread' : '') + '">'
+          + (row.unread ? '<span class="hub-dot" aria-label="' + escape(t('hub.unread')) + '"></span>' : '<span class="hub-dot none"></span>')
+          + '<div><strong>' + escape(kind) + '</strong><div class="when">' + escape(row.entityTitle || '') + ' · ' + escape(t('hub.dest.' + row.destination) || row.destination) + '</div></div>'
+          + '<button type="button" class="button small" data-action="hubOpenNotif" data-id="' + escape(row.id) + '" data-package="' + escape(row.packageId || '') + '" data-entity="' + escape(row.entityId || '') + '">' + escape(t('hub.openItem')) + '</button>'
+          + '</article>';
+      }).join('') + '</div>' : '<p class="muted">' + escape(t('hub.notificationsEmpty')) + '</p>')
+      + '<p class="hint">' + escape(t('hub.reducedMotionNote')) + '</p></section>';
+  }
+  function hubView() {
+    if (hubTab === 'notifications') return hubTabsBar() + hubNotificationsBody();
+    const packages = hubPackages();
+    const pkg = hubPackage();
+    if (!packages.length) return hubTabsBar() + hubActivityPicker();
+    if (!pkg) return hubTabsBar() + hubActivityPicker();
+    const body = hubTab === 'hall' ? hubHallBody(pkg) : hubTab === 'notifications' ? hubNotificationsBody() : hubStudioBody(pkg);
+    return hubTabsBar()
+      + '<p class="muted">' + escape(pkg.activityType + ' ' + pkg.year) + ' · ' + hubRoleChip() + ' · <button type="button" class="button small" data-action="hubPick" data-id="">' + escape(t('hub.pickActivity')) + '</button></p>'
+      + activityAboutCard(pkg) + body;
+  }
+  function hubRefreshBadges() {
+    // Partial badge update only — never re-render the page (would clobber dirty inputs).
+    const unread = hubNotifications.unreadCount || 0;
+    const studioUnread = hubNotifications.studioUnread || {};
+    const activityUnread = hubNotifications.activityUnread || {};
+    let activityTotal = 0;
+    Object.keys(activityUnread).forEach(k => { activityTotal += Number(activityUnread[k] || 0); });
+    const studioTotal = Object.keys(studioUnread).reduce((sum, k) => sum + Number(studioUnread[k] || 0), 0);
+    document.querySelectorAll('[data-action="hubTab"]').forEach(btn => {
+      const id = btn.dataset.id;
+      let badge = btn.querySelector('.hub-badge:not(.quiet)');
+      const count = id === 'notifications' ? unread : id === 'studio' ? studioTotal : activityTotal;
+      if (!count) {
+        if (badge) badge.remove();
+        return;
+      }
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'hub-badge';
+        btn.appendChild(badge);
+      }
+      badge.textContent = String(count);
+    });
+  }
+  async function hubLoadNotifications(silent) {
+    if (hubNotifyLoading) return;
+    if (!window.KPTTransport || !window.KPTTransport.call) return;
+    hubNotifyLoading = true;
+    const email = user && user.email;
+    try {
+      const result = await window.KPTTransport.call({ action: 'getHubNotifications' });
+      const next = {
+        notifications: (result && result.notifications) || [],
+        unreadCount: (result && result.unreadCount) || 0,
+        activityUnread: (result && result.activityUnread) || {},
+        studioUnread: (result && result.studioUnread) || {}
+      };
+      if (!user || user.email !== email) return;
+      // Independent cache — never replace application state.
+      hubNotifications = next;
+      hubRefreshBadges();
+      const linkedEntityId = new URLSearchParams(location.search).get('entity');
+      const linkedEntity = (state.DocItems || []).find(row => row.id === linkedEntityId) || (state.FinBooks || []).find(row => row.id === linkedEntityId);
+      const visibleDocument = [...document.querySelectorAll('[data-hub-entity]')].some(element => element.dataset.hubEntity === linkedEntityId);
+      const visibleBook = financeDraft && financeDraft.id === linkedEntityId && byId('finance-activity-name');
+      if (linkedEntity && (visibleDocument || visibleBook)) await hubMarkEntityRead(linkedEntityId, linkedEntity.version);
+      if (!silent && hubTab === 'notifications' && !hubDirty) render();
+    } catch (error) {
+      if (!silent) notice(error.message, true);
+    } finally {
+      hubNotifyLoading = false;
+    }
+  }
+  function hubStartPolling() {
+    if (hubNotifyTimer) return;
+    hubNotifyTimer = setInterval(() => {
+      if (document.hidden) return;
+      hubLoadNotifications(true);
+    }, 30000);
+    hubLoadNotifications(true);
+  }
+  function hubStopPolling() {
+    if (hubNotifyTimer) clearInterval(hubNotifyTimer);
+    hubNotifyTimer = null;
+  }
+  function hubFinanceAttachmentsBlock() {
+    const bookId = financeDraft && financeDraft.id;
+    const list = hubFinAttachments(bookId);
+    const savedBook = bookId ? ((state && state.FinBooks) || []).find(b => b.id === bookId) : null;
+    const status = savedBook ? (savedBook.status || 'Draft') : 'Draft';
+    const locked = ['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].indexOf(status) >= 0;
+    const pkg = savedBook && savedBook.packageId ? (state.DocPackages || []).find(p => p.id === savedBook.packageId) : null;
+    const roles = pkg ? packageRolesFor(pkg, user && user.email) : [];
+    // OC may view drafts read-only; only Owner / Treasurer / this activity's OT can edit attachments.
+    const canEditAttach = !locked && !!bookId && !!(user.owner || user.treasurer || roles.indexOf('ot') >= 0);
+    return '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(t('hub.receipts')) + '</div><h2 style="margin:0">' + escape(t('hub.receipts')) + '</h2></div>'
+      + (canEditAttach ? '<label class="button" for="hub-receipt-file">' + escape(t('hub.uploadReceipt')) + '<input id="hub-receipt-file" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple hidden></label>' : '')
+      + '</div><p class="hint">' + escape(t('hub.receiptsHint')) + ' ' + escape(t('hub.exportOptional')) + '</p>'
+      + '<div class="hub-finance-attach">'
+      + (list.length ? list.map(row => {
+        const isImage = /^image\//.test(row.mime || '') || /\.(jpg|jpeg|png)$/i.test(row.fileName || '');
+        return '<div class="row"><div class="name">' + (isImage ? '<img hidden alt="' + escape(row.fileName) + '" data-attach-preview="' + escape(row.id) + '">' : '') + '<div>' + escape(row.fileName) + ' · ' + Number(row.bytes || 0) + ' ' + escape(t('hub.bytes')) + '</div></div>'
+          + '<div class="row-tools">'
+          + '<button type="button" class="button small btn-download" data-action="hubDownloadAttach" data-id="' + escape(row.id) + '">' + escape(t('hub.downloadReceipt')) + '</button>'
+          + (isImage ? button(langLabel('Preview', '预览'), 'hubPreviewAttach', row.id) : '')
+          + (canEditAttach ? '<button type="button" class="button small btn-return" data-action="hubRemoveAttach" data-id="' + escape(row.id) + '">' + escape(t('hub.removeReceipt')) + '</button>' : '')
+          + '</div></div>';
+      }).join('') : '<p class="muted">' + escape(t('hub.notificationsEmpty')) + '</p>')
+      + '</div></section>';
+  }
   byId('year').value = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).slice(0, 4)) || new Date().getFullYear();
   function preferredMode() {
     if (!user) return 'admin';
@@ -185,6 +539,7 @@
       }
     }
     const lang = (window.KPTI18n && window.KPTI18n.getLang()) || 'en';
+    html += '<button type="button" data-action="telegramSettings">' + icon + 'Telegram</button>';
     html += '<button type="button" data-action="toggleLang" style="margin-top:auto">' + icon + (lang === 'zh' ? 'EN' : '中') + '</button>';
     byId('navigation').innerHTML = html;
     document.querySelectorAll('[data-package]').forEach(element => {
@@ -335,7 +690,7 @@
     const savedBook = book.id ? (state && state.FinBooks || []).find(row => row.id === book.id) : null;
     const liveStatus = savedBook ? (savedBook.status || 'Draft') : 'Draft';
     const locked = ['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].indexOf(liveStatus) >= 0;
-    const canEdit = !locked && !!(user.owner || user.treasurer || activePackageRoles().indexOf('ot') >= 0) && (() => {
+    const canEdit = !locked && (() => {
       if (!book.id && !book.packageId) return !!(user.owner || user.treasurer);
       if (!book.packageId) return !!(user.owner || user.treasurer);
       const pkg = (state && state.DocPackages || []).find(p => p.id === book.packageId);
@@ -344,10 +699,10 @@
       return roles.indexOf('ot') >= 0 || !!user.owner || !!user.treasurer;
     })();
     const canReview = !!(user.owner || user.treasurer);
-    const readOnly = locked ? ' readonly' : '';
+    const readOnly = locked || !canEdit ? ' readonly' : '';
     const disableAdd = locked || !canEdit ? ' disabled' : '';
     const reviewBar = canReview && liveStatus === 'Submitted' ? '<div class="toolbar">' + button('Approve', 'finApprove', book.id) + button('Reject', 'finReject', book.id) + '</div>' : '';
-    const how = '<section class="card how-card"><h2>How to do this</h2><ol><li>Type the activity name, then save.</li><li>Fill Income &amp; Expenses — one row per receipt or payment.</li><li>Create a reimbursement form in your name as Organizing Treasurer; add invoice lines (max 11 per form).</li><li>Photograph slips and download the receipt PDF.</li></ol></section>';
+    const how = '<section class="card how-card"><h2>' + escape(langLabel('Your finance workspace', '你的财务工作室')) + '</h2><ol><li>' + escape(langLabel('Fill in the accounts and reimbursement forms, then save.', '填写账目和报销表格，然后保存。')) + '</li><li>' + escape(langLabel('Upload JPG, PNG or PDF receipts below. Unsaved account changes are saved before upload.', '在下方上传 JPG、PNG 或 PDF 收据；上传前会先保存尚未保存的账目。')) + '</li><li>' + escape(langLabel('Go to Activity Hall when ready to submit to OC. Excel and PDF downloads are optional.', '准备好后前往活动大厅提交给 OC。下载 Excel 或 PDF 是可选操作。')) + '</li></ol></section>';
     return '<div class="section-heading"><div><div class="eyebrow">' + escape(langLabel('Activity finance', '活动财务')) + ' · ' + escape(workflowStatusLabel(liveStatus)) + '</div><h2 style="margin:0">' + escape(book.activityName || 'New activity') + '</h2></div><div class="toolbar">' + button('Back to list', 'financeBack') + reviewBar + (canEdit && !locked ? '<button class="button primary" type="button" data-action="financeSave">Save</button>' : '') + '</div></div>' + (locked ? '<p class="hint">' + escape(langLabel('This book is in the approval flow. Editing is locked until it is returned or reopened.', '本账本正在审批流中，退回或重开前不能编辑。')) + '</p>' : '') + how + '<section class="card"><div class="field full"><label for="finance-activity-name">Activity name</label><input id="finance-activity-name" type="text" data-fin="book" data-index="0" data-key="activityName" value="' + escape(book.activityName) + '" maxlength="200" placeholder="e.g. Badminton Competition 2026"' + readOnly + '></div></section>' +
       '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 1</div><h2 style="margin:0">Income &amp; Expenses</h2></div><div class="toolbar"><button class="button small" type="button" data-action="financeAddIncome"' + disableAdd + '>Add income</button><button class="button small" type="button" data-action="financeAddExpense"' + disableAdd + '>Add expense</button>' + button('Download Excel', 'financeDownloadIE') + '</div></div>' +
       '<h3>Income · RM ' + moneyText(incomeTotal) + '</h3>' + financeRows('income', book.incomes, [{ label: 'Date', key: 'date', type: 'date', attrs: readOnly.trim() }, { label: 'Description', key: 'description', type: 'text', attrs: readOnly.trim() }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' + readOnly }]) +
@@ -356,10 +711,10 @@
       '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 2</div><h2 style="margin:0">Reimbursement forms</h2></div><button class="button small" type="button" data-action="financeAddForm"' + disableAdd + '>Add form</button></div>' +
       (book.reimbursements.length ? book.reimbursements.map((form, index) => financeFormBlock(form, index)).join('') : '<p class="muted">No forms yet.</p>') +
       '</section>' +
-      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 3</div><h2 style="margin:0">Soft copy receipts</h2></div><div class="toolbar"><label class="button" for="finance-receipts">Add photos<input id="finance-receipts" type="file" accept="image/*" multiple hidden></label><button class="button primary" type="button" data-action="financeDownloadReceipts"' + (files.length ? '' : ' disabled') + '>Download PDF</button></div></div>' +
-      '<p class="hint">' + files.length + ' photo(s) selected. Photos are used only to build the PDF on this device; they are not uploaded to the public site.</p>' +
+      hubFinanceAttachmentsBlock() + '<details class="card" style="margin-top:18px"><summary>' + escape(langLabel('Optional: combine local photos into a PDF', '可选：将本机照片合并成 PDF')) + '</summary><div class="toolbar"><label class="button" for="finance-receipts">Add photos<input id="finance-receipts" type="file" accept="image/*" multiple hidden></label><button class="button" type="button" data-action="financeDownloadReceipts"' + (files.length ? '' : ' disabled') + '>Download PDF</button></div>' +
+      '<p class="hint">' + files.length + ' · ' + escape(langLabel('This helper only creates a file on this device. Use Add receipt above to save receipts with the accounts.', '这个工具只在本机生成文件。要把收据保存到账本，请使用上方的“添加收据”。')) + '</p>' +
       (files.length ? '<div class="receipt-grid">' + files.map((file, index) => '<figure><img alt="' + escape(file.name) + '" src="' + escape(file.preview || '') + '"><figcaption>' + escape(file.name) + '</figcaption><button class="button small" type="button" data-action="financeRemoveReceipt" data-id="' + index + '">Remove</button></figure>').join('') + '</div>' : '') +
-      '</section>';
+      '</details>' + (canEdit && !locked ? '<p class="hint">' + escape(t('hub.gotoHall')) + '</p>' : '');
   }
   function awardList() {
     const rows = state.Awards.filter(match).sort((first, second) => second.date.localeCompare(first.date));
@@ -502,7 +857,10 @@
   function activityAboutCard(pkg) {
     if (!pkg || !window.KPTActivityIntro) return '';
     const lang = (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? 'zh' : 'en';
-    const copy = window.KPTActivityIntro.introFor(pkg.activityType, lang);
+    const copy = Object.assign({}, window.KPTActivityIntro.introFor(pkg.activityType, lang));
+    copy.eyebrow = lang === 'zh' ? '活动指南 · ' + pkg.activityType : 'Activity guide · ' + pkg.activityType;
+    copy.do = lang === 'zh' ? '按工作室中的岗位分工准备资料，完成后前往活动大厅提交或交接。' : 'Prepare the work assigned to your role in My Studio, then use Activity Hall to submit or hand off.';
+    copy.note = lang === 'zh' ? '工作室用于准备和检查，大厅用于正式提交与转交；兼任岗位的功能会一起显示。' : 'Prepare and check work in My Studio. Formal submissions and handoffs happen in Activity Hall. Concurrent roles share this workspace.';
     const icon = pkg.activityType === 'AGM'
       ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="4" y="3" width="16" height="18" rx="2"/></svg>'
       : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
@@ -704,6 +1062,26 @@
   }
   function render() {
     if (!state) return;
+    const useHub = workspaceMode === 'oc' || isOcOnly() || (user && !user.owner && !user.admin && !user.treasurer && ocPackages().length > 0);
+    if (useHub) {
+      byId('navigation').innerHTML = '';
+      document.body.dataset.mode = 'hub';
+      const eyebrow = document.querySelector('.admin-top .eyebrow');
+      if (eyebrow) eyebrow.textContent = t('brand.ActivityWorkspace');
+      const brandSub = document.querySelector('.sidebar .brand-sub');
+      if (brandSub) brandSub.textContent = t('brand.ActivityWorkspace');
+      byId('page-title').textContent = hubTab === 'hall' ? t('hub.hall') : hubTab === 'notifications' ? t('hub.notifications') : t('hub.studio');
+      byId('mode-switcher-slot').innerHTML = user.owner || user.admin || user.treasurer ? modeSwitcher() : '';
+      const yearField = document.querySelector('.admin-top .field');
+      if (yearField) yearField.hidden = true;
+      byId('content').innerHTML = hubView();
+      hubRefreshBadges();
+      applyFinanceReadOnly();
+      byId('sync-notice').hidden = sync.ok;
+      hubStartPolling();
+      return;
+    }
+    hubStopPolling();
     renderNavigation();
     applyWorkspaceTheme();
     const ocShell = isOcOnly() || workspaceMode === 'oc';
@@ -760,10 +1138,20 @@
       if (brandSub && workspaceMode === 'admin') brandSub.textContent = t('brand.Administration');
     }
     byId('content').innerHTML = views[view] ? views[view]() : '';
+    applyFinanceReadOnly();
     byId('sync-notice').hidden = sync.ok;
     byId('sync-notice').innerHTML = sync.ok ? '' : 'Private data is saved. The public directory is awaiting an update. ' + button('Retry', 'retrySync');
     if (view === 'Settings' && backups.length) renderBackups();
     if (view === 'Import' && importPreview) renderImport();
+  }
+  function applyFinanceReadOnly() {
+    if (!financeDraft || !byId('finance-activity-name')) return;
+    const saved = state.FinBooks.find(book => book.id === financeDraft.id);
+    const pkg = state.DocPackages.find(item => item.id === financeDraft.packageId);
+    const editable = (user.owner || user.treasurer || packageRolesFor(pkg, user.email).includes('ot')) && !['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].includes(saved && saved.status);
+    if (editable) return;
+    document.querySelectorAll('#content input, #content textarea, #content select').forEach(input => { input.readOnly = true; if (input.type === 'file' || input.tagName === 'SELECT') input.disabled = true; });
+    document.querySelectorAll('#content [data-action]').forEach(element => { if (/^finance(Add|Remove)/.test(element.dataset.action)) element.disabled = true; });
   }
   const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…', createDocPackage: 'Creating package…', docItemUpload: 'Uploading file…', docItemSubmit: 'Submitting to OC…', docItemCheck: 'OC checking…', docItemForward: 'Forwarding…', docItemReview: 'Reviewing document…', docItemReopen: 'Reopening document…', saveDocTemplate: 'Saving template…', docPackageArchive: 'Updating package…', initDocFolders: 'Creating folders…', submitFinBook: 'Submitting finance to OC…', checkFinBook: 'OC finance check…', forwardFinBook: 'Forwarding finance…', reviewFinBook: 'Reviewing finance…', reopenFinBook: 'Reopening finance…' };
   async function call(request, label) {
@@ -781,10 +1169,22 @@
     } finally {
       busy = false;
       document.body.removeAttribute('aria-busy');
+      if (request.action !== 'bootstrap' && user) hubLoadNotifications(true);
     }
   }
   async function refresh() {
     const response = await call({ action: 'bootstrap' }, 'Loading records…');
+    if (!user || user.email !== response.user.email) {
+      financeDraft = null;
+      financeReceiptFiles = [];
+      hubSelectedId = null;
+      openDocPackageId = null;
+      hubTab = 'studio';
+      hubDirty = false;
+      telegramBinding = null;
+      if (byId('editor').open) byId('editor').close();
+      hubNotifications = { notifications: [], unreadCount: 0, activityUnread: {}, studioUnread: {} };
+    }
     state = response.state;
     user = response.user;
     user.admin = user.admin != null ? !!user.admin : !!user.owner;
@@ -802,7 +1202,13 @@
       const linked = state.DocPackages.find(row => row.id === packageParam);
       if (linked && canOpenPackage(linked)) {
         openDocPackageId = linked.id;
-        if (!user.admin && !user.owner) workspaceMode = 'oc';
+        hubSelectedId = linked.id;
+        workspaceMode = 'oc';
+        const entityId = new URLSearchParams(location.search).get('entity');
+        const linkedBook = state.FinBooks.find(book => book.id === entityId && book.packageId === linked.id);
+        const linkedItem = state.DocItems.find(item => item.id === entityId && item.packageId === linked.id);
+        if (linkedBook) { loadFinanceDraft(linkedBook); hubTab = linkedBook.status === 'Submitted' ? 'hall' : 'studio'; }
+        if (linkedItem) hubTab = ['OCChecked', 'Submitted', 'Approved'].includes(linkedItem.status) ? 'hall' : 'studio';
       }
     }
     if (workspaceMode === 'portal') view = 'Portal';
@@ -885,7 +1291,111 @@
   }
   async function action(element) {
     const { action: name, id, table: tableName } = element.dataset;
+    if (['telegramSettings', 'telegramRefresh', 'telegramCreate', 'telegramConfirm', 'telegramCancel', 'telegramEnable', 'telegramUnlink'].includes(name)) {
+      if (name === 'telegramUnlink' && !confirm(langLabel('Unlink Telegram and stop private notifications?', '解除 Telegram 绑定并停止私人通知？'))) return;
+      const actions = { telegramSettings: 'getTelegramStatus', telegramRefresh: 'getTelegramStatus', telegramCreate: 'createTelegramBinding', telegramConfirm: 'confirmTelegramBinding', telegramCancel: 'cancelTelegramBinding', telegramEnable: 'setTelegramEnabled', telegramUnlink: 'unlinkTelegram' };
+      const request = { action: actions[name] };
+      if (name === 'telegramConfirm') request.bindingId = id;
+      if (name === 'telegramEnable') request.enabled = id === 'true';
+      const status = await call(request);
+      if (['telegramConfirm', 'telegramCancel', 'telegramUnlink'].includes(name)) telegramBinding = null;
+      if (status.binding) telegramBinding = status.binding;
+      renderTelegramSettings(status);
+      notice(langLabel('Telegram status updated.', 'Telegram 状态已更新。'));
+      return;
+    }
+    if (/^finance(AddIncome|AddExpense|AddForm|AddLine|RemoveRow|RemoveForm|RemoveLine)$/.test(name)) hubDirty = true;
     if (name === 'close') { byId('editor').close(); return; }
+    if (name === 'hubTab') {
+      if (id !== hubTab && !hubConfirmLeave()) return;
+      hubTab = id === 'hall' || id === 'notifications' ? id : 'studio';
+      render();
+      if (hubTab === 'notifications') hubLoadNotifications(false);
+      return;
+    }
+    if (name === 'hubPick') {
+      if (!hubConfirmLeave()) return;
+      hubSelectedId = id || null;
+      openDocPackageId = id || null;
+      financeDraft = null;
+      render();
+      return;
+    }
+    if (name === 'hubMarkRead') {
+      const payload = (hubNotifications.notifications || []).filter(row => row.unread).slice(0, 100).map(row => ({ id: row.id, entityVersion: row.entityVersion }));
+      if (!payload.length) return;
+      try {
+        const result = await window.KPTTransport.call({ action: 'markHubNotificationsRead', notifications: payload });
+        if (result && result.notifications) {
+          hubNotifications = {
+            notifications: result.notifications || [],
+            unreadCount: result.unreadCount || 0,
+            activityUnread: result.activityUnread || {},
+            studioUnread: result.studioUnread || {}
+          };
+        } else {
+          await hubLoadNotifications(true);
+        }
+        hubRefreshBadges();
+        render();
+      } catch (error) { notice(error.message, true); }
+      return;
+    }
+    if (name === 'hubOpenNotif') {
+      if (!hubConfirmLeave()) return;
+      const packageId = element.dataset.package || '';
+      const entityId = element.dataset.entity || '';
+      const row = (hubNotifications.notifications || []).find(n => n.id === id);
+      const latest = await call({ action: 'bootstrap' });
+      state = latest.state;
+      sync = latest.sync || sync;
+      financeDraft = null;
+      if (packageId) {
+        hubSelectedId = packageId;
+        openDocPackageId = packageId;
+      }
+      if (entityId && state) {
+        const item = (state.DocItems || []).find(r => r.id === entityId);
+        const book = (state.FinBooks || []).find(r => r.id === entityId);
+        hubTab = row && row.destination === 'hall' ? 'hall' : 'studio';
+        if (book) { hubTab = 'studio'; loadFinanceDraft(book); }
+        if (!item && !book) { await hubLoadNotifications(true); render(); notice('This item is no longer available.', true); return; }
+      }
+      render();
+      const displayed = [...document.querySelectorAll('[data-hub-entity]')].find(element => element.dataset.hubEntity === entityId);
+      const book = (state.FinBooks || []).find(item => item.id === entityId);
+      if (displayed || (book && byId('finance-activity-name') && financeDraft && financeDraft.id === entityId)) {
+        const entity = book || state.DocItems.find(item => item.id === entityId);
+        try { await hubMarkEntityRead(entityId, entity.version); } catch (error) { notice(error.message, true); }
+        if (displayed) displayed.scrollIntoView({ block: 'center' });
+      }
+      return;
+    }
+    if (name === 'hubDownloadAttach') {
+      try {
+        const result = await window.KPTTransport.call({ action: 'downloadFinanceAttachment', attachmentId: id });
+        if (result && result.contentBase64) downloadBase64(result.fileName || 'attachment', result.contentBase64);
+      } catch (error) { notice(error.message, true); }
+      return;
+    }
+    if (name === 'hubPreviewAttach') {
+      const result = await call({ action: 'downloadFinanceAttachment', attachmentId: id });
+      if (!['image/jpeg', 'image/png'].includes(result.mime)) throw new Error('Only JPG and PNG receipts can be previewed.');
+      const image = [...document.querySelectorAll('[data-attach-preview]')].find(item => item.dataset.attachPreview === id);
+      if (image) { image.src = 'data:' + result.mime + ';base64,' + result.contentBase64; image.hidden = false; }
+      notice(langLabel('Receipt preview ready.', '收据预览已打开。'));
+      return;
+    }
+    if (name === 'hubRemoveAttach') {
+      if (!confirm(t('hub.removeReceipt') + '?')) return;
+      try {
+        const result = await window.KPTTransport.call({ action: 'removeFinanceAttachment', attachmentId: id, revision: state.revision });
+        if (result && result.state) { state = result.state; sync = result.sync || sync; }
+        notice(t('hub.receiptRemoved'));
+        render();
+      } catch (error) { notice(error.message, true); }
+      return;
+    }
     if (name === 'navigate') { view = id; query = ''; page = 0; render(); return; }
     if (name === 'add' || name === 'edit') { openEditor(tableName, id); return; }
     if (name === 'attendance') { openAttendance(id); return; }
@@ -933,6 +1443,7 @@
       return;
     }
     if (name === 'financeOpenBook') {
+      if (!hubConfirmLeave()) return;
       const book = state.FinBooks.find(row => row.id === id);
       if (!book) throw new Error('Finance record not found. Reload data.');
       if (!(user.owner || user.treasurer || user.admin)) {
@@ -950,12 +1461,15 @@
         reimbursements: state.FinReimbursements.filter(row => row.bookId === id).map(row => Object.assign(KPT.copy(row), { lines: state.FinReimburseLines.filter(line => line.reimbursementId === row.id).map(line => KPT.copy(line)) }))
       };
       financeReceiptFiles = [];
+      hubDirty = false;
       view = 'Finance';
+      hubTab = 'studio';
       render();
+      if (byId('finance-activity-name')) hubMarkEntityRead(book.id, book.version).catch(error => notice(error.message, true));
       notice('Finance record loaded. Edits stay local until you press Save.');
       return;
     }
-    if (name === 'financeBack') { financeDraft = null; financeReceiptFiles = []; render(); return; }
+    if (name === 'financeBack') { if (!hubConfirmLeave()) return; financeDraft = null; financeReceiptFiles = []; render(); return; }
     if (name === 'financeSave') {
       if (!financeDraft) return;
       if (!financeDraft.activityName) throw new Error('Enter an activity name before saving.');
@@ -987,8 +1501,14 @@
         financeDraft.expenses = state.FinExpenses.filter(row => row.bookId === saved.id).map(row => KPT.copy(row));
         financeDraft.reimbursements = state.FinReimbursements.filter(row => row.bookId === saved.id).map(row => Object.assign(KPT.copy(row), { lines: state.FinReimburseLines.filter(line => line.reimbursementId === row.id).map(line => KPT.copy(line)) }));
       }
+      hubDirty = false;
       render();
-      notice('Finance record saved.');
+      notice(t('hub.saved'));
+      if (isOcOnly() || hubHas('os') || hubHas('ot') || hubHas('oc')) {
+        // Primary CTA after save: hand in from Activity Hall (formal submit only there).
+        const goHall = document.querySelector('[data-action="hubTab"][data-id="hall"]');
+        if (goHall) goHall.focus();
+      }
       return;
     }
     if (name === 'financeAddIncome') { financeDraft.incomes.push({ id: '', version: 0, date: today(), description: '', amount: '' }); render(); return; }
@@ -1258,7 +1778,9 @@
       openDocPackageId = id;
       activityIntroExpanded = false;
       query = ''; page = 0;
-      workspaceMode = (user.admin || user.owner) && !isOcOnly() ? 'admin' : 'oc';
+      workspaceMode = 'oc';
+      hubSelectedId = id;
+      hubTab = 'studio';
       view = 'Documents';
       render();
       return;
@@ -1426,6 +1948,7 @@
     }
     const fin = event.target.dataset && event.target.dataset.fin;
     if (!fin || !financeDraft) return;
+    hubDirty = true;
     const key = event.target.dataset.key;
     const value = event.target.value;
     if (fin === 'book') { financeDraft[key] = value; return; }
@@ -1474,6 +1997,32 @@
         render();
         notice('Template replaced.');
       }).catch(error => notice(error.message, true));
+      return;
+    }
+    if (event.target.id === 'hub-receipt-file') {
+      const files = [...(event.target.files || [])];
+      event.target.value = '';
+      if (!files.length) return;
+      if (hubReceiptBusy) return;
+      if (files.some(file => !/\.(jpg|jpeg|png|pdf)$/i.test(file.name) || !file.size || file.size > 5 * 1024 * 1024)) { notice(t('hub.uploadFailed'), true); return; }
+      hubReceiptBusy = true;
+      (async () => {
+        try {
+          if (hubDirty || !financeDraft || !financeDraft.id) await action({ dataset: { action: 'financeSave' } });
+          for (let index = 0; index < files.length; index++) {
+            const file = files[index];
+            notice(t('hub.uploading') + ' ' + (index + 1) + '/' + files.length + ' · ' + file.name);
+            const extension = file.name.split('.').pop().toLowerCase();
+            const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' }[extension];
+            const response = await call({ action: 'uploadFinanceAttachment', bookId: financeDraft.id, revision: state.revision, fileName: file.name, mime, contentBase64: await fileToBase64(file) });
+            state = response.state;
+            sync = response.sync || sync;
+          }
+          render();
+          notice(t('hub.saved'));
+        } catch (error) { render(); notice(t('hub.uploadFailed') + ' ' + error.message, true); }
+        finally { hubReceiptBusy = false; }
+      })();
       return;
     }
     if (event.target.id === 'finance-receipts') {
@@ -1600,6 +2149,18 @@
     if (window.google && google.accounts) startGis();
     else window.addEventListener('load', startGis, { once: true });
   }
+  window.addEventListener('beforeunload', event => {
+    if (hubDirty) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+  byId('editor').addEventListener('close', () => { telegramBinding = null; });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (isOcOnly() || hubHas('os') || hubHas('ot') || hubHas('oc')) hubLoadNotifications(true);
+  });
+  window.addEventListener('focus', () => { if (user && !document.hidden) hubLoadNotifications(true); });
   refresh().catch(error => {
     const message = String(error.message || error);
     if (/sign-in|sign in|login/i.test(message)) {

@@ -24,6 +24,7 @@ const financeWorkbook = await read('src/finance-workbook.js');
 const financePdf = await read('src/finance-pdf.js');
 const financeTemplates = await read('src/finance-templates.js');
 const admin = await read('src/admin.js');
+const telegramBackend = await read('apps-script/admin/Telegram.gs');
 const i18n = await read('src/i18n.js');
 const activityIntro = await read('src/activity-intro.js');
 const library = await read('vendor/xlsx.full.min.js');
@@ -62,6 +63,7 @@ await write('preview/demo-public.json', JSON.stringify(domain.projectPublic(fixt
 await write('build/apps-script/admin/Admin.html', productionAdmin);
 await write('build/apps-script/admin/Domain.gs', domainCode);
 for (const project of ['admin', 'public']) for (const file of ['Code.gs', 'appsscript.json']) await write('build/apps-script/' + project + '/' + file, await read('apps-script/' + project + '/' + file));
+await write('build/apps-script/admin/Code.gs', (await read('apps-script/admin/Code.gs')) + '\n' + telegramBackend);
 const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css', 'admin.html', 'domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js', 'activity-intro.js', 'xlsx.full.min.js'];
 const publicFiles = await fs.readdir(path.join(root, 'dist'));
 if (publicFiles.some(name => !approvedFiles.includes(name))) throw new Error('Unexpected file in public dist. Review before publishing.');
