@@ -9,13 +9,13 @@
     Awards: ['id', 'version', 'memberId', 'catalogId', 'category', 'name', 'date', 'level', 'certificate', 'notes', 'archived'],
     Enrolments: ['id', 'version', 'memberId', 'year', 'form', 'status'],
     Catalog: ['id', 'version', 'code', 'sortOrder', 'kind', 'category', 'name', 'level', 'eligibilityMetric', 'eligibilityThreshold', 'archived'],
-    FinBooks: ['id', 'version', 'activityName', 'status', 'remarks', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt'],
+    FinBooks: ['id', 'version', 'activityName', 'packageId', 'status', 'remarks', 'rejectStage', 'submittedBy', 'submittedAt', 'checkedBy', 'checkedAt', 'forwardedBy', 'forwardedAt', 'reviewedBy', 'reviewedAt'],
     FinIncomes: ['id', 'version', 'bookId', 'date', 'description', 'amount'],
     FinExpenses: ['id', 'version', 'bookId', 'date', 'item', 'description', 'quantity', 'unitCost', 'amount'],
     FinReimbursements: ['id', 'version', 'bookId', 'formSeq', 'treasurerName', 'formDate', 'purpose', 'chequeNo', 'amount'],
     FinReimburseLines: ['id', 'version', 'reimbursementId', 'lineNo', 'date', 'invoiceNo', 'particular', 'total'],
     DocPackages: ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'basePackageId', 'ocEmail', 'osEmail', 'otEmail', 'createdBy', 'createdAt', 'approvedAt', 'archived'],
-    DocItems: ['id', 'version', 'packageId', 'sortOrder', 'title', 'role', 'assignee', 'dueOffsetDays', 'required', 'templateId', 'status', 'taskStatus', 'fileName', 'fileId', 'uploadedBy', 'uploadedAt', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt', 'remarks', 'archived'],
+    DocItems: ['id', 'version', 'packageId', 'sortOrder', 'title', 'role', 'assignee', 'dueOffsetDays', 'required', 'templateId', 'status', 'taskStatus', 'fileName', 'fileId', 'uploadedBy', 'uploadedAt', 'submittedBy', 'submittedAt', 'checkedBy', 'checkedAt', 'forwardedBy', 'forwardedAt', 'reviewedBy', 'reviewedAt', 'remarks', 'rejectStage', 'archived'],
     DocTemplates: ['id', 'version', 'activityType', 'title', 'fileName', 'mime', 'fileId', 'versionLabel', 'active', 'archived']
   };
   const money = value => {
@@ -30,10 +30,11 @@
   const forms = ['Peralihan', 'Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Adult'];
   const races = ['Melayu', 'India', 'Cina', 'Other'];
   const docActivityTypes = ['AGM', 'CadetEnrolment', 'OrientationDay', 'Exam', 'MidTermReview', 'JuniorCamp', 'InspectionDay'];
-  const docItemStatuses = ['Pending', 'Draft', 'Submitted', 'Approved', 'Rejected', 'NotRequired'];
+  const docItemStatuses = ['Pending', 'Draft', 'AwaitingOC', 'OCChecked', 'Submitted', 'Approved', 'Rejected', 'NotRequired'];
   const docPackageStatuses = ['Open', 'Completed', 'Archived'];
   const docUploadMimes = ['.docx', '.xlsx', '.pdf', '.pptx', '.jpg', '.jpeg', '.png', '.zip'];
-  const finStatuses = ['Draft', 'Submitted', 'Approved', 'Rejected'];
+  const finStatuses = ['Draft', 'AwaitingOC', 'OCChecked', 'Submitted', 'Approved', 'Rejected'];
+  const workflowLockedStatuses = ['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'];
   const taskStatuses = ['Open', 'Done', 'Cancelled'];
   const recommendedCatalog = [];
   const addRecommended = (code, sortOrder, kind, category, name, level, eligibilityMetric, eligibilityThreshold) => recommendedCatalog.push({ code, sortOrder, kind, category, name, level: level || '', eligibilityMetric: eligibilityMetric || '', eligibilityThreshold: eligibilityThreshold == null ? null : eligibilityThreshold, archived: false });
@@ -160,6 +161,7 @@
           if (!row.activityName) fail('Activity name is required.');
           const status = str(row.status || 'Draft');
           if (!finStatuses.includes(status)) fail('Invalid finance approval status.');
+          if (row.packageId && !state.DocPackages.some(item => item.id === row.packageId)) fail('Unknown document package for finance book.');
         }
         if (table === 'FinIncomes') {
           if (!row.bookId || !state.FinBooks.some(item => item.id === row.bookId)) fail('Unknown finance book.');
@@ -214,7 +216,7 @@
           if (!taskStatuses.includes(str(row.taskStatus) || 'Open')) fail('Invalid task status.');
           if (!row.title) fail('Document title is required.');
           if (row.templateId && !state.DocTemplates.some(item => item.id === row.templateId)) fail('Unknown document template.');
-          if (row.status === 'Submitted' && !row.fileId) fail('Submitted items need an uploaded file.');
+          if (['AwaitingOC', 'OCChecked', 'Submitted'].includes(row.status) && !row.fileId) fail('Submitted items need an uploaded file.');
         }
         if (table === 'DocTemplates') {
           if (!docActivityTypes.includes(row.activityType)) fail('Unknown activity type.');
@@ -324,6 +326,10 @@
       docItemUpload(state, request, context);
     } else if (request.action === 'docItemSubmit') {
       docItemSubmit(state, request, context);
+    } else if (request.action === 'docItemCheck') {
+      docItemCheck(state, request, context);
+    } else if (request.action === 'docItemForward') {
+      docItemForward(state, request, context);
     } else if (request.action === 'docItemReview') {
       docItemReview(state, request, context);
     } else if (request.action === 'docItemReopen') {
@@ -334,6 +340,10 @@
       upsert(state, 'DocTemplates', request.row, context.uuid);
     } else if (request.action === 'submitFinBook') {
       submitFinBook(state, request, context);
+    } else if (request.action === 'checkFinBook') {
+      checkFinBook(state, request, context);
+    } else if (request.action === 'forwardFinBook') {
+      forwardFinBook(state, request, context);
     } else if (request.action === 'reviewFinBook') {
       reviewFinBook(state, request, context);
     } else if (request.action === 'reopenFinBook') {
@@ -342,6 +352,13 @@
       if (book.status !== 'Approved' && book.status !== 'Rejected') fail('Only approved or rejected books can be reopened.');
       book.status = 'Draft';
       book.remarks = '';
+      book.rejectStage = '';
+      book.submittedBy = '';
+      book.submittedAt = '';
+      book.checkedBy = '';
+      book.checkedAt = '';
+      book.forwardedBy = '';
+      book.forwardedAt = '';
       book.reviewedBy = '';
       book.reviewedAt = '';
       book.version++;
@@ -497,7 +514,7 @@
       const item = findDocItem(state, id);
       if (item.packageId !== packageId) fail('Document item belongs to another package.');
       if (item.fileId) fail('Remove the uploaded file before deleting this document row.');
-      if (item.status === 'Approved' || item.status === 'Submitted') fail('Only pending or draft items can be removed.');
+      if (workflowLockedStatuses.includes(item.status) || item.status === 'Approved') fail('Only pending or draft items can be removed.');
       state.DocItems = state.DocItems.filter(row => row.id !== id);
     });
     let order = state.DocItems.filter(row => row.packageId === packageId).map(row => Number(row.sortOrder) || 0);
@@ -523,12 +540,24 @@
     });
     refreshDocPackageStatus(state, packageId, context.now);
   }
+  function clearWorkflowFields(item) {
+    item.submittedBy = '';
+    item.submittedAt = '';
+    item.checkedBy = '';
+    item.checkedAt = '';
+    item.forwardedBy = '';
+    item.forwardedAt = '';
+    item.reviewedBy = '';
+    item.reviewedAt = '';
+    item.remarks = '';
+    item.rejectStage = '';
+  }
   function docItemUpload(state, request, context) {
     const item = findDocItem(state, request.itemId);
     const pkg = findDocPackage(state, item.packageId);
     openDocPackage(pkg);
     if (item.status === 'Approved') fail('Reopen this item before uploading a new file.');
-    if (item.status === 'Submitted') fail('This item is waiting for review.');
+    if (workflowLockedStatuses.includes(item.status)) fail('This item is waiting in the approval flow.');
     const fileName = str(request.fileName);
     const fileId = str(request.fileId);
     if (!fileName) fail('File name is required.');
@@ -539,11 +568,7 @@
     item.fileId = fileId;
     item.uploadedBy = context.actor;
     item.uploadedAt = context.now;
-    item.submittedBy = '';
-    item.submittedAt = '';
-    item.reviewedBy = '';
-    item.reviewedAt = '';
-    item.remarks = '';
+    clearWorkflowFields(item);
     item.status = 'Draft';
     item.version++;
     refreshDocPackageStatus(state, pkg.id, context.now);
@@ -552,11 +577,47 @@
     const item = findDocItem(state, request.itemId);
     const pkg = findDocPackage(state, item.packageId);
     openDocPackage(pkg);
-    if (!['Draft', 'Rejected'].includes(item.status)) fail('Upload a file before submitting.');
-    if (!item.fileId) fail('Upload a file before submitting.');
-    item.status = 'Submitted';
+    if (!['Draft', 'Rejected'].includes(item.status)) fail('Upload a file before submitting to OC.');
+    if (!item.fileId) fail('Upload a file before submitting to OC.');
+    clearWorkflowFields(item);
+    item.status = 'AwaitingOC';
     item.submittedBy = context.actor;
     item.submittedAt = context.now;
+    item.version++;
+    refreshDocPackageStatus(state, pkg.id, context.now);
+  }
+  function docItemCheck(state, request, context) {
+    const item = findDocItem(state, request.itemId);
+    const pkg = findDocPackage(state, item.packageId);
+    openDocPackage(pkg);
+    if (item.status !== 'AwaitingOC') fail('Only items waiting for OC can be checked.');
+    const approve = !!request.approve;
+    const remarks = str(request.remarks);
+    if (!approve && !remarks) fail('A reason is required when returning a document.');
+    if (approve) {
+      item.status = 'OCChecked';
+      item.checkedBy = context.actor;
+      item.checkedAt = context.now;
+      item.remarks = '';
+      item.rejectStage = '';
+    } else {
+      item.status = 'Rejected';
+      item.rejectStage = 'OC';
+      item.remarks = remarks;
+      item.checkedBy = '';
+      item.checkedAt = '';
+    }
+    item.version++;
+    refreshDocPackageStatus(state, pkg.id, context.now);
+  }
+  function docItemForward(state, request, context) {
+    const item = findDocItem(state, request.itemId);
+    const pkg = findDocPackage(state, item.packageId);
+    openDocPackage(pkg);
+    if (item.status !== 'OCChecked') fail('Only OC-checked items can be forwarded for approval.');
+    item.status = 'Submitted';
+    item.forwardedBy = context.actor;
+    item.forwardedAt = context.now;
     item.version++;
     refreshDocPackageStatus(state, pkg.id, context.now);
   }
@@ -564,7 +625,7 @@
     const item = findDocItem(state, request.itemId);
     const pkg = findDocPackage(state, item.packageId);
     openDocPackage(pkg);
-    if (item.status !== 'Submitted') fail('Only submitted items can be reviewed.');
+    if (item.status !== 'Submitted') fail('Only forwarded items can receive final approval.');
     const approve = !!request.approve;
     const remarks = str(request.remarks);
     if (!approve && !remarks) fail('A reason is required when rejecting.');
@@ -572,6 +633,7 @@
     item.reviewedBy = context.actor;
     item.reviewedAt = context.now;
     item.remarks = approve ? '' : remarks;
+    item.rejectStage = approve ? '' : 'Final';
     item.version++;
     refreshDocPackageStatus(state, pkg.id, context.now);
   }
@@ -580,10 +642,8 @@
     const pkg = findDocPackage(state, item.packageId);
     openDocPackage(pkg);
     if (item.status !== 'Approved') fail('Only approved items can be reopened.');
+    clearWorkflowFields(item);
     item.status = 'Pending';
-    item.reviewedBy = '';
-    item.reviewedAt = '';
-    item.remarks = '';
     item.version++;
     refreshDocPackageStatus(state, pkg.id, context.now);
   }
@@ -601,33 +661,121 @@
     const book = state.FinBooks.find(row => row.id === request.bookId);
     if (!book) fail('Finance book not found.');
     if (book.archived) fail('Finance book is archived.');
-    if (book.status === 'Approved') fail('This finance book is already approved.');
-    if (book.status === 'Submitted') fail('This finance book is already waiting for review.');
-    book.status = 'Submitted';
+    if (workflowLockedStatuses.includes(book.status)) fail('This finance book is already in the approval flow.');
+    book.status = 'AwaitingOC';
     book.remarks = str(request.remarks || '');
+    book.rejectStage = '';
     book.submittedBy = context.actor;
     book.submittedAt = context.now;
+    book.checkedBy = '';
+    book.checkedAt = '';
+    book.forwardedBy = '';
+    book.forwardedAt = '';
     book.reviewedBy = '';
     book.reviewedAt = '';
+    book.version++;
+  }
+  function checkFinBook(state, request, context) {
+    const book = state.FinBooks.find(row => row.id === request.bookId);
+    if (!book) fail('Finance book not found.');
+    if (book.status !== 'AwaitingOC') fail('Only finance books waiting for OC can be checked.');
+    const approve = !!request.approve;
+    const remarks = str(request.remarks);
+    if (!approve && !remarks) fail('A reason is required when returning a finance book.');
+    if (approve) {
+      book.status = 'OCChecked';
+      book.checkedBy = context.actor;
+      book.checkedAt = context.now;
+      book.remarks = '';
+      book.rejectStage = '';
+    } else {
+      book.status = 'Rejected';
+      book.rejectStage = 'OC';
+      book.remarks = remarks;
+      book.checkedBy = '';
+      book.checkedAt = '';
+    }
+    book.version++;
+  }
+  function forwardFinBook(state, request, context) {
+    const book = state.FinBooks.find(row => row.id === request.bookId);
+    if (!book) fail('Finance book not found.');
+    if (book.status !== 'OCChecked') fail('Only OC-checked finance books can be forwarded for approval.');
+    book.status = 'Submitted';
+    book.forwardedBy = context.actor;
+    book.forwardedAt = context.now;
     book.version++;
   }
   function reviewFinBook(state, request, context) {
     const book = state.FinBooks.find(row => row.id === request.bookId);
     if (!book) fail('Finance book not found.');
-    if (book.status !== 'Submitted') fail('Only submitted finance books can be reviewed.');
+    if (book.status !== 'Submitted') fail('Only forwarded finance books can receive final approval.');
     const approve = !!request.approve;
     const remarks = str(request.remarks);
     if (!approve && !remarks) fail('A reason is required when rejecting.');
     book.status = approve ? 'Approved' : 'Rejected';
     book.remarks = approve ? '' : remarks;
+    book.rejectStage = approve ? '' : 'Final';
     book.reviewedBy = context.actor;
     book.reviewedAt = context.now;
     book.version++;
   }
+  const finWorkflowFields = ['status', 'remarks', 'rejectStage', 'submittedBy', 'submittedAt', 'checkedBy', 'checkedAt', 'forwardedBy', 'forwardedAt', 'reviewedBy', 'reviewedAt'];
+  function assertChildOwned(state, table, input, key, expectedId, label) {
+    const id = str(input && input.id);
+    if (!id) return;
+    const current = state[table].find(row => row.id === id);
+    if (!current) fail('Unknown ' + label + ' record. Leave ID blank for a new row.');
+    if (str(current[key]) !== str(expectedId)) fail(label + ' belongs to another record.');
+  }
   function saveFinanceBook(state, request, context) {
     const payload = request.book;
     if (!payload || typeof payload !== 'object') fail('Finance book payload is required.');
-    const book = upsert(state, 'FinBooks', payload, context.uuid);
+    const existing = payload.id ? state.FinBooks.find(row => row.id === payload.id) : null;
+    if (existing && workflowLockedStatuses.includes(existing.status)) fail('Unlock or reopen this finance book before editing.');
+    const safe = Object.assign({}, payload);
+    finWorkflowFields.forEach(key => { delete safe[key]; });
+    if (existing) {
+      safe.id = existing.id;
+      safe.version = existing.version;
+      // packageId is ownership — never retarget via generic save.
+      safe.packageId = existing.packageId;
+      safe.status = existing.status === 'Rejected' ? 'Draft' : existing.status;
+    } else {
+      safe.status = 'Draft';
+      safe.packageId = str(payload.packageId || request.packageId || '');
+    }
+    safe.remarks = existing && existing.status === 'Rejected' ? existing.remarks : '';
+    safe.rejectStage = existing && existing.status === 'Rejected' ? existing.rejectStage : '';
+    safe.submittedBy = existing ? existing.submittedBy : '';
+    safe.submittedAt = existing ? existing.submittedAt : '';
+    safe.checkedBy = existing ? existing.checkedBy : '';
+    safe.checkedAt = existing ? existing.checkedAt : '';
+    safe.forwardedBy = existing ? existing.forwardedBy : '';
+    safe.forwardedAt = existing ? existing.forwardedAt : '';
+    safe.reviewedBy = existing ? existing.reviewedBy : '';
+    safe.reviewedAt = existing ? existing.reviewedAt : '';
+    const book = upsert(state, 'FinBooks', safe, context.uuid);
+    const incomes = payload.incomes || [];
+    const expenses = payload.expenses || [];
+    const forms = payload.reimbursements || [];
+    // Existing child ids must already belong to this book — never steal from another book/form.
+    incomes.forEach(input => assertChildOwned(state, 'FinIncomes', input, 'bookId', book.id, 'Income'));
+    expenses.forEach(input => assertChildOwned(state, 'FinExpenses', input, 'bookId', book.id, 'Expense'));
+    forms.forEach(formInput => {
+      assertChildOwned(state, 'FinReimbursements', formInput, 'bookId', book.id, 'Reimbursement form');
+      const formId = str(formInput.id);
+      (formInput.lines || []).forEach(lineInput => {
+        const lineId = str(lineInput.id);
+        if (!lineId) return;
+        const currentLine = state.FinReimburseLines.find(row => row.id === lineId);
+        if (!currentLine) fail('Unknown reimbursement line. Leave ID blank for a new row.');
+        // Existing lines cannot move between forms, even inside one request.
+        if (!formId || str(currentLine.reimbursementId) !== formId) fail('Reimbursement line belongs to another form.');
+        const currentForm = state.FinReimbursements.find(row => row.id === currentLine.reimbursementId);
+        if (!currentForm || str(currentForm.bookId) !== str(book.id)) fail('Reimbursement line belongs to another book.');
+      });
+    });
     const syncChildren = (table, rows, key) => {
       const keep = new Set();
       rows.forEach(input => {
@@ -636,11 +784,11 @@
       });
       state[table] = state[table].filter(row => !(row[key] === book.id && !keep.has(row.id)));
     };
-    syncChildren('FinIncomes', payload.incomes || [], 'bookId');
-    syncChildren('FinExpenses', payload.expenses || [], 'bookId');
+    syncChildren('FinIncomes', incomes, 'bookId');
+    syncChildren('FinExpenses', expenses, 'bookId');
     const keepForms = new Set();
     const keepLines = new Set();
-    (payload.reimbursements || []).forEach(formInput => {
+    forms.forEach(formInput => {
       const form = upsert(state, 'FinReimbursements', Object.assign({}, formInput, { bookId: book.id }), context.uuid);
       keepForms.add(form.id);
       (formInput.lines || []).forEach(lineInput => {
@@ -839,6 +987,45 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Restore from Recycle Bin: ' + item.rootTable + ':' + item.rootId, context.now);
   }
+  // Response-only projection. Never persist this view or use it as the mutation source.
+  function projectForActor(state, actor) {
+    actor = actor || {};
+    if (actor.owner) return copy(state);
+    const email = str(actor.email).trim().toLowerCase();
+    const assigned = (pkg, role) => !!email && str(pkg[role + 'Email']).trim().toLowerCase() === email;
+    const packages = state.DocPackages || [];
+    const docPackages = new Set(packages.filter(pkg => actor.admin || assigned(pkg, 'os') || assigned(pkg, 'oc')).map(pkg => pkg.id));
+    const financePackages = new Set(packages.filter(pkg => assigned(pkg, 'ot') || assigned(pkg, 'oc')).map(pkg => pkg.id));
+    const ownPackages = new Set(packages.filter(pkg => assigned(pkg, 'os') || assigned(pkg, 'ot') || assigned(pkg, 'oc')).map(pkg => pkg.id));
+    const view = { schema: state.schema, revision: state.revision, sequence: actor.admin ? state.sequence : 0, updatedAt: state.updatedAt, publishedRevision: state.publishedRevision, audit: [], trash: [] };
+    tables.forEach(table => { view[table] = []; });
+    const rows = (table, predicate) => (state[table] || []).filter(predicate).map(row => {
+      const safe = {};
+      fields[table].forEach(key => { if (Object.prototype.hasOwnProperty.call(row, key) && row[key] !== undefined) safe[key] = copy(row[key]); });
+      return safe;
+    });
+    if (actor.admin) {
+      ['Members', 'Activities', 'Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments', 'Catalog'].forEach(table => { view[table] = rows(table, () => true); });
+    }
+    view.DocItems = rows('DocItems', row => docPackages.has(row.packageId));
+    const types = new Set(packages.filter(pkg => docPackages.has(pkg.id)).map(pkg => pkg.activityType));
+    const templateIds = new Set(view.DocItems.map(row => row.templateId).filter(Boolean));
+    view.DocTemplates = rows('DocTemplates', row => types.has(row.activityType) || templateIds.has(row.id));
+    view.FinBooks = rows('FinBooks', row => actor.treasurer || financePackages.has(row.packageId));
+    const bookIds = new Set(view.FinBooks.map(row => row.id));
+    ['FinIncomes', 'FinExpenses', 'FinReimbursements'].forEach(table => { view[table] = rows(table, row => bookIds.has(row.bookId)); });
+    const formIds = new Set(view.FinReimbursements.map(row => row.id));
+    view.FinReimburseLines = rows('FinReimburseLines', row => formIds.has(row.reimbursementId));
+    const visiblePackages = new Set([...docPackages, ...ownPackages, ...view.FinBooks.map(row => row.packageId).filter(Boolean)]);
+    view.DocPackages = rows('DocPackages', pkg => visiblePackages.has(pkg.id)).map(pkg => {
+      if (actor.admin || ownPackages.has(pkg.id)) return pkg;
+      // A finance reviewer needs activity context, not other officers' identities.
+      const safe = {};
+      ['id', 'version', 'activityType', 'year', 'eventDate', 'status', 'archived'].forEach(key => { if (Object.prototype.hasOwnProperty.call(pkg, key)) safe[key] = pkg[key]; });
+      return safe;
+    });
+    return view;
+  }
   function purgeTrash(original, trashId, context) {
     const state = copy(original);
     if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before permanently deleting.');
@@ -848,7 +1035,7 @@
     state.trash = state.trash.filter(row => row.id !== trashId);
     return finish(state, context.actor, 'Permanently delete: ' + item.rootTable + ':' + item.rootId, context.now);
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money };
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

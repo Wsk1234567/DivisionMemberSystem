@@ -92,29 +92,107 @@ function requireDocumentApprover_(actor) {
   if (actor.owner || actor.admin) return;
   throw new Error('Access denied. Only Owner or Secretary can approve documents.');
 }
+function requireFinanceApprover_(actor) {
+  if (actor.owner || actor.treasurer) return;
+  throw new Error('Access denied. Only Owner or Divisional Treasurer can approve finance.');
+}
 function packageRoleEmails_(pkg) {
   return ['ocEmail', 'osEmail', 'otEmail'].map(key => String(pkg[key] || '').trim().toLowerCase()).filter(Boolean);
 }
-function requirePackageAccess_(state, actor, packageId, itemId) {
-  let id = packageId;
-  if (!id && itemId) {
-    const item = state.DocItems.find(row => row.id === itemId);
-    if (item) id = item.packageId;
-  }
-  const pkg = id ? state.DocPackages.find(row => row.id === id) : null;
-  if (!pkg) throw new Error('Document package not found.');
-  if (actor.owner || actor.admin) return pkg;
-  const email = String(actor.email || '').toLowerCase();
-  if (email && packageRoleEmails_(pkg).includes(email)) return pkg;
-  throw new Error('Access denied. You are not assigned to this activity package.');
+// All package roles held by this email — concurrent roles must all apply, not first-match only.
+function packageRolesForEmail_(pkg, email) {
+  const mail = String(email || '').trim().toLowerCase();
+  const roles = [];
+  if (!pkg || !mail) return roles;
+  if (String(pkg.ocEmail || '').trim().toLowerCase() === mail) roles.push('oc');
+  if (String(pkg.osEmail || '').trim().toLowerCase() === mail) roles.push('os');
+  if (String(pkg.otEmail || '').trim().toLowerCase() === mail) roles.push('ot');
+  return roles;
 }
 function packageRole_(pkg, actor) {
-  const email = String(actor.email || '').toLowerCase();
   if (actor.owner || actor.admin) return 'admin';
-  if (String(pkg.ocEmail || '').toLowerCase() === email) return 'oc';
-  if (String(pkg.osEmail || '').toLowerCase() === email) return 'os';
-  if (String(pkg.otEmail || '').toLowerCase() === email) return 'ot';
-  return '';
+  const roles = packageRolesForEmail_(pkg, actor.email);
+  return roles[0] || '';
+}
+// Derive the real package from the item. request.packageId must not override item ownership.
+function resolveDocPackage_(state, packageId, itemId) {
+  if (itemId) {
+    const item = state.DocItems.find(row => row.id === itemId);
+    if (!item) throw new Error('Document item not found.');
+    if (packageId && String(packageId) !== String(item.packageId || '')) {
+      throw new Error('Package does not match the document item.');
+    }
+    const pkg = state.DocPackages.find(row => row.id === item.packageId);
+    if (!pkg) throw new Error('Document package not found.');
+    return pkg;
+  }
+  const pkg = packageId ? state.DocPackages.find(row => row.id === packageId) : null;
+  if (!pkg) throw new Error('Document package not found.');
+  return pkg;
+}
+function requirePackageAccess_(state, actor, packageId, itemId) {
+  const pkg = resolveDocPackage_(state, packageId, itemId);
+  if (actor.owner || actor.admin) return pkg;
+  const roles = packageRolesForEmail_(pkg, actor.email);
+  if (roles.length) return pkg;
+  throw new Error('Access denied. You are not assigned to this activity package.');
+}
+function requirePackageRole_(state, actor, packageId, itemId, allowed) {
+  const pkg = resolveDocPackage_(state, packageId, itemId);
+  if (actor.owner || actor.admin) return pkg;
+  const roles = packageRolesForEmail_(pkg, actor.email);
+  for (let i = 0; i < roles.length; i++) {
+    if (allowed.indexOf(roles[i]) >= 0) return pkg;
+  }
+  throw new Error('Access denied. Your package role cannot perform this action.');
+}
+// Real book ownership always wins. A forged packageId must never retarget an existing book.
+function resolveFinBook_(state, request) {
+  const bookId = request.bookId || (request.book && request.book.id) || '';
+  const claimed = request.packageId || (request.book && request.book.packageId) || '';
+  const book = bookId ? state.FinBooks.find(row => row.id === bookId) : null;
+  if (bookId && !book) throw new Error('Finance book not found.');
+  if (book) {
+    const actual = String(book.packageId || '');
+    if (claimed && String(claimed) !== actual) throw new Error('Finance book belongs to another activity package.');
+    return book;
+  }
+  return { id: '', packageId: String(claimed || '') };
+}
+function requireFinBookAccess_(state, actor, request) {
+  const action = String(request.action || '');
+  const book = resolveFinBook_(state, request);
+  const packageId = String(book.packageId || '');
+  if (actor.owner) return book;
+  // Unlinked books: divisional treasurer finance duties only — OT cannot claim legacy books.
+  if (!packageId) {
+    if (actor.treasurer && action !== 'checkFinBook' && action !== 'forwardFinBook') return book;
+    throw new Error('Access denied. Treasurer access is required.');
+  }
+  const pkg = state.DocPackages.find(row => row.id === packageId);
+  if (!pkg) throw new Error('Document package not found.');
+  const roles = packageRolesForEmail_(pkg, actor.email);
+  // OC gate stays with the assigned OC (Owner exception above). Treasurer/Admin do not auto-pass.
+  if (action === 'checkFinBook' || action === 'forwardFinBook') {
+    if (roles.indexOf('oc') >= 0) return book;
+    throw new Error('Access denied. Only the assigned OC can check or forward this finance book.');
+  }
+  // save/submit: assigned OT, or Divisional Treasurer finance duties.
+  if (action === 'saveFinanceBook' || action === 'submitFinBook') {
+    if (roles.indexOf('ot') >= 0) return book;
+    if (actor.treasurer) return book;
+    throw new Error('Access denied. Only the assigned OT can work on this activity finance book.');
+  }
+  // Final review / reopen: Divisional Treasurer (and Secretary reopen via separate gate).
+  if (action === 'reviewFinBook') {
+    if (actor.treasurer) return book;
+    throw new Error('Access denied. Only Owner or Divisional Treasurer can approve finance.');
+  }
+  if (action === 'reopenFinBook') {
+    if (actor.admin || actor.treasurer) return book;
+    throw new Error('Access denied. Owner or Secretary can reopen.');
+  }
+  throw new Error('Access denied. Treasurer access is required.');
 }
 function portalPublicUrl_() {
   return String(properties_().getProperty('PUBLIC_SITE_URL') || properties_().getProperty('PORTAL_RETURN_URL') || 'https://wsk1234567.github.io/DivisionMemberSystem/');
@@ -366,7 +444,7 @@ function bootstrap_(actor) {
   const state = loadState_();
   const currentPhase = Number(properties_().getProperty('CURRENT_PHASE') || 1);
   return {
-    state,
+    state: KPT.projectForActor(state, actor),
     user: {
       email: actor.email,
       owner: actor.owner,
@@ -380,18 +458,37 @@ function bootstrap_(actor) {
     treasurers: actor.owner ? actor.config.treasurers : [],
     ocs: actor.owner ? actor.config.ocs : [],
     currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1,
-    docFolders: { templates: actor.config.templatesId || '', submissions: actor.config.submissionsId || '' }
+    docFolders: actor.owner ? { templates: actor.config.templatesId || '', submissions: actor.config.submissionsId || '' } : { templates: '', submissions: '' }
   };
 }
-function rpc(request, apiEmail) {
+// Public Apps Script entry point must derive identity from the session, never a caller email.
+function rpc(request) {
+  return rpcForEmail_(request);
+}
+// Only verified API/bridge callers pass an email through this private function.
+function rpcForEmail_(request, apiEmail) {
+  try {
+    const actor = identity_(false, true, apiEmail);
+    const response = rpcInternal_(request, apiEmail);
+    if (response.ok && response.data && response.data.state) {
+      response.data.state = KPT.projectForActor(response.data.state, actor);
+    }
+    return response;
+  } catch (error) {
+    return { ok: false, error: String(error.message || error).slice(0, 500) };
+  }
+}
+function rpcInternal_(request, apiEmail) {
   try {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
     const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash', 'initDocFolders'];
     const adminOnlyActions = ['previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults'];
-    const financeActions = ['saveFinanceBook'];
+    const financeActions = ['saveFinanceBook', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook'];
     const memberDataActions = ['save', 'attendance'];
-    const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload'];
+    const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload'];
     const documentApproveActions = ['docItemReview'];
+    const documentOcActions = ['docItemCheck', 'docItemForward'];
+    const documentSubmitActions = ['docItemUpload', 'docItemSubmit'];
     if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false, true, apiEmail)) }));
     if (request.action === 'listBackups') {
       const listActor = identity_(false, true, apiEmail);
@@ -401,14 +498,17 @@ function rpc(request, apiEmail) {
     return withLock_(() => {
       const actor = identity_(ownerOnlyActions.includes(request.action), true, apiEmail);
       if (adminOnlyActions.includes(request.action)) requireAdmin_(actor);
-      if (financeActions.includes(request.action)) requireFinance_(actor);
       if (memberDataActions.includes(request.action)) requireAdmin_(actor);
       if (documentActions.includes(request.action) || documentApproveActions.includes(request.action)) requireDocuments_(actor);
       if (documentApproveActions.includes(request.action)) requireDocumentApprover_(actor);
       const state = loadState_();
       const context = context_(actor.email);
-      const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload', 'setDocItemTaskStatus'];
+      const packageScoped = ['saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'docDownload', 'setDocItemTaskStatus'];
       if (packageScoped.includes(request.action)) requirePackageAccess_(state, actor, request.packageId, request.itemId);
+      if (documentOcActions.includes(request.action)) requirePackageRole_(state, actor, request.packageId, request.itemId, ['oc']);
+      if (documentSubmitActions.includes(request.action) && !(actor.owner || actor.admin)) {
+        requirePackageRole_(state, actor, request.packageId, request.itemId, ['os', 'oc']);
+      }
       if (request.action === 'createDocPackage' && !actor.owner) throw new Error('Access denied. Only the owner can create document packages.');
       if (request.action === 'saveDocPackageMeta') {
         requirePackageAccess_(state, actor, request.packageId, request.itemId);
@@ -423,15 +523,16 @@ function rpc(request, apiEmail) {
           request.canEditDue = packageRole_(pkg || {}, actor) === 'oc';
         }
       }
-      if (request.action === 'submitFinBook' && !(actor.owner || actor.admin || actor.treasurer)) {
-        requireDocuments_(actor);
+      if (financeActions.includes(request.action)) {
+        requireFinBookAccess_(state, actor, request);
       }
       if (request.action === 'reviewFinBook') {
-        if (!(actor.owner || actor.admin || actor.treasurer)) throw new Error('Access denied. Treasurer review is required.');
+        requireFinanceApprover_(actor);
       }
       if (request.action === 'reopenFinBook' && !(actor.owner || actor.admin)) throw new Error('Access denied. Owner or Secretary can reopen.');
-      if (request.action === 'docItemUpload' && request.fileBase64 && !request.fileId) {
+      if (request.action === 'docItemUpload') {
         requireDocuments_(actor);
+        if (!request.fileBase64 || request.fileId) throw new Error('Upload file content; a caller-supplied file ID is not allowed.');
         request.fileId = storeDocFile_(actor.config.submissionsId, request.fileName, request.fileBase64);
       }
       if (request.action === 'saveDocTemplate' && request.fileBase64) {
@@ -439,7 +540,7 @@ function rpc(request, apiEmail) {
         if (!actor.config.templatesId) throw new Error('Document folders are not initialised. Owner must run Initialize document folders.');
         request.row = Object.assign({}, request.row, { fileId: storeDocFile_(actor.config.templatesId, request.row.fileName, request.fileBase64) });
       }
-      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'reviewFinBook', 'reopenFinBook', 'setDocItemTaskStatus'].includes(request.action)) {
+      if (['save', 'attendance', 'saveFinanceBook', 'createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReview', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook', 'setDocItemTaskStatus'].includes(request.action)) {
         const next = KPT.mutate(state, request, context);
         if (request.action === 'createDocPackage' || request.action === 'saveDocPackageMeta') {
           registerPackageRoleEmails_([request.ocEmail, request.osEmail, request.otEmail]);
@@ -450,7 +551,16 @@ function rpc(request, apiEmail) {
       }
       if (request.action === 'docDownload') {
         requireDocuments_(actor);
-        const result = docDownload_(state, request);
+        const visible = KPT.projectForActor(state, actor);
+        const item = visible.DocItems.find(row => row.id === request.itemId);
+        if (!item) throw new Error('Access denied. Document is outside your reading scope.');
+        const template = request.source === 'template' ? visible.DocTemplates.find(row => row.id === item.templateId) : null;
+        const allowedFileId = request.source === 'template' ? (template && template.fileId) : item.fileId;
+        if (!allowedFileId) throw new Error('No file available to download.');
+        if (request.fileId && request.fileId !== allowedFileId) throw new Error('Access denied. File does not match the document.');
+        if (request.templateId && request.templateId !== item.templateId) throw new Error('Access denied. Template does not match the document.');
+        request = Object.assign({}, request, { fileId: allowedFileId || '', templateId: '' });
+        const result = docDownload_(visible, request);
         return { ok: true, data: result };
       }
       if (request.action === 'previewDelete') return { ok: true, data: KPT.recycleBundle(state, request.table, request.id) };
@@ -484,8 +594,8 @@ function rpc(request, apiEmail) {
         commit_(preview.state);
         return { ok: true, data: { state: preview.state, sync: sync_(preview.state) } };
       }
-      if (request.action === 'retrySync') return { ok: true, data: { state, sync: sync_(state) } };
-      if (request.action === 'backup') return { ok: true, data: backup_(state, 'Manual backup') };
+      if (request.action === 'retrySync') { requireAdmin_(actor); return { ok: true, data: { state, sync: sync_(state) } }; }
+      if (request.action === 'backup') { requireAdmin_(actor); return { ok: true, data: backup_(state, 'Manual backup') }; }
       if (request.action === 'restore') {
         if (request.revision !== state.revision) throw new Error('Conflict: reload before restoring.');
         const file = DriveApp.getFileById(request.backupId);
@@ -668,7 +778,7 @@ function doPost(e) {
       return apiJson_({ ok: true, data: { loggedOut: true } });
     }
     const email = portalRequestEmail_(request);
-    const result = rpc(request, email);
+    const result = rpcForEmail_(request, email);
     return apiJson_(result);
   } catch (error) {
     return apiJson_({ ok: false, error: String(error.message || error).slice(0, 500) });
@@ -701,7 +811,7 @@ function apiRpc(request) {
       if (!email) throw error;
     }
     if (!email) return { ok: false, error: 'Sign-in required.' };
-    return rpc(request, email);
+    return rpcForEmail_(request, email);
   } catch (error) {
     return { ok: false, error: String(error.message || error).slice(0, 500) };
   }

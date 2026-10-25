@@ -17,7 +17,11 @@
   const navLabel = key => t('nav.' + key);
   const workspaceNav = mode => {
     if (mode === 'portal') return nav.portal;
-    if (mode === 'oc') return ocNav;
+    if (mode === 'oc') {
+      const extra = [];
+      if (user && (user.owner || user.treasurer || activePackageRoles().indexOf('ot') >= 0)) extra.push(['Finance', 'Organizing Treasurer']);
+      return ocNav.concat(extra);
+    }
     if (mode === 'admin' && user && !user.admin && user.oc && !user.owner && !user.treasurer) return ocNav;
     return nav[mode] || nav.admin;
   };
@@ -26,21 +30,28 @@
     const mail = String(email || '').toLowerCase();
     return [pkg.ocEmail, pkg.osEmail, pkg.otEmail].map(v => String(v || '').toLowerCase()).filter(Boolean).includes(mail);
   };
+  const packageRolesFor = (pkg, email) => {
+    if (!pkg) return [];
+    const mail = String(email || '').toLowerCase();
+    const roles = [];
+    if (String(pkg.ocEmail || '').toLowerCase() === mail) roles.push('oc');
+    if (String(pkg.osEmail || '').toLowerCase() === mail) roles.push('os');
+    if (String(pkg.otEmail || '').toLowerCase() === mail) roles.push('ot');
+    return roles;
+  };
   const packageRoleFor = (pkg, email) => {
     if (!pkg || !user) return '';
-    const mail = String(email || user.email || '').toLowerCase();
     if (user.owner || user.admin) return 'admin';
-    if (String(pkg.ocEmail || '').toLowerCase() === mail) return 'oc';
-    if (String(pkg.osEmail || '').toLowerCase() === mail) return 'os';
-    if (String(pkg.otEmail || '').toLowerCase() === mail) return 'ot';
-    return '';
+    return packageRolesFor(pkg, email)[0] || '';
   };
-  const activePackageRole = () => {
+  const activePackageRoles = () => {
     const pkg = openDocPackageId ? (state && state.DocPackages || []).find(row => row.id === openDocPackageId) : null;
-    if (pkg) return packageRoleFor(pkg, user && user.email);
+    if (pkg) return user && (user.owner || user.admin) ? ['admin'] : packageRolesFor(pkg, user && user.email);
     const mine = ocPackages()[0];
-    return mine ? packageRoleFor(mine, user && user.email) : (isOcOnly() ? 'oc' : '');
+    if (mine) return user && (user.owner || user.admin) ? ['admin'] : packageRolesFor(mine, user && user.email);
+    return isOcOnly() ? ['oc'] : [];
   };
+  const activePackageRole = () => activePackageRoles()[0] || '';
   const ocPackages = () => {
     if (!user || !state || !state.DocPackages) return [];
     const email = String(user.email || '').toLowerCase();
@@ -97,6 +108,7 @@
   let openDocPackageId = null;
   let docEditOpen = false;
   let docEditDraft = null;
+  let activityIntroExpanded = false;
   let workspaceMode = 'admin';
   let currentPhase = 1;
   let sync = { ok: true };
@@ -126,7 +138,7 @@
     if (requested === 'admin' && (user.admin || user.owner)) return 'admin';
     if (requested === 'oc' && user.oc) return 'oc';
     if (user.owner) return 'portal';
-    if (user.treasurer && !user.admin) return 'portal';
+    if (user.treasurer && !user.admin) return 'treasurer';
     if (user.admin) return 'portal';
     if (user.oc) return 'oc';
     return 'portal';
@@ -268,13 +280,34 @@
   };
   const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' });
   function financeList() {
-    const books = state.FinBooks.filter(match).slice().sort((first, second) => first.activityName.localeCompare(second.activityName));
+    const roleSet = activePackageRoles();
+    const isGlobal = !!(user && (user.owner || user.treasurer || user.admin));
+    const myPackageIds = new Set((state && state.DocPackages || []).filter(pkg => {
+      if (user && (user.owner || user.admin)) return true;
+      return packageRolesFor(pkg, user && user.email).length > 0;
+    }).map(pkg => pkg.id));
+    const books = state.FinBooks.filter(book => {
+      if (!match(book)) return false;
+      if (isGlobal) return true;
+      // Package roles only see books for packages they are assigned to.
+      return book.packageId && myPackageIds.has(book.packageId);
+    }).slice().sort((first, second) => first.activityName.localeCompare(second.activityName));
     const how = '<section class="card how-card"><h2>How to use this page</h2><ol><li><strong>Income &amp; Expenses</strong> — type all money in and money out for the activity.</li><li><strong>Reimbursement forms</strong> — each form holds up to 11 lines. A full form automatically continues on a new form.</li><li><strong>Receipts</strong> — photograph every slip, then download one PDF.</li></ol></section>';
-    return '<p class="page-intro">Enter an activity name to start a new finance record. Anyone signed in here can fill these tables; downloads match the official formats.</p>' + how + listHead('Activity finance records', null) + '<div class="section-heading"><span></span><button class="button primary" type="button" data-action="financeAddBook">Add activity</button></div>' + table(['Activity', 'Income lines', 'Expense lines', 'Reimbursement forms', 'Actions'], books.map(book => {
+    const canReview = !!(user.owner || user.treasurer);
+    const canAdd = !!(user.owner || user.treasurer || roleSet.indexOf('ot') >= 0);
+    return '<p class="page-intro">Enter an activity name to start a new finance record. Anyone signed in here can fill these tables; downloads match the official formats.</p>' + how + listHead('Activity finance records', null) + (canAdd ? '<div class="section-heading"><span></span><button class="button primary" type="button" data-action="financeAddBook">Add activity</button></div>' : '') + table(['Activity', 'Status', 'Income lines', 'Expense lines', 'Reimbursement forms', 'Actions'], books.map(book => {
       const incomes = state.FinIncomes.filter(row => row.bookId === book.id).length;
       const expenses = state.FinExpenses.filter(row => row.bookId === book.id).length;
       const forms = state.FinReimbursements.filter(row => row.bookId === book.id).length;
-      return [escape(book.activityName), incomes, expenses, forms, '<div class="row-tools">' + button('Open', 'financeOpenBook', book.id) + deleteButton('FinBooks', book.id) + '</div>'];
+      const status = book.status || 'Draft';
+      const tools = [button('Open', 'financeOpenBook', book.id)];
+      if (canReview && status === 'Submitted') {
+        tools.push(button('Approve', 'finApprove', book.id));
+        tools.push(button('Reject', 'finReject', book.id));
+      }
+      if (canReview && status === 'Approved' && (user.owner || user.admin)) tools.push(button('Reopen', 'finReopen', book.id));
+      tools.push(deleteButton('FinBooks', book.id));
+      return [escape(book.activityName), pill(workflowStatusLabel(status)), incomes, expenses, forms, '<div class="row-tools">' + tools.join(' ') + '</div>'];
     })) + pager(books.length);
   }
   function financeInput(kind, index, key, value, type, attrs) {
@@ -299,13 +332,28 @@
     const incomeTotal = book.incomes.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
     const expenseTotal = book.expenses.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
     const files = financeReceiptFiles;
+    const savedBook = book.id ? (state && state.FinBooks || []).find(row => row.id === book.id) : null;
+    const liveStatus = savedBook ? (savedBook.status || 'Draft') : 'Draft';
+    const locked = ['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].indexOf(liveStatus) >= 0;
+    const canEdit = !locked && !!(user.owner || user.treasurer || activePackageRoles().indexOf('ot') >= 0) && (() => {
+      if (!book.id && !book.packageId) return !!(user.owner || user.treasurer);
+      if (!book.packageId) return !!(user.owner || user.treasurer);
+      const pkg = (state && state.DocPackages || []).find(p => p.id === book.packageId);
+      if (!pkg) return !!(user.owner || user.treasurer);
+      const roles = packageRolesFor(pkg, user.email);
+      return roles.indexOf('ot') >= 0 || !!user.owner || !!user.treasurer;
+    })();
+    const canReview = !!(user.owner || user.treasurer);
+    const readOnly = locked ? ' readonly' : '';
+    const disableAdd = locked || !canEdit ? ' disabled' : '';
+    const reviewBar = canReview && liveStatus === 'Submitted' ? '<div class="toolbar">' + button('Approve', 'finApprove', book.id) + button('Reject', 'finReject', book.id) + '</div>' : '';
     const how = '<section class="card how-card"><h2>How to do this</h2><ol><li>Type the activity name, then save.</li><li>Fill Income &amp; Expenses — one row per receipt or payment.</li><li>Create a reimbursement form in your name as Organizing Treasurer; add invoice lines (max 11 per form).</li><li>Photograph slips and download the receipt PDF.</li></ol></section>';
-    return '<div class="section-heading"><div><div class="eyebrow">Organizing Treasurer</div><h2 style="margin:0">' + escape(book.activityName || 'New activity') + '</h2></div><div class="toolbar">' + button('Back to list', 'financeBack') + '<button class="button primary" type="button" data-action="financeSave">Save</button></div></div>' + how + '<section class="card"><div class="field full"><label for="finance-activity-name">Activity name</label><input id="finance-activity-name" type="text" data-fin="book" data-index="0" data-key="activityName" value="' + escape(book.activityName) + '" maxlength="200" placeholder="e.g. Badminton Competition 2026"></div></section>' +
-      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 1</div><h2 style="margin:0">Income &amp; Expenses</h2></div><div class="toolbar"><button class="button small" type="button" data-action="financeAddIncome">Add income</button><button class="button small" type="button" data-action="financeAddExpense">Add expense</button>' + button('Download Excel', 'financeDownloadIE') + '</div></div>' +
-      '<h3>Income · RM ' + moneyText(incomeTotal) + '</h3>' + financeRows('income', book.incomes, [{ label: 'Date', key: 'date', type: 'date' }, { label: 'Description', key: 'description', type: 'text' }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' }]) +
-      '<h3 style="margin-top:20px">Expenditure · RM ' + moneyText(expenseTotal) + '</h3>' + financeRows('expense', book.expenses, [{ label: 'Date', key: 'date', type: 'date' }, { label: 'Item', key: 'item', type: 'text' }, { label: 'Description', key: 'description', type: 'text' }, { label: 'Quantity', key: 'quantity', type: 'text' }, { label: 'Cost per unit (RM)', key: 'unitCost', type: 'text' }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' }]) +
+    return '<div class="section-heading"><div><div class="eyebrow">' + escape(langLabel('Activity finance', '活动财务')) + ' · ' + escape(workflowStatusLabel(liveStatus)) + '</div><h2 style="margin:0">' + escape(book.activityName || 'New activity') + '</h2></div><div class="toolbar">' + button('Back to list', 'financeBack') + reviewBar + (canEdit && !locked ? '<button class="button primary" type="button" data-action="financeSave">Save</button>' : '') + '</div></div>' + (locked ? '<p class="hint">' + escape(langLabel('This book is in the approval flow. Editing is locked until it is returned or reopened.', '本账本正在审批流中，退回或重开前不能编辑。')) + '</p>' : '') + how + '<section class="card"><div class="field full"><label for="finance-activity-name">Activity name</label><input id="finance-activity-name" type="text" data-fin="book" data-index="0" data-key="activityName" value="' + escape(book.activityName) + '" maxlength="200" placeholder="e.g. Badminton Competition 2026"' + readOnly + '></div></section>' +
+      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 1</div><h2 style="margin:0">Income &amp; Expenses</h2></div><div class="toolbar"><button class="button small" type="button" data-action="financeAddIncome"' + disableAdd + '>Add income</button><button class="button small" type="button" data-action="financeAddExpense"' + disableAdd + '>Add expense</button>' + button('Download Excel', 'financeDownloadIE') + '</div></div>' +
+      '<h3>Income · RM ' + moneyText(incomeTotal) + '</h3>' + financeRows('income', book.incomes, [{ label: 'Date', key: 'date', type: 'date', attrs: readOnly.trim() }, { label: 'Description', key: 'description', type: 'text', attrs: readOnly.trim() }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' + readOnly }]) +
+      '<h3 style="margin-top:20px">Expenditure · RM ' + moneyText(expenseTotal) + '</h3>' + financeRows('expense', book.expenses, [{ label: 'Date', key: 'date', type: 'date', attrs: readOnly.trim() }, { label: 'Item', key: 'item', type: 'text', attrs: readOnly.trim() }, { label: 'Description', key: 'description', type: 'text', attrs: readOnly.trim() }, { label: 'Quantity', key: 'quantity', type: 'text', attrs: readOnly.trim() }, { label: 'Cost per unit (RM)', key: 'unitCost', type: 'text', attrs: readOnly.trim() }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' + readOnly }]) +
       '</section>' +
-      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 2</div><h2 style="margin:0">Reimbursement forms</h2></div><button class="button small" type="button" data-action="financeAddForm">Add form</button></div>' +
+      '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 2</div><h2 style="margin:0">Reimbursement forms</h2></div><button class="button small" type="button" data-action="financeAddForm"' + disableAdd + '>Add form</button></div>' +
       (book.reimbursements.length ? book.reimbursements.map((form, index) => financeFormBlock(form, index)).join('') : '<p class="muted">No forms yet.</p>') +
       '</section>' +
       '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 3</div><h2 style="margin:0">Soft copy receipts</h2></div><div class="toolbar"><label class="button" for="finance-receipts">Add photos<input id="finance-receipts" type="file" accept="image/*" multiple hidden></label><button class="button primary" type="button" data-action="financeDownloadReceipts"' + (files.length ? '' : ' disabled') + '>Download PDF</button></div></div>' +
@@ -377,19 +425,35 @@
     link.click();
     URL.revokeObjectURL(url);
   }
+  function langLabel(en, zh) {
+    return (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? zh : en;
+  }
   function docActionsFor(item) {
     const tools = [];
+    const roleSet = activePackageRoles();
+    const isOc = user.owner || user.admin || roleSet.indexOf('oc') >= 0;
+    const isOs = user.owner || user.admin || roleSet.indexOf('os') >= 0 || roleSet.indexOf('oc') >= 0;
+    const isFinal = user.owner || user.admin;
     if (item.fileId) tools.push(button(t('docs.download'), 'docDownload', item.id));
     if (item.status === 'Approved') {
-      if (user.owner || user.admin) tools.push(button(t('docs.reopen'), 'docReopen', item.id));
+      if (isFinal) tools.push(button(t('docs.reopen'), 'docReopen', item.id));
+    } else if (item.status === 'AwaitingOC') {
+      if (isOc) {
+        tools.push(button(langLabel('Check pass', '检查通过'), 'docCheck', item.id, 'pass'));
+        tools.push(button(langLabel('Return', '退回'), 'docCheck', item.id, 'return'));
+      }
+    } else if (item.status === 'OCChecked') {
+      if (isOc) tools.push(button(langLabel('Forward for approval', '转交审批'), 'docForward', item.id));
     } else if (item.status === 'Submitted') {
-      if (user.owner || user.admin) {
+      if (isFinal) {
         tools.push(button(t('docs.approve'), 'docApprove', item.id));
         tools.push(button(t('docs.reject'), 'docReject', item.id));
       }
     } else {
-      tools.push('<label class="button small" for="doc-upload-' + escape(item.id) + '">' + escape(t('docs.upload')) + '<input id="doc-upload-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
-      if (item.status === 'Draft' || item.status === 'Rejected') tools.push(button(t('docs.submit'), 'docSubmit', item.id));
+      if (isOs) {
+        tools.push('<label class="button small" for="doc-upload-' + escape(item.id) + '">' + escape(t('docs.upload')) + '<input id="doc-upload-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
+        if (item.status === 'Draft' || item.status === 'Rejected') tools.push(button(langLabel('Submit to OC', '提交给 OC'), 'docSubmit', item.id));
+      }
     }
     if (item.templateId) tools.push(button(t('docs.template'), 'docDownloadTemplate', item.id));
     return tools.join(' ');
@@ -442,6 +506,16 @@
     const icon = pkg.activityType === 'AGM'
       ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="4" y="3" width="16" height="18" rx="2"/></svg>'
       : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
+    const panelId = 'activity-intro-more';
+    const expanded = !!activityIntroExpanded;
+    const moreLabel = lang === 'zh' ? 'See more · 展开说明' : 'See more';
+    const lessLabel = lang === 'zh' ? 'See less · 收起说明' : 'See less';
+    const guide = (copy.guide && copy.guide.length) ? copy.guide : [
+      { title: lang === 'zh' ? '这是什么' : 'What it is', body: copy.what },
+      { title: lang === 'zh' ? '为什么重要' : 'Why it matters', body: copy.why },
+      { title: lang === 'zh' ? '你要做什么' : 'What you do', body: copy.do },
+      { title: lang === 'zh' ? '注意' : 'Note', body: copy.note }
+    ];
     return '<section class="activity-about" aria-label="' + escape(copy.eyebrow) + '">'
       + '<div class="activity-about-rail" aria-hidden="true"></div>'
       + '<div class="activity-about-body">'
@@ -452,24 +526,13 @@
       + '<li><span class="dot do"></span><div><strong>' + escape(lang === 'zh' ? '你要做什么' : 'What you do') + '</strong><p>' + escape(copy.do) + '</p></div></li>'
       + '</ul>'
       + '<p class="activity-about-note"><span aria-hidden="true">⚠</span> ' + escape(copy.note) + '</p>'
-      + (copy.guide && copy.guide.length ? '<div class="activity-about-actions"><button type="button" class="button small primary" data-action="openActivityGuide" data-id="' + escape(pkg.activityType) + '">' + escape(lang === 'zh' ? '完整说明' : 'Full guide') + '</button></div>' : '')
+      + '<div class="activity-about-actions">'
+      + '<button type="button" class="button small primary" data-action="toggleActivityIntro" aria-expanded="' + (expanded ? 'true' : 'false') + '" aria-controls="' + panelId + '">' + escape(expanded ? lessLabel : moreLabel) + '</button>'
+      + '</div>'
+      + '<div id="' + panelId + '" class="activity-guide-list activity-intro-more"' + (expanded ? '' : ' hidden') + '>'
+      + guide.map(section => '<section class="activity-guide-section"><h3>' + escape(section.title) + '</h3><p>' + escape(section.body) + '</p></section>').join('')
+      + '</div>'
       + '</div></section>';
-  }
-  function openActivityGuideDialog(activityType) {
-    const dialog = byId('editor');
-    const lang = (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? 'zh' : 'en';
-    const copy = window.KPTActivityIntro ? window.KPTActivityIntro.introFor(activityType, lang) : null;
-    if (!copy) return;
-    byId('editor-title').textContent = lang === 'zh' ? '活动完整说明' : 'Activity full guide';
-    const guide = copy.guide && copy.guide.length ? copy.guide : [
-      { title: lang === 'zh' ? '这是什么' : 'What it is', body: copy.what },
-      { title: lang === 'zh' ? '为什么重要' : 'Why it matters', body: copy.why },
-      { title: lang === 'zh' ? '你要做什么' : 'What you do', body: copy.do },
-      { title: lang === 'zh' ? '注意' : 'Note', body: copy.note }
-    ];
-    byId('editor-body').innerHTML = '<div class="activity-guide-list">' + guide.map(section => '<section class="activity-guide-section"><h3>' + escape(section.title) + '</h3><p>' + escape(section.body) + '</p></section>').join('') + '</div><div class="dialog-actions"><button class="button primary" type="button" data-action="close">Close</button></div>';
-    byId('editor-message').textContent = '';
-    if (dialog && !dialog.open) dialog.showModal();
   }
   function documentsView() {
     if (isOcOnly() && openDocPackageId) {
@@ -497,10 +560,15 @@
     const items = progress.items.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     const nextItem = items.find(row => row.required && row.status !== 'Approved' && row.status !== 'NotRequired');
     const aboutCard = activityAboutCard(pkg);
-    const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : nextItem.status) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
+    const nextCard = nextItem ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.nextStep')) + '</div><p><strong>' + escape(nextItem.title) + '</strong> — ' + escape(nextItem.status === 'Pending' ? t('docs.pending') : nextItem.status === 'Draft' ? t('docs.draft') : nextItem.status === 'Rejected' ? t('docs.rejectedNext') : nextItem.status === 'Submitted' ? t('docs.submittedNext') : workflowStatusLabel(nextItem.status)) + '</p></section>' : (progress.total && progress.approved === progress.total ? '<section class="card" style="margin-bottom:18px"><div class="eyebrow">' + escape(t('docs.completed')) + '</div><p>' + escape(t('docs.completedMsg')) + '</p></section>' : '');
+    const roleSetEarly = activePackageRoles();
+    const isOsEarly = user.owner || user.admin || roleSetEarly.indexOf('os') >= 0;
+    const isOtEarly = user.owner || user.admin || user.treasurer || roleSetEarly.indexOf('ot') >= 0;
+    const isOcEarly = user.owner || user.admin || roleSetEarly.indexOf('oc') >= 0;
     const activeRole = activePackageRole();
     const roleTitle = activeRole === 'os' ? 'Organizing Secretary workplace' : activeRole === 'ot' ? 'Organizing Treasurer workplace' : activeRole === 'oc' ? 'Organizing Chairman workplace' : 'Activity workplace';
-    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(roleTitle) + ' · ' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">Document checklist</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="oc@gmail.com"></label><label class="field"><span>OS email</span><input id="doc-os-edit" type="email" value="' + escape(pkg.osEmail || '') + '" placeholder="os@gmail.com"></label><label class="field"><span>OT email</span><input id="doc-ot-edit" type="email" value="' + escape(pkg.otEmail || '') + '" placeholder="ot@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || '—') + '</strong> · OS <strong>' + escape(pkg.osEmail || '—') + '</strong> · OT <strong>' + escape(pkg.otEmail || '—') + '</strong></p></section>';
+    const metaTitle = (isOtEarly && !isOsEarly && !isOcEarly) ? langLabel('Activity finance', '活动财务') : langLabel('Document checklist', '文书清单');
+    const meta = '<section class="card"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(roleTitle) + ' · ' + escape(pkg.activityType) + ' · ' + pkg.year + '</div><h2 style="margin:0">' + escape(metaTitle) + '</h2></div><div class="toolbar">' + button('Back to list', 'docBack') + '<form id="doc-event-form" class="toolbar"><label class="field"><span>Event date</span><input id="doc-event-edit" type="date" value="' + escape(pkg.eventDate) + '"></label>' + (user.owner ? '<label class="field"><span>OC email</span><input id="doc-oc-edit" type="email" value="' + escape(pkg.ocEmail || '') + '" placeholder="oc@gmail.com"></label><label class="field"><span>OS email</span><input id="doc-os-edit" type="email" value="' + escape(pkg.osEmail || '') + '" placeholder="os@gmail.com"></label><label class="field"><span>OT email</span><input id="doc-ot-edit" type="email" value="' + escape(pkg.otEmail || '') + '" placeholder="ot@gmail.com"></label>' : '') + '<button class="button small" type="submit">Save</button></form></div></div><p class="muted">' + progress.approved + ' / ' + progress.total + ' required approved · status <strong>' + escape(pkg.archived ? 'Archived' : pkg.status) + '</strong> · OC <strong>' + escape(pkg.ocEmail || '—') + '</strong> · OS <strong>' + escape(pkg.osEmail || '—') + '</strong> · OT <strong>' + escape(pkg.otEmail || '—') + '</strong></p></section>';
     const financeCard = activityFinanceCard(pkg);
     const templates = (state.DocTemplates || []).filter(row => row.activityType === pkg.activityType && !row.archived);
     const canEditStructure = !!(user.owner || user.admin);
@@ -535,34 +603,76 @@
       String(item.sortOrder),
       escape(item.title) + (item.required ? '' : ' <small>· optional</small>') + (item.role ? '<br><small>' + escape(item.role) + '</small>' : '') + (item.assignee ? '<br><small>PIC · ' + escape(item.assignee) + '</small>' : ''),
       escape(docDueBadge(pkg, item)),
-      taskStatusPill(item) + ' ' + pill(item.status) + (item.remarks ? '<br><small style="color:#852b3d">' + escape(item.remarks) + '</small>' : ''),
+      taskStatusPill(item) + ' ' + pill(workflowStatusLabel(item.status)) + (item.rejectStage ? '<br><small>' + escape(langLabel('Returned at ', '退回于 ') + item.rejectStage) + '</small>' : '') + (item.remarks ? '<br><small style="color:#852b3d">' + escape(item.remarks) + '</small>' : ''),
       escape(item.fileName || '—'),
       '<div class="row-tools">' + (item.taskStatus === 'Done' ? button('Reopen', 'taskOpen', item.id) : button('Done', 'taskDone', item.id)) + (item.taskStatus !== 'Cancelled' ? button('Cancel', 'taskCancel', item.id) : button('Uncancel', 'taskOpen', item.id)) + docActionsFor(item) + '</div>'
     ]);
-    const dashboard = (user.owner || user.admin || user.oc) ? ocDashboardCard(pkg, items) : '';
-    return aboutCard + dashboard + nextCard + meta + financeCard + listToolbar + '<section class="card">' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' + folders + templateSection;
+    const roleSet = activePackageRoles();
+    const isOs = user.owner || user.admin || roleSet.indexOf('os') >= 0;
+    const isOt = user.owner || user.admin || user.treasurer || roleSet.indexOf('ot') >= 0;
+    const isOc = user.owner || user.admin || roleSet.indexOf('oc') >= 0;
+    const isOsOnly = isOs && !isOt && !isOc;
+    const isOtOnly = isOt && !isOs && !isOc;
+    const showDocs = isOs || isOc || user.owner || user.admin;
+    const showFinance = isOt || isOc || user.owner || user.admin || user.treasurer;
+    const ocDocQueue = items.filter(row => row.status === 'AwaitingOC');
+    const ocFinBook = state.FinBooks && state.FinBooks.find(row => !row.archived && row.packageId === pkg.id);
+    const ocFinQueued = ocFinBook && ocFinBook.status === 'AwaitingOC';
+    const ocFinChecked = ocFinBook && ocFinBook.status === 'OCChecked';
+    const ocQueues = isOc ? '<section class="card"><div class="eyebrow">' + escape(langLabel('OC check queue', 'OC 待检查队列')) + '</div>'
+      + '<h2>' + escape(langLabel('Documents waiting for OC', '待检查文书')) + ' · ' + ocDocQueue.length + '</h2>'
+      + (ocDocQueue.length ? table(['#', 'Document', 'Due', 'Actions'], ocDocQueue.map(item => [String(item.sortOrder), escape(item.title), escape(docDueBadge(pkg, item)), '<div class="row-tools">' + button(langLabel('Check pass', '检查通过'), 'docCheck', item.id, 'pass') + button(langLabel('Return', '退回'), 'docCheck', item.id) + '</div>'])) : '<p class="muted">' + escape(langLabel('No documents waiting.', '没有待检查文书。')) + '</p>')
+      + '<h2 style="margin-top:18px">' + escape(langLabel('Finance waiting for OC', '待检查财务')) + '</h2>'
+      + (ocFinQueued ? '<div class="toolbar">' + button(langLabel('Check pass', '检查通过'), 'finCheck', ocFinBook.id, 'pass') + button(langLabel('Return', '退回'), 'finCheck', ocFinBook.id) + '</div>'
+        : ocFinChecked ? '<p>' + escape(langLabel('Finance is OC checked. Forward for approval.', '财务已通过 OC 检查，可转交审批。')) + '</p><div class="toolbar">' + button(langLabel('Forward for approval', '转交审批'), 'finForward', ocFinBook.id) + '</div>'
+        : '<p class="muted">' + escape(langLabel('No finance waiting for OC.', '没有待检查财务。')) + '</p>')
+      + '</section>' : '';
+    const osBlock = isOs ? '<section class="card"><div class="eyebrow">' + escape(langLabel('OS · Documents', 'OS · 文书')) + '</div><h2 style="margin-top:0">' + escape(langLabel('Upload and submit documents to OC', '上传并提交文书给 OC')) + '</h2><p class="muted">' + escape(langLabel('Draft files here, then Submit to OC. Returned items show the reason.', '在此上传草稿后提交给 OC。被退回的文件会显示原因。')) + '</p></section>' : '';
+    const otBlock = isOt ? '<section class="card"><div class="eyebrow">' + escape(langLabel('OT · Finance', 'OT · 财务')) + '</div><h2 style="margin-top:0">' + escape(langLabel('Fill I&E, Claims and Receipts', '填写收支、报销与收据')) + '</h2><p class="muted">' + escape(langLabel('Keep this activity book updated, then Submit to OC.', '维护本活动账本后提交给 OC 检查。')) + '</p></section>' : '';
+    const dashboard = isOc ? ocDashboardCard(pkg, items) : '';
+    const docSection = showDocs ? listToolbar + '<section class="card"><h2>' + escape(langLabel('Document checklist', '文书清单')) + '</h2>' + table(['#', 'Document', 'Due', 'Status', 'File', 'Actions'], rows) + '</section>' : (isOtOnly ? '<section class="card"><h2>' + escape(langLabel('Activity progress', '活动进度')) + '</h2><p class="muted">' + progress.approved + ' / ' + progress.total + ' ' + escape(langLabel('required documents approved', '项必交文件已批准')) + '</p></section>' : '');
+    const financeSection = showFinance ? financeCard : '';
+    return aboutCard + dashboard + ocQueues + nextCard + meta + osBlock + otBlock + financeSection + docSection + folders + templateSection;
   }
   function activityFinanceCard(pkg) {
     if (!state || !state.FinBooks) return '';
-    const books = state.FinBooks.filter(row => !row.archived && String(row.activityName || '').includes(pkg.activityType));
-    const book = books[0] || state.FinBooks.find(row => String(row.activityName || '').includes(String(pkg.year))) || books[0];
+    const books = state.FinBooks.filter(row => !row.archived && row.packageId === pkg.id);
+    const book = books[0] || null;
     const status = book ? (book.status || 'Draft') : 'Draft';
-    const pillClass = status === 'Approved' ? 'Approved' : status === 'Rejected' ? 'Rejected' : status === 'Submitted' ? 'Pending' : '';
-    const canReview = !!(user.owner || user.admin || user.treasurer);
-    const canSubmitFinance = !!(user.owner || user.admin || user.treasurer || user.oc);
+    const pillClass = status === 'Approved' ? 'Approved' : status === 'Rejected' ? 'Rejected' : status === 'Submitted' || status === 'AwaitingOC' || status === 'OCChecked' ? 'Pending' : '';
+    const roleSet = activePackageRoles();
+    const canReview = !!(user.owner || user.treasurer);
+    const canSubmitFinance = !!(user.owner || user.treasurer || roleSet.indexOf('ot') >= 0);
+    const canCheckFinance = !!(user.owner || roleSet.indexOf('oc') >= 0);
     return '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><h2>Activity finance · I&E / Reimbursement / Receipts</h2><div class="toolbar">'
-      + (book ? button('Open finance', 'financeOpenBook', book.id) : (user.owner || user.admin || user.treasurer ? button('Create finance book', 'financeAddBook') : ''))
+      + (book ? button('Open finance', 'financeOpenBook', book.id) : (user.owner || user.treasurer || roleSet.indexOf('ot') >= 0 ? button('Create finance book', 'financeAddBook') : ''))
       + '</div></div>'
-      + '<p class="muted">OT fills Income &amp; Expenses, Reimbursement forms and Receipts here. Submit the whole activity book for Treasurer review.</p>'
-      + (book ? '<p>Finance status: <span class="pill ' + pillClass + '">' + escape(status) + '</span>'
+      + '<p class="muted">OT fills Income &amp; Expenses, Reimbursement forms and Receipts here. Submit to OC for check, then OC forwards for Treasurer review.</p>'
+      + (book ? '<p>Finance status: <span class="pill ' + pillClass + '">' + escape(workflowStatusLabel(status)) + '</span>'
+        + (book.rejectStage ? ' · ' + escape(langLabel('Returned at ', '退回于 ') + book.rejectStage) : '')
         + (book.remarks ? '<br><small style="color:#852b3d">' + escape(book.remarks) + '</small>' : '')
         + '</p><div class="toolbar">'
-        + (canSubmitFinance && status !== 'Submitted' && status !== 'Approved' ? button('Submit activity finance', 'finSubmit', book.id) : '')
+        + (canSubmitFinance && (status === 'Draft' || status === 'Rejected') ? button('Submit to OC', 'finSubmit', book.id) : '')
+        + (canCheckFinance && status === 'AwaitingOC' ? button('Check pass', 'finCheck', book.id, 'pass') + button('Return', 'finCheck', book.id) : '')
+        + (canCheckFinance && status === 'OCChecked' ? button('Forward for approval', 'finForward', book.id) : '')
         + (canReview && status === 'Submitted' ? button('Approve', 'finApprove', book.id) + button('Reject', 'finReject', book.id) : '')
         + (canReview && status === 'Approved' && (user.owner || user.admin) ? button('Reopen', 'finReopen', book.id) : '')
         + '</div>'
-        : '<p class="muted">No activity finance book yet. Create one when the first cost appears.</p>')
+        : '<p class="muted">此活动尚未关联财务账本。有第一笔开支时再建立。</p>')
       + '</section>';
+  }
+  function workflowStatusLabel(status) {
+    const map = {
+      AwaitingOC: langLabel('Waiting for OC', '等待 OC 检查'),
+      OCChecked: langLabel('OC checked', 'OC 已检查'),
+      Submitted: langLabel('Waiting for approval', '等待最终审批'),
+      Approved: langLabel('Approved', '已批准'),
+      Rejected: langLabel('Returned', '已退回'),
+      Draft: langLabel('Draft', '草稿'),
+      Pending: langLabel('Pending', '待处理'),
+      NotRequired: langLabel('Not required', '不需要')
+    };
+    return map[status] || status;
   }
   function portalView() {
     const packages = ocPackages();
@@ -583,7 +693,7 @@
     return '<p class="page-intro">Owner 删除的资料会先放在这里。Restore 会恢复整组关联资料；Permanently delete 无法从系统恢复，但执行前会自动建立私人 Backup。</p>' + (user.owner ? table(['Deleted record', 'Deleted at', 'Deleted by', 'Included records', 'Actions'], rows.map(row => [escape(row.rootTable + ' · ' + row.label), escape(new Date(row.deletedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })), escape(row.actor), escape(Object.entries(row.counts || {}).map(([name, count]) => name + ': ' + count).join(' · ')), '<div class="row-tools">' + button('Restore', 'restoreTrash', row.id) + button('Permanently delete', 'purgeTrash', row.id) + '</div>'])) : '<div class="card"><p class="muted">Only the Owner can view and manage deleted records.</p></div>');
   }
   function settingsView() {
-    const demoSwitch = window.KPTTransport.demo && user && user.owner ? '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Preview role switch</div><h2>Try another workspace</h2><p class="muted">Preview only. Helps you see Treasurer / Admin / Owner / OC shells.</p><div class="toolbar">' + button('Owner shell', 'demoRole', 'owner') + button('Admin shell', 'demoRole', 'admin') + button('Treasurer shell', 'demoRole', 'treasurer') + button('OC shell', 'demoRole', 'oc') + '</div></section>' : '';
+    const demoSwitch = window.KPTTransport.demo && user && user.owner ? '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Preview role switch</div><h2>Try another workspace</h2><p class="muted">Preview only. Helps you see Treasurer / Admin / Owner / OC / OS / OT shells.</p><div class="toolbar">' + button('Owner shell', 'demoRole', 'owner') + button('Admin shell', 'demoRole', 'admin') + button('Treasurer shell', 'demoRole', 'treasurer') + button('OC shell', 'demoRole', 'oc') + button('OS shell', 'demoRole', 'os') + button('OT shell', 'demoRole', 'ot') + '</div></section>' : '';
     const accessCard = user.owner ? '' : '<section class="card"><h2>Access</h2><p class="muted">You are signed in as ' + escape(roleLabel()) + '. Ask the Owner if a workspace is missing.</p></section>';
     const switchCard = '<section class="card" style="margin-bottom:24px"><div class="eyebrow">Signed in as</div><h2>Switch Google account</h2><p><strong>' + escape(user.email) + '</strong> · ' + escape(roleLabel()) + '</p><p class="muted">This app uses the Google account signed into this browser. Use <strong>Sign out of Google</strong>, pick the next account (or press Back if Google lands on an error page), then <strong>Open Admin</strong>.</p><div class="toolbar">' + button('Sign out of Google', 'signOutGoogle') + button('Open Admin', 'openAdmin') + button('Reload data', 'reloadNow') + '</div><p class="hint">Tip: keep an incognito window on Owner to test two accounts side by side.</p></section>';
     return demoSwitch + switchCard + accessCard + '<div class="grid-two"><section class="card"><h2>Your account</h2><p><strong>' + escape(user.email) + '</strong><br><small>' + escape(roleLabel()) + '</small></p><p class="muted">Treasurer work and Admin work use separate allow lists maintained by the Owner.</p></section><section class="card"><h2>Private backups</h2><p class="muted">Daily backups keep the latest 30 copies. Import and restore create an additional safety copy before changing data.</p><div class="toolbar">' + (user.admin || user.owner ? button('Back up now', 'backup') + button('Refresh backup list', 'listBackups') : '') + (user.owner ? button('Enable daily backup', 'installBackup') : '') + '</div><div id="backup-list" style="margin-top:18px"></div></section></div>' + (user.admin || user.owner ? '<section class="card" style="margin-top:24px"><h2>Public directory sync</h2><p class="muted">Only the approved public fields are copied to the member directory. If a publish fails, private records remain saved and you can retry.</p>' + (user.admin || user.owner ? button('Retry public update', 'retrySync') : '') + '<p class="sync-line">Private revision: ' + state.revision + ' · Last saved: ' + escape(state.updatedAt ? new Date(state.updatedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'No changes yet') + '</p></section>' : '');
@@ -626,7 +736,18 @@
       byId('page-title').textContent = workspaceTitles(workspaceMode)[view] || view;
     }
     if (ocShell) {
-      view = 'Documents';
+      // Package shell defaults to Documents; OT/Owner/Treasurer may open Finance.
+      const rolesNow = activePackageRoles();
+      const canUseFinance = (() => {
+        if (!user) return false;
+        if (user.owner || user.treasurer) return true;
+        if (!financeDraft) return rolesNow.indexOf('ot') >= 0 || user.admin;
+        const pkg = (state && state.DocPackages || []).find(p => p.id === financeDraft.packageId);
+        if (!pkg) return false;
+        const roles = packageRolesFor(pkg, user.email);
+        return roles.indexOf('ot') >= 0 || roles.indexOf('oc') >= 0;
+      })();
+      if (!(view === 'Finance' && canUseFinance)) view = 'Documents';
       if (openDocPackageId && !canOpenPackage(state.DocPackages.find(row => row.id === openDocPackageId))) openDocPackageId = null;
       const opened = openDocPackageId ? state.DocPackages.find(row => row.id === openDocPackageId) : null;
       if (opened) byId('page-title').textContent = opened.activityType + ' (' + opened.year + ')';
@@ -644,7 +765,7 @@
     if (view === 'Settings' && backups.length) renderBackups();
     if (view === 'Import' && importPreview) renderImport();
   }
-  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…', createDocPackage: 'Creating package…', docItemUpload: 'Uploading file…', docItemSubmit: 'Submitting document…', docItemReview: 'Reviewing document…', docItemReopen: 'Reopening document…', saveDocTemplate: 'Saving template…', docPackageArchive: 'Updating package…', initDocFolders: 'Creating folders…' };
+  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…', createDocPackage: 'Creating package…', docItemUpload: 'Uploading file…', docItemSubmit: 'Submitting to OC…', docItemCheck: 'OC checking…', docItemForward: 'Forwarding…', docItemReview: 'Reviewing document…', docItemReopen: 'Reopening document…', saveDocTemplate: 'Saving template…', docPackageArchive: 'Updating package…', initDocFolders: 'Creating folders…', submitFinBook: 'Submitting finance to OC…', checkFinBook: 'OC finance check…', forwardFinBook: 'Forwarding finance…', reviewFinBook: 'Reviewing finance…', reopenFinBook: 'Reopening finance…' };
   async function call(request, label) {
     if (busy) throw new Error('Please wait for the current operation.');
     busy = true;
@@ -802,7 +923,9 @@
     }
     if (name === 'enrolment') { openEditor('Enrolments', '', { memberId: id, year: year() }); return; }
     if (name === 'financeAddBook') {
-      financeDraft = { id: '', version: 0, activityName: '', incomes: [], expenses: [], reimbursements: [] };
+      const linkedPackageId = openDocPackageId || '';
+      if (!(user.owner || user.treasurer) && !linkedPackageId) throw new Error('Open an activity package first.');
+      financeDraft = { id: '', version: 0, activityName: '', packageId: linkedPackageId, incomes: [], expenses: [], reimbursements: [] };
       financeReceiptFiles = [];
       view = 'Finance';
       render();
@@ -812,10 +935,16 @@
     if (name === 'financeOpenBook') {
       const book = state.FinBooks.find(row => row.id === id);
       if (!book) throw new Error('Finance record not found. Reload data.');
+      if (!(user.owner || user.treasurer || user.admin)) {
+        const pkg = book.packageId ? (state.DocPackages || []).find(row => row.id === book.packageId) : null;
+        const roles = pkg ? packageRolesFor(pkg, user.email) : [];
+        if (!roles.length) throw new Error('You can only open finance for your activity package.');
+      }
       financeDraft = {
         id: book.id,
         version: book.version,
         activityName: book.activityName,
+        packageId: book.packageId || '',
         incomes: state.FinIncomes.filter(row => row.bookId === id).map(row => KPT.copy(row)),
         expenses: state.FinExpenses.filter(row => row.bookId === id).map(row => KPT.copy(row)),
         reimbursements: state.FinReimbursements.filter(row => row.bookId === id).map(row => Object.assign(KPT.copy(row), { lines: state.FinReimburseLines.filter(line => line.reimbursementId === row.id).map(line => KPT.copy(line)) }))
@@ -988,8 +1117,11 @@
       if (!busy) { importPreview = null; importFile = null; await refresh(); notice('Records reloaded with the current Google account.'); }
       return;
     }
-    if (name === 'openActivityGuide') {
-      openActivityGuideDialog(id);
+    if (name === 'toggleActivityIntro') {
+      activityIntroExpanded = !activityIntroExpanded;
+      render();
+      const toggle = document.querySelector('[data-action="toggleActivityIntro"]');
+      if (toggle) toggle.focus();
       return;
     }
     if (name === 'taskDone' || name === 'taskCancel' || name === 'taskOpen') {
@@ -1000,17 +1132,36 @@
     }
     if (name === 'finSubmit') {
       applySave(await call({ action: 'submitFinBook', bookId: id, revision: state.revision }));
-      notice('Activity finance submitted for Treasurer review.');
+      notice(langLabel('Finance submitted to OC for check.', '财务已提交给 OC 检查。'));
+      return;
+    }
+    if (name === 'finCheck') {
+      const pass = element && element.dataset.table === 'pass';
+      if (!pass) {
+        const remarks = prompt(langLabel('Reason for return (required):', '退回原因（必填）:'));
+        if (remarks === null) return;
+        if (!String(remarks).trim()) { notice(langLabel('A reason is required when returning.', '退回必须填写原因。'), true); return; }
+        applySave(await call({ action: 'checkFinBook', bookId: id, approve: false, remarks: String(remarks).trim(), revision: state.revision }));
+        notice(langLabel('Finance returned to submitter.', '财务已退回提交者。'));
+        return;
+      }
+      applySave(await call({ action: 'checkFinBook', bookId: id, approve: true, revision: state.revision }));
+      notice(langLabel('OC finance check passed.', 'OC 财务检查通过。'));
+      return;
+    }
+    if (name === 'finForward') {
+      applySave(await call({ action: 'forwardFinBook', bookId: id, revision: state.revision }));
+      notice(langLabel('Finance forwarded for final approval.', '财务已转交最终审批。'));
       return;
     }
     if (name === 'finApprove') {
-      if (!(user.owner || user.admin || user.treasurer)) throw new Error('Treasurer review is required.');
+      if (!(user.owner || user.treasurer)) throw new Error('Treasurer review is required.');
       applySave(await call({ action: 'reviewFinBook', bookId: id, approve: true, revision: state.revision }));
       notice('Activity finance approved.');
       return;
     }
     if (name === 'finReject') {
-      if (!(user.owner || user.admin || user.treasurer)) throw new Error('Treasurer review is required.');
+      if (!(user.owner || user.treasurer)) throw new Error('Treasurer review is required.');
       const remarks = prompt('Reason for rejecting this activity finance:');
       if (remarks === null) return;
       if (!String(remarks).trim()) { notice('A reason is required when rejecting.', true); return; }
@@ -1105,6 +1256,7 @@
       const pkg = state.DocPackages.find(row => row.id === id);
       if (!canOpenPackage(pkg)) throw new Error('You can only open your own activity package.');
       openDocPackageId = id;
+      activityIntroExpanded = false;
       query = ''; page = 0;
       workspaceMode = (user.admin || user.owner) && !isOcOnly() ? 'admin' : 'oc';
       view = 'Documents';
@@ -1119,10 +1271,29 @@
       showLoginGate('Signed out. Sign in again to continue.');
       return;
     }
-    if (name === 'docBack') { openDocPackageId = null; docEditOpen = false; docEditDraft = null; render(); return; }
+    if (name === 'docBack') { openDocPackageId = null; docEditOpen = false; docEditDraft = null; activityIntroExpanded = false; render(); return; }
     if (name === 'docSubmit') {
       applySave(await call({ action: 'docItemSubmit', itemId: id, revision: state.revision }));
-      notice('Document submitted for approval.');
+      notice(langLabel('Submitted to OC for check.', '已提交给 OC 检查。'));
+      return;
+    }
+    if (name === 'docCheck') {
+      const pass = element && element.dataset.table === 'pass';
+      if (!pass) {
+        const remarks = prompt(langLabel('Reason for return (required):', '退回原因（必填）:'));
+        if (remarks === null) return;
+        if (!String(remarks).trim()) { notice(langLabel('A reason is required when returning.', '退回必须填写原因。'), true); return; }
+        applySave(await call({ action: 'docItemCheck', itemId: id, approve: false, remarks: String(remarks).trim(), revision: state.revision }));
+        notice(langLabel('Document returned to submitter.', '已退回提交者。'));
+        return;
+      }
+      applySave(await call({ action: 'docItemCheck', itemId: id, approve: true, revision: state.revision }));
+      notice(langLabel('OC check passed.', 'OC 检查通过。'));
+      return;
+    }
+    if (name === 'docForward') {
+      applySave(await call({ action: 'docItemForward', itemId: id, revision: state.revision }));
+      notice(langLabel('Forwarded for final approval.', '已转交最终审批。'));
       return;
     }
     if (name === 'docApprove') {

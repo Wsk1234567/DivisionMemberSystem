@@ -255,8 +255,13 @@ test('AGM package creates default checklist and runs upload to approve flow', ()
   state = KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'AGM Application.docx', fileId: 'drive-1', revision: state.revision }, context());
   assert.equal(state.DocItems[0].status, 'Draft');
   state = KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context());
+  assert.equal(state.DocItems[0].status, 'AwaitingOC');
+  assert.throws(() => KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context()), /Upload a file|waiting/);
+  assert.throws(() => KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: true, revision: state.revision }, context()), /forwarded/);
+  state = KPT.mutate(state, { action: 'docItemCheck', itemId: item.id, approve: true, revision: state.revision }, context());
+  assert.equal(state.DocItems[0].status, 'OCChecked');
+  state = KPT.mutate(state, { action: 'docItemForward', itemId: item.id, revision: state.revision }, context());
   assert.equal(state.DocItems[0].status, 'Submitted');
-  assert.throws(() => KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context()), /Upload a file/);
   state = KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: true, revision: state.revision }, context());
   assert.equal(state.DocItems[0].status, 'Approved');
   assert.equal(state.DocPackages[0].status, 'Open');
@@ -268,12 +273,15 @@ test('package completes when every required item is approved; reject keeps packa
     state = KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'file' + index + '.pdf', fileId: 'f' + index, revision: state.revision }, context());
     state = KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context());
     if (index === 0) {
-      assert.throws(() => KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: false, revision: state.revision }, context()), /reason is required/);
-      state = KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: false, remarks: 'Fix date', revision: state.revision }, context());
+      assert.throws(() => KPT.mutate(state, { action: 'docItemCheck', itemId: item.id, approve: false, revision: state.revision }, context()), /reason is required/);
+      state = KPT.mutate(state, { action: 'docItemCheck', itemId: item.id, approve: false, remarks: 'Fix date', revision: state.revision }, context());
       assert.equal(state.DocItems.find(row => row.id === item.id).status, 'Rejected');
+      assert.equal(state.DocItems.find(row => row.id === item.id).rejectStage, 'OC');
       state = KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'file0b.pdf', fileId: 'f0b', revision: state.revision }, context());
       state = KPT.mutate(state, { action: 'docItemSubmit', itemId: item.id, revision: state.revision }, context());
     }
+    state = KPT.mutate(state, { action: 'docItemCheck', itemId: item.id, approve: true, revision: state.revision }, context());
+    state = KPT.mutate(state, { action: 'docItemForward', itemId: item.id, revision: state.revision }, context());
     state = KPT.mutate(state, { action: 'docItemReview', itemId: item.id, approve: true, revision: state.revision }, context());
   });
   assert.equal(state.DocPackages[0].status, 'Completed');
@@ -305,4 +313,66 @@ test('OC-style meta edits change due dates; blocked templates and extensions are
   assert.throws(() => KPT.mutate(state, { action: 'docItemUpload', itemId: item.id, fileName: 'evil.exe', fileId: 'x', revision: state.revision }, context()), /Allowed files/);
   assert.throws(() => KPT.mutate(state, { action: 'saveDocItemsMeta', packageId: item.packageId, items: [{ id: item.id, dueOffsetDays: -999 }], revision: state.revision }, context()), /365/);
   assert.throws(() => KPT.mutate(state, { action: 'save', table: 'DocPackages', row: { id: 'x', version: 1 }, revision: state.revision }, context()), /document package actions/);
+});
+
+test('saveFinanceBook rejects stealing income/expense/reimbursement rows from another book', () => {
+  let serial = 0;
+  const context = () => ({ actor: 'ot@example.test', now: '2026-10-25T00:00:00.000Z', uuid: () => 'fin-' + ++serial });
+  const blank = { id: '', version: 0, packageId: '', incomes: [], expenses: [], reimbursements: [] };
+  let state = KPT.empty();
+  state = KPT.mutate(state, {
+    action: 'saveFinanceBook', revision: state.revision,
+    book: Object.assign({}, blank, {
+      activityName: 'Book A',
+      incomes: [{ date: '2026-01-01', description: 'A income', amount: 10 }],
+      expenses: [{ date: '2026-01-02', item: 'A item', description: 'A exp', quantity: '1', unitCost: '5', amount: 5 }],
+      reimbursements: [{
+        formSeq: 1, treasurerName: 'A', formDate: '2026-01-03', purpose: 'A form', chequeNo: '', amount: 5,
+        lines: [{ lineNo: 1, date: '2026-01-03', invoiceNo: 'A1', particular: 'A line', total: 5 }]
+      }]
+    })
+  }, context());
+  const bookA = state.FinBooks[0];
+  const incomeA = Object.assign({}, state.FinIncomes[0]);
+  const expenseA = Object.assign({}, state.FinExpenses[0]);
+  const formA = Object.assign({}, state.FinReimbursements[0]);
+  const lineA = Object.assign({}, state.FinReimburseLines[0]);
+  state = KPT.mutate(state, { action: 'saveFinanceBook', revision: state.revision, book: Object.assign({}, blank, { activityName: 'Book B' }) }, context());
+  const bookB = state.FinBooks[1];
+  assert.equal(state.FinIncomes.length, 1);
+  const stealB = extra => ({
+    action: 'saveFinanceBook', revision: state.revision,
+    book: Object.assign({}, blank, { id: bookB.id, version: bookB.version, activityName: 'Book B' }, extra)
+  });
+  assert.throws(() => KPT.mutate(state, stealB({ incomes: [incomeA] }), context()), /belongs to another/);
+  assert.throws(() => KPT.mutate(state, stealB({ expenses: [expenseA] }), context()), /belongs to another/);
+  assert.throws(() => KPT.mutate(state, stealB({ reimbursements: [Object.assign({}, formA, { lines: [] })] }), context()), /belongs to another/);
+  assert.throws(() => KPT.mutate(state, stealB({
+    reimbursements: [Object.assign({}, formA, { lines: [lineA] })]
+  }), context()), /belongs to another/);
+  const bookACurrent = state.FinBooks.find(row => row.id === bookA.id);
+  const sameBookMove = {
+    action: 'saveFinanceBook', revision: state.revision,
+    book: Object.assign({}, blank, { id: bookA.id, version: bookACurrent.version, activityName: 'Book A' }, {
+      incomes: [incomeA], expenses: [expenseA],
+      reimbursements: [
+        Object.assign({}, formA, { lines: [] }),
+        { formSeq: 2, treasurerName: 'A', formDate: '2026-01-04', purpose: 'A form 2', lines: [lineA] }
+      ]
+    })
+  };
+  assert.throws(() => KPT.mutate(state, sameBookMove, context()), /belongs to another form/);
+  const okEdit = {
+    action: 'saveFinanceBook', revision: state.revision,
+    book: Object.assign({}, blank, { id: bookA.id, version: bookACurrent.version, activityName: 'Book A renamed' }, {
+      incomes: [incomeA], expenses: [expenseA],
+      reimbursements: [Object.assign({}, formA, { lines: [lineA] })]
+    })
+  };
+  const after = KPT.mutate(state, okEdit, context());
+  assert.equal(after.FinBooks.find(row => row.id === bookA.id).activityName, 'Book A renamed');
+  assert.equal(after.FinIncomes.length, 1);
+  assert.equal(after.FinIncomes[0].bookId, bookA.id);
+  assert.equal(after.FinReimburseLines[0].reimbursementId, formA.id);
+  assert.equal(bookA.id === bookB.id, false);
 });
