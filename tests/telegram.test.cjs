@@ -203,6 +203,9 @@ function makeEnv(opts = {}) {
         const msg = Array.isArray(value) ? Buffer.from(value) : Buffer.from(String(value), 'utf8');
         const secret = Array.isArray(key) ? Buffer.from(key) : Buffer.from(String(key), 'utf8');
         return Array.from(crypto.createHmac('sha256', secret).update(msg).digest());
+      },
+      base64EncodeWebSafe(value) {
+        return Buffer.from(value || []).toString('base64url');
       }
     },
     UrlFetchApp: {

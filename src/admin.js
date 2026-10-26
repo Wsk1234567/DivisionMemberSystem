@@ -135,6 +135,19 @@
   let hubNotifyTimer = null;
   let hubDirty = false;
   let hubReceiptBusy = false;
+  // Live updates: 5s lightweight probe + changeKey, never full state every tick.
+  let hubLiveInFlight = false;
+  let hubLiveChangeKey = null;
+  let hubLiveEmail = null;
+  let hubLiveErrors = 0;
+  let hubLiveBackoffTimer = null;
+  let hubLivePending = false;
+  let hubLiveRequestId = 0;
+  let hubLiveGeneration = 0;
+  let hubLiveAppliedRevision = -1;
+  let hubLivePendingSnapshot = null;
+  const HUB_LIVE_MS = 5000;
+  const HUB_LIVE_MAX_BACKOFF = 60000;
   let telegramBinding = null;
   function renderTelegramSettings(status) {
     const preview = !!window.KPTTransport.demo;
@@ -447,13 +460,181 @@
     if (hubNotifyTimer) return;
     hubNotifyTimer = setInterval(() => {
       if (document.hidden) return;
-      hubLoadNotifications(true);
-    }, 30000);
-    hubLoadNotifications(true);
+      hubLiveTick(true);
+    }, 5000);
+    hubLiveTick(true);
   }
   function hubStopPolling() {
     if (hubNotifyTimer) clearInterval(hubNotifyTimer);
     hubNotifyTimer = null;
+    hubInvalidateLive();
+  }
+  function hubIsSafeToApplyLive() {
+    if (busy) return false;
+    if (hubDirty) return false;
+    if (hubReceiptBusy) return false;
+    if (financeDraft && financeDraft.id) {
+      // Open finance editor counts as in-use even if not dirty yet (file pickers etc).
+      const editor = byId('finance-activity-name');
+      if (editor && !editor.readOnly) return false;
+    }
+    const dialog = byId('editor');
+    if (dialog && dialog.open) return false;
+    const fileInput = document.querySelector('input[type="file"]');
+    if (fileInput && fileInput.files && fileInput.files.length) return false;
+    return true;
+  }
+  function hubShowPendingBanner() {
+    if (byId('live-update-banner')) return;
+    const host = byId('notice') && byId('notice').parentNode;
+    if (!host) return;
+    const banner = document.createElement('div');
+    banner.id = 'live-update-banner';
+    banner.className = 'message warning live-pending';
+    banner.setAttribute('role', 'status');
+    banner.innerHTML = escape(t('hub.livePending')) + ' <button type="button" class="button small" data-action="hubApplyLive">' + escape(t('hub.liveApplyNow')) + '</button> <button type="button" class="button small" data-action="hubDismissLive">' + escape(t('hub.liveLater')) + '</button>';
+    host.insertBefore(banner, byId('notice').nextSibling);
+  }
+  function hubHidePendingBanner() {
+    const banner = byId('live-update-banner');
+    if (banner) banner.remove();
+    hubLivePending = false;
+  }
+  async function hubApplyLiveSnapshot(snapshot, requestId, email, generation) {
+    // Drop stale/cross-account/generation-lost responses.
+    if (generation !== hubLiveGeneration) return;
+    if (requestId !== hubLiveRequestId) return;
+    if (!user || user.email !== email) return;
+    if (!snapshot || !snapshot.state) return;
+    const incomingRevision = Number(snapshot.state.revision);
+    // Never clobber a newer local save (revision went forward after this snapshot was requested).
+    if (Number.isFinite(incomingRevision) && Number.isFinite(hubLiveAppliedRevision) && incomingRevision < hubLiveAppliedRevision) return;
+    if (Number.isFinite(incomingRevision) && state && Number.isFinite(Number(state.revision)) && incomingRevision < Number(state.revision)) return;
+    if (!hubIsSafeToApplyLive()) {
+      // Stage for later; do NOT advance applied changeKey.
+      hubLivePendingSnapshot = snapshot;
+      hubLivePending = true;
+      hubShowPendingBanner();
+      return;
+    }
+    // Preserve activity/mode/tab context.
+    const keepTab = hubTab;
+    const keepSelected = hubSelectedId;
+    const keepMode = workspaceMode;
+    const keepView = view;
+    state = snapshot.state;
+    // Sync identity/permission fields so setAccess changes take effect.
+    if (snapshot.user) {
+      user = Object.assign({}, user, {
+        email: snapshot.user.email || user.email,
+        owner: !!snapshot.user.owner,
+        admin: !!snapshot.user.admin,
+        treasurer: !!snapshot.user.treasurer,
+        oc: !!snapshot.user.oc
+      });
+      // Rebuild roles from the server flags — never keep stale role lists.
+      if (Array.isArray(snapshot.user.roles) && snapshot.user.roles.length) {
+        user.roles = snapshot.user.roles.slice();
+      } else {
+        user.roles = [user.owner ? 'owner' : null, user.admin ? 'admin' : null, user.treasurer ? 'treasurer' : null, user.oc ? 'oc' : null].filter(Boolean);
+      }
+    }
+    hubTab = keepTab;
+    hubSelectedId = keepSelected;
+    workspaceMode = keepMode;
+    view = keepView;
+    sync = snapshot.sync || sync;
+    if (financeDraft && financeDraft.id) {
+      const latestBook = (state.FinBooks || []).find(book => book.id === financeDraft.id);
+      if (latestBook) loadFinanceDraft(latestBook);
+      else financeDraft = null;
+    }
+    byId('role').textContent = roleLabel();
+    hubLiveAppliedRevision = Number(snapshot.state.revision);
+    // Advance applied key only after a successful apply.
+    if (snapshot.changeKey) hubLiveChangeKey = snapshot.changeKey;
+    if (snapshot.feed) {
+      hubNotifications = {
+        notifications: snapshot.feed.notifications || [],
+        unreadCount: snapshot.feed.unreadCount || 0,
+        activityUnread: snapshot.feed.activityUnread || {},
+        studioUnread: snapshot.feed.studioUnread || {}
+      };
+    }
+    hubLivePendingSnapshot = null;
+    hubHidePendingBanner();
+    render();
+  }
+  async function hubLiveTick(silent) {
+    if (!window.KPTTransport || !window.KPTTransport.call) return;
+    if (!user) return;
+    if (hubLiveInFlight) return;
+    if (document.hidden) return;
+    if (hubLiveBackoffTimer) return;
+    const emailNow = user.email;
+    if (hubLiveEmail && emailNow !== hubLiveEmail) {
+      // Identity changed: discard old keys/in-flight work and bump generation.
+      hubLiveGeneration += 1;
+      hubLiveChangeKey = null;
+      hubLivePendingSnapshot = null;
+      hubLiveAppliedRevision = -1;
+      hubLiveErrors = 0;
+      hubHidePendingBanner();
+    }
+    hubLiveEmail = emailNow;
+    // Baseline must come from bootstrap.changeKey (set in refresh); never accept first probe blindly.
+    if (hubLiveChangeKey == null) {
+      // Wait for bootstrap baseline — do not invent one from probe.
+      return;
+    }
+    hubLiveInFlight = true;
+    const generation = hubLiveGeneration;
+    const requestId = ++hubLiveRequestId;
+    const email = emailNow;
+    try {
+      const probe = await window.KPTTransport.call({ action: 'liveProbe' });
+      if (generation !== hubLiveGeneration || requestId !== hubLiveRequestId || !user || user.email !== email) return;
+      const changeKey = probe && probe.changeKey;
+      if (!changeKey) return;
+      if (changeKey === hubLiveChangeKey) {
+        // No authorised change since applied key — try staged pending only if safe (already staged).
+        hubLiveErrors = 0;
+        return;
+      }
+      if (hubLivePendingSnapshot && hubLivePendingSnapshot.changeKey === changeKey) {
+        hubLiveErrors = 0;
+        if (hubIsSafeToApplyLive()) await hubApplyLiveSnapshot(hubLivePendingSnapshot, requestId, email, generation);
+        else if (hubLivePending) hubShowPendingBanner();
+        return;
+      }
+      const snapshot = await window.KPTTransport.call({ action: 'liveSnapshot' });
+      if (generation !== hubLiveGeneration || requestId !== hubLiveRequestId || !user || user.email !== email) return;
+      hubLiveErrors = 0;
+      await hubApplyLiveSnapshot(snapshot, requestId, email, generation);
+    } catch (error) {
+      if (generation !== hubLiveGeneration || requestId !== hubLiveRequestId || !user || user.email !== email) return;
+      hubLiveErrors = Math.min(hubLiveErrors + 1, 6);
+      const delay = Math.min(HUB_LIVE_MS * Math.pow(2, hubLiveErrors - 1), HUB_LIVE_MAX_BACKOFF);
+      if (!silent) notice(error.message, true);
+      if (hubLiveBackoffTimer) clearTimeout(hubLiveBackoffTimer);
+      hubLiveBackoffTimer = setTimeout(() => {
+        hubLiveBackoffTimer = null;
+        hubLiveTick(true);
+      }, delay);
+    } finally {
+      // Only clear inFlight for this generation's request — never clobber a newer flight.
+      if (generation === hubLiveGeneration && requestId === hubLiveRequestId) hubLiveInFlight = false;
+    }
+  }
+  function hubInvalidateLive() {
+    hubLiveGeneration += 1;
+    hubLiveRequestId += 1;
+    hubLiveInFlight = false;
+    hubLiveChangeKey = null;
+    hubLivePendingSnapshot = null;
+    hubLiveAppliedRevision = -1;
+    hubLiveErrors = 0;
+    if (hubLiveBackoffTimer) { clearTimeout(hubLiveBackoffTimer); hubLiveBackoffTimer = null; }
   }
   function hubFinanceAttachmentsBlock() {
     const bookId = financeDraft && financeDraft.id;
@@ -1191,6 +1372,14 @@
     user.treasurer = user.treasurer != null ? !!user.treasurer : !!user.owner;
     user.roles = user.roles || [user.owner ? 'owner' : null, user.admin ? 'admin' : null, user.treasurer ? 'treasurer' : null].filter(Boolean);
     sync = response.sync;
+    // Release any in-flight live poll first (old finally must not block new ticks).
+    hubInvalidateLive();
+    // Live baseline comes from bootstrap.changeKey — not from the first probe.
+    hubLiveEmail = user.email;
+    hubLiveChangeKey = (response && response.changeKey) || null;
+    hubLiveAppliedRevision = state && Number(state.revision);
+    hubLivePendingSnapshot = null;
+    hubLiveErrors = 0;
     admins = response.admins || [];
     treasurers = response.treasurers || [];
     ocs = response.ocs || [];
@@ -1223,7 +1412,22 @@
     else byId('public-link').hidden = true;
     render();
   }
-  function applySave(response) { state = response.state; sync = response.sync || sync; importPreview = null; importFile = null; setupDefaultsPreview = null; if (financeDraft && financeDraft.id) { const saved = state.FinBooks.find(row => row.id === financeDraft.id); if (saved) financeDraft.id = saved.id; } render(); notice(response.unchanged ? 'No changes to import.' : 'Records saved.' + (sync.ok ? ' Public directory is up to date.' : ' Public update needs a retry.')); }
+  function applySave(response) {
+    state = response.state;
+    sync = response.sync || sync;
+    if (state && Number.isFinite(Number(state.revision))) hubLiveAppliedRevision = Number(state.revision);
+    // Local save is newest — drop any staged older snapshot and keep last applied key until probe catches up.
+    hubLivePendingSnapshot = null;
+    importPreview = null;
+    importFile = null;
+    setupDefaultsPreview = null;
+    if (financeDraft && financeDraft.id) {
+      const saved = state.FinBooks.find(row => row.id === financeDraft.id);
+      if (saved) financeDraft.id = saved.id;
+    }
+    render();
+    notice(response.unchanged ? 'No changes to import.' : 'Records saved.' + (sync.ok ? ' Public directory is up to date.' : ' Public update needs a retry.'));
+  }
   function options(values, selected) { return values.map(value => { const pair = Array.isArray(value) ? value : [value, value || 'None']; return '<option value="' + escape(pair[0]) + '"' + (String(pair[0]) === String(selected || '') ? ' selected' : '') + '>' + escape(pair[1]) + '</option>'; }).join(''); }
   function fieldControl(definition, row) {
     const [key, label, initialType, required] = definition;
@@ -1319,6 +1523,19 @@
       openDocPackageId = id || null;
       financeDraft = null;
       render();
+      return;
+    }
+    if (name === 'hubApplyLive') {
+      const staged = hubLivePendingSnapshot;
+      if (!staged) { hubHidePendingBanner(); hubLiveTick(true); return; }
+      const requestId = hubLiveRequestId;
+      const email = user && user.email;
+      await hubApplyLiveSnapshot(staged, requestId, email, hubLiveGeneration);
+      return;
+    }
+    if (name === 'hubDismissLive') {
+      // Keep staged snapshot and applied key — next safe moment or next tick can still apply.
+      hubHidePendingBanner();
       return;
     }
     if (name === 'hubMarkRead') {
@@ -2158,9 +2375,12 @@
   byId('editor').addEventListener('close', () => { telegramBinding = null; });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
-    if (isOcOnly() || hubHas('os') || hubHas('ot') || hubHas('oc')) hubLoadNotifications(true);
+    if (isOcOnly() || hubHas('os') || hubHas('ot') || hubHas('oc')) hubLiveTick(true);
   });
-  window.addEventListener('focus', () => { if (user && !document.hidden) hubLoadNotifications(true); });
+  window.addEventListener('focus', () => {
+    // Focus only runs the lightweight live probe — never bootstrap, never overwrite dirty drafts.
+    if (user && !document.hidden) hubLiveTick(true);
+  });
   refresh().catch(error => {
     const message = String(error.message || error);
     if (/sign-in|sign in|login/i.test(message)) {

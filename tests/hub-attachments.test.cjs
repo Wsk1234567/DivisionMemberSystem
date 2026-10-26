@@ -94,6 +94,14 @@ function environment() {
     LockService: { getScriptLock: () => lock },
     SpreadsheetApp: { openById(id) { return id === 'private' ? privateBook : publicBook; }, flush: () => {} },
     Utilities: {
+      DigestAlgorithm: { MD5: 'MD5', SHA_256: 'SHA_256' },
+      Charset: { UTF_8: 'UTF-8' },
+      computeDigest: (algo, value) => {
+        const nodeCrypto = require('node:crypto');
+        const name = String(algo) === 'SHA_256' ? 'sha256' : 'md5';
+        return Array.from(nodeCrypto.createHash(name).update(String(value == null ? '' : value), 'utf8').digest());
+      },
+      base64EncodeWebSafe: value => Buffer.from(value || []).toString('base64url'),
       getUuid: () => 'uuid-' + ++serial,
       base64Decode: value => Buffer.from(String(value || ''), 'base64'),
       base64Encode: value => Buffer.from(value).toString('base64'),

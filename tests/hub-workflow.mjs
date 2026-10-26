@@ -129,7 +129,11 @@ try {
   });
   await page.waitForTimeout(150);
   assert.equal(await page.locator('#finance-activity-name').inputValue(), 'Keep this unsaved text');
-  assert.deepEqual(await page.evaluate(() => hubTestActions), ['getHubNotifications'], 'Focus refresh does not bootstrap or overwrite draft.');
+  const focusActions = await page.evaluate(() => hubTestActions);
+  // Focus must not bootstrap or clobber a dirty draft — allow liveProbe/liveSnapshot only.
+  assert.equal(focusActions.includes('bootstrap'), false, 'Focus does not bootstrap: ' + focusActions.join(','));
+  assert.equal(await page.locator('#finance-activity-name').inputValue(), 'Keep this unsaved text', 'Focus does not overwrite dirty draft');
+  assert.equal(focusActions.every(a => ['liveProbe', 'liveSnapshot', 'getHubNotifications'].includes(a)), true, 'Focus only runs lightweight live checks: ' + focusActions.join(','));
   await page.locator('[data-action="hubPick"][data-id=""]').click();
   assert.equal(await page.locator('#finance-activity-name').inputValue(), 'Keep this unsaved text', 'Activity picker also guards dirty data.');
   await action('financeSave').click();

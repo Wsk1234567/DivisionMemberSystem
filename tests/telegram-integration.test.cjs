@@ -26,7 +26,8 @@ function environment() {
       DigestAlgorithm: { SHA_256: 'SHA_256' }, Charset: { UTF_8: 'UTF-8' },
       getUuid: () => crypto.randomUUID(),
       computeDigest: (_, value) => Array.from(new Int8Array(crypto.createHash('sha256').update(String(value)).digest())),
-      computeHmacSha256Signature: (value, key) => Array.from(new Int8Array(crypto.createHmac('sha256', key).update(String(value)).digest()))
+      computeHmacSha256Signature: (value, key) => Array.from(new Int8Array(crypto.createHmac('sha256', key).update(String(value)).digest())),
+      base64EncodeWebSafe: value => Buffer.from(value || []).toString('base64url')
     },
     ScriptApp: {
       getProjectTriggers: () => triggers,

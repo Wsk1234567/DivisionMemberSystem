@@ -379,6 +379,73 @@ function commit_(state) {
   writeSlot_(book_(configuration_().privateId), slot, state);
   properties_().setProperty('CURRENT_SLOT', slot);
   properties_().setProperty('SYNC_PENDING', String(state.revision));
+  liveMarkWrite_(state.revision);
+}
+function permissionFingerprint_(actor) {
+  const config = (actor && actor.config) || configuration_();
+  const parts = [
+    String(actor && actor.email || ''),
+    actor && actor.owner ? '1' : '0',
+    actor && actor.admin ? '1' : '0',
+    actor && actor.treasurer ? '1' : '0',
+    actor && actor.oc ? '1' : '0',
+    (config.admins || []).slice().sort().join(','),
+    (config.treasurers || []).slice().sort().join(','),
+    (config.ocs || []).slice().sort().join(',')
+  ];
+  // Irreversible only — never return raw lists or parts (would leak other emails).
+  return liveHash_(parts.join('|'));
+}
+function liveHash_(text) {
+  const material = String(text || '');
+  // SHA-256 only. Hash failure is a hard error — never fall back to a weak 32-bit digest.
+  const charset = (Utilities.Charset && Utilities.Charset.UTF_8) || 'UTF-8';
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, material, charset);
+  return 'sha256.' + String(Utilities.base64EncodeWebSafe(digest)).replace(/=+$/, '').slice(0, 32);
+}
+function liveMarkRead_() {
+  try { return JSON.parse(properties_().getProperty('LIVE_MARK') || '{}') || {}; } catch (error) { return {}; }
+}
+function liveFallbackToken_() {
+  const props = properties_();
+  return String(props.getProperty('LIVE_MARK_FALLBACK') || '') + ':' + String(props.getProperty('LIVE_MARK_DIRTY') || '');
+}
+function liveMarkWrite_(revision) {
+  const props = properties_();
+  try {
+    const previous = liveMarkRead_();
+    props.setProperty('LIVE_MARK', JSON.stringify({
+      revision: Number(revision) || 0,
+      at: new Date().toISOString(),
+      seq: Number(previous.seq || 0) + 1
+    }));
+    // Marker write succeeded — clear degraded tokens so probes stay stable.
+    props.deleteProperty('LIVE_MARK_FALLBACK');
+    props.deleteProperty('LIVE_MARK_DIRTY');
+  } catch (error) {
+    // Marker write failed: do NOT pretend revision-compare still works.
+    // Bump an irreversible token so changeKey still moves after a successful save.
+    try {
+      const prev = Number(props.getProperty('LIVE_MARK_FALLBACK') || '0') || 0;
+      props.setProperty('LIVE_MARK_FALLBACK', String(prev + 1));
+      props.deleteProperty('LIVE_MARK_DIRTY');
+    } catch (error2) {
+      try { props.setProperty('LIVE_MARK_DIRTY', String(Date.now()) + '.' + String(revision)); } catch (error3) { /* last resort: next snapshot rebuilds baseline */ }
+    }
+  }
+}
+// Per-identity irreversible change key. No global counters, no raw config.
+function liveChangeKey_(actor, revisionMarker, seqMarker) {
+  return liveHash_([
+    String(actor && actor.email || ''),
+    permissionFingerprint_(actor),
+    String(revisionMarker || 0),
+    String(seqMarker || 0),
+    liveFallbackToken_()
+  ].join('|'));
+}
+function liveBaseline_(actor, revision, seq) {
+  return liveChangeKey_(actor, revision, seq);
 }
 function sync_(state) {
   try {
@@ -561,6 +628,9 @@ function listBackups_() {
 function bootstrap_(actor) {
   const state = loadState_();
   const currentPhase = Number(properties_().getProperty('CURRENT_PHASE') || 1);
+  const mark = liveMarkRead_();
+  if (Number(mark.revision || 0) !== state.revision) liveMarkWrite_(state.revision);
+  const markAfter = liveMarkRead_();
   return {
     state: KPT.projectForActor(state, actor),
     user: {
@@ -571,6 +641,7 @@ function bootstrap_(actor) {
       oc: actor.oc,
       roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null, actor.oc ? 'oc' : null].filter(Boolean)
     },
+    changeKey: liveChangeKey_(actor, state.revision, markAfter.seq),
     sync: { ok: properties_().getProperty('SYNC_PENDING') === null, revision: Number(properties_().getProperty('PUBLISHED_REVISION') || -1) },
     admins: actor.owner ? actor.config.admins : [],
     treasurers: actor.owner ? actor.config.treasurers : [],
@@ -608,6 +679,47 @@ function rpcInternal_(request, apiEmail) {
     const documentOcActions = ['docItemCheck', 'docItemForward'];
     const documentSubmitActions = ['docItemUpload', 'docItemSubmit'];
     if (request.action === 'bootstrap') return withLock_(() => ({ ok: true, data: bootstrap_(identity_(false, true, apiEmail)) }));
+    // Lightweight live probe: no Sheet read, no business state, no writes.
+    // Returns only a per-identity irreversible changeKey — never global counters or raw config.
+    if (request.action === 'liveProbe') {
+      const actor = identity_(false, true, apiEmail);
+      const mark = liveMarkRead_();
+      return {
+        ok: true,
+        data: {
+          changeKey: liveChangeKey_(actor, mark.revision, mark.seq),
+          serverTime: new Date().toISOString()
+        }
+      };
+    }
+    // Authorized snapshot — only after probe reports a change. Read-only for business data.
+    if (request.action === 'liveSnapshot') {
+      return withLock_(() => {
+        const actor = identity_(false, true, apiEmail);
+        const state = loadState_();
+        const mark = liveMarkRead_();
+        // Establish/update baseline marker so existing production data is not stuck at 0.
+        if (Number(mark.revision || 0) !== state.revision) liveMarkWrite_(state.revision);
+        const markAfter = liveMarkRead_();
+        const readMap = hubLoadReadMap_(book_(actor.config.privateId), actor.email);
+        return {
+          ok: true,
+          data: {
+            state: KPT.projectForActor(state, actor),
+            user: {
+              email: actor.email,
+              owner: actor.owner,
+              admin: actor.admin,
+              treasurer: actor.treasurer,
+              oc: actor.oc,
+              roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null, actor.oc ? 'oc' : null].filter(Boolean)
+            },
+            changeKey: liveChangeKey_(actor, state.revision, markAfter.seq),
+            feed: KPT.hubNotificationFeed(state, actor, readMap, new Date().toISOString())
+          }
+        };
+      });
+    }
     if (request.action === 'listBackups') {
       const listActor = identity_(false, true, apiEmail);
       requireAdmin_(listActor);
