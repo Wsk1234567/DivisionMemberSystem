@@ -49,14 +49,21 @@ test('old full template still has Instructions and all admin sheets with Summary
   assert.ok(book.SheetNames.includes('Duty'));
 });
 
-test('typed download filenames include table name', () => {
+test('typed download filenames include table name and Members template returns styled ZIP bytes', () => {
   let lastFile = null;
   const origWriteFile = global.XLSX.writeFile;
+  const fs = require('fs');
+  const origWriteFileSync = fs.writeFileSync;
   global.XLSX.writeFile = (book, name) => { lastFile = name; };
+  fs.writeFileSync = () => { /* capture only, never write to disk */ };
   try {
     const state = fixture(1, 2026, 2026);
-    Workbook.download(state, true, undefined, { table: 'Members' });
-    assert.equal(lastFile, 'TCCD_Members_Import_Template.xlsx');
+    // Members template: returns styled bytes (PK magic), uses triggerDownload (fs mocked above)
+    const membersBytes = Workbook.download(state, true, undefined, { table: 'Members' });
+    assert.ok(membersBytes instanceof Uint8Array, 'Members template download returns bytes');
+    assert.equal(membersBytes[0], 0x50, 'PK byte 0');
+    assert.equal(membersBytes[1], 0x4B, 'PK byte 1');
+    // Non-Members typed: writeFile mock captures filename
     Workbook.download(state, false, undefined, { table: 'Attendance' });
     assert.match(lastFile, /^TCCD_Attendance_Export_\d{4}-\d{2}-\d{2}\.xlsx$/);
     Workbook.download(state, true);
@@ -65,6 +72,7 @@ test('typed download filenames include table name', () => {
     assert.match(lastFile, /^TCCD_Export_\d{4}-\d{2}-\d{2}\.xlsx$/);
   } finally {
     global.XLSX.writeFile = origWriteFile;
+    fs.writeFileSync = origWriteFileSync;
   }
 });
 
@@ -243,4 +251,81 @@ test('typed export round-trips record count and leading zeros for large set', ()
   assert.equal(parsed.workbook.Duty.length, 1201);
   assert.equal(parsed.workbook.Duty[1200].id, 'DUT-1201');
   assert.equal(parsed.workbook.Duty[1200].memberId, 'STU-001201');
+});
+
+test('Members styled bytes: ZIP PK, dynamic style counts match, header s-refs, dataValidations order', () => {
+  const state = global.KPT.empty();
+  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
+  assert.ok(styled instanceof Uint8Array, 'returns Uint8Array');
+  assert.equal(styled[0], 0x50, 'PK byte 0');
+  assert.equal(styled[1], 0x4B, 'PK byte 1');
+  const cfb = global.XLSX.CFB.read(styled, { type: 'array' });
+  function getXml(p) {
+    const i = cfb.FullPaths.indexOf(p);
+    if (i < 0) return '';
+    return new TextDecoder().decode(cfb.FileIndex[i].content);
+  }
+  const stylesXml = getXml('Root Entry/xl/styles.xml');
+  const sheetXml = getXml('Root Entry/xl/worksheets/sheet1.xml');
+  // Dynamic counts: declared must equal actual in cellXfs section
+  const cellXfsBlock = stylesXml.match(/<cellXfs[\s\S]*?<\/cellXfs>/);
+  const declaredXf = parseInt((stylesXml.match(/<cellXfs count="(\d+)"/) || [0, 0])[1], 10);
+  const actualXf = (cellXfsBlock[0].match(/<xf /g) || []).length;
+  assert.equal(declaredXf, actualXf, 'cellXfs declared count matches actual');
+  // Header s-refs exist for all 9 columns
+  const sRefs = [...sheetXml.matchAll(/<c r="([A-I])1"[^>]*s="(\d+)"/g)];
+  assert.equal(sRefs.length, 9, 'all 9 header cells have s refs');
+  // system=grey, required=accent, optional=blue — distinct values
+  const sA = (sheetXml.match(/<c r="A1"[^>]*s="(\d+)"/) || [])[1];
+  const sC = (sheetXml.match(/<c r="C1"[^>]*s="(\d+)"/) || [])[1];
+  const sD = (sheetXml.match(/<c r="D1"[^>]*s="(\d+)"/) || [])[1];
+  assert.ok(sA && sC && sD && sA !== sC && sC !== sD && sA !== sD, 'system/required/optional styles distinct');
+  // dataValidations after autoFilter, before ignoredErrors
+  const order = [...sheetXml.matchAll(/<(\/?)(\w+)/g)].map(m => m[1] ? '/' + m[2] : m[2]).filter((v, i, a) => a.indexOf(v) === i);
+  const af = order.indexOf('autoFilter');
+  const dv = order.indexOf('dataValidations');
+  const ie = order.indexOf('ignoredErrors');
+  assert.ok(af >= 0 && dv > af, 'dataValidations after autoFilter');
+  assert.ok(ie < 0 || dv < ie, 'dataValidations before ignoredErrors');
+  // Freeze pane
+  assert.ok(sheetXml.includes('state="frozen"'), 'frozen pane present');
+});
+
+test('Members styled bytes: 9 comments with bilingual help, no sample data rows', () => {
+  const state = global.KPT.empty();
+  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
+  const cfb = global.XLSX.CFB.read(styled, { type: 'array' });
+  const commentsXml = new TextDecoder().decode(cfb.FileIndex[cfb.FullPaths.indexOf('Root Entry/xl/comments1.xml')].content);
+  const commentCount = (commentsXml.match(/<comment /g) || []).length;
+  assert.equal(commentCount, 9, '9 header comments');
+  assert.ok(commentsXml.includes('内部编号'), 'bilingual id comment');
+  assert.ok(commentsXml.includes('必填'), 'name required noted');
+  assert.ok(commentsXml.includes('preserve leading zeros'), 'sjamId leading zeros noted');
+  assert.ok(commentsXml.includes('年级'), 'form uses 年级');
+  assert.ok(commentsXml.includes('在籍'), 'status Active meaning');
+  assert.ok(commentsXml.includes('毕业'), 'status Graduated meaning');
+  assert.ok(commentsXml.includes('退出'), 'status Withdrawn meaning');
+  assert.ok(commentsXml.includes('Do not copy the fictional example'), 'IC example warning');
+  assert.ok(commentsXml.includes('000000-00-0000'), 'IC fictional example only in comment');
+  // Parse the styled template: no data rows imported, only headers
+  const parsed = Workbook.parse(styled, { table: 'Members' });
+  assert.equal(parsed.workbook.Members.length, 0, 'template has zero data rows');
+});
+
+test('Members template parse without data reports empty, no sample records invented', () => {
+  const state = global.KPT.empty();
+  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
+  const parsed = Workbook.parse(styled, { table: 'Members' });
+  assert.equal(parsed.workbook.Members.length, 0, 'no sample data rows');
+  assert.ok(parsed.errors.some(e => /no data/i.test(e.message)), 'empty template parse reports no data');
+});
+
+test('styled bytes are browser-safe Uint8Array without Node Buffer dependency', () => {
+  const state = global.KPT.empty();
+  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
+  assert.ok(styled instanceof Uint8Array, 'returns Uint8Array (browser-safe)');
+  assert.equal(typeof Buffer !== 'undefined' ? Buffer.isBuffer(styled) : false, false, 'not a Node Buffer');
+  // Round-trip through parse works with Uint8Array input
+  const parsed = Workbook.parse(styled, { table: 'Members' });
+  assert.ok(parsed.errors.some(e => /no data/i.test(e.message)), 'parse works on Uint8Array');
 });

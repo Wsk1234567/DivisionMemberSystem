@@ -127,6 +127,7 @@
   let importGeneration = 0;
   let importIgnoredSheets = [];
   let importFileName = '';
+  let importGuideOpen = true;
   const IMPORT_TYPES = ['Members', 'Attendance', 'Exams', 'Duty', 'Awards', 'Activities', 'Enrolments', 'ALL'];
   let setupDefaultsPreview;
   let backups = [];
@@ -998,6 +999,71 @@
     const advanced = '<section class="card"><div class="eyebrow">Advanced catalogue</div><p class="muted">Owner and Secretary can add custom choices or archive choices that are no longer used. Recommended internal codes and eligibility rules are protected.</p>' + listHead('Filter catalogue', 'Catalog', 'Add custom option') + table(['Type', 'Category', 'Name', 'Level', 'Status', 'Actions'], paginate(rows).map(row => [escape(row.kind), escape(row.category || '—'), escape(row.name), escape(row.level || '—'), row.archived ? 'Archived' : 'Available', '<div class="row-tools">' + button('Edit', 'edit', row.id, 'Catalog') + button(row.archived ? 'Unarchive' : 'Archive', 'archive', row.id, 'Catalog') + deleteButton('Catalog', row.id) + '</div>'])) + pager(rows.length) + '</section>';
     return '<p class="page-intro">Prepare the choices used in later phases before regular data entry begins.</p>' + setupActions + '<div class="setup-grid">' + memberOptions + rules + recommended + '</div>' + advanced;
   }
+  function importMembersGuide() {
+    if (importType !== 'Members') return '';
+    const fieldRows = [
+      ['id', t('mgIdReq'), t('mgIdHow'), t('mgIdEx')],
+      ['version', t('mgVerReq'), t('mgVerHow'), t('mgVerEx')],
+      ['name', t('mgNameReq'), t('mgNameHow'), t('mgNameEx')],
+      ['sjamId', t('mgSjamReq'), t('mgSjamHow'), t('mgSjamEx')],
+      ['ic', t('mgIcReq'), t('mgIcHow'), t('mgIcEx')],
+      ['race', t('mgRaceReq'), t('mgRaceHow'), t('mgRaceEx')],
+      ['form', t('mgFormReq'), t('mgFormHow'), t('mgFormEx')],
+      ['joined', t('mgJoinedReq'), t('mgJoinedHow'), t('mgJoinedEx')],
+      ['status', t('mgStatusReq'), t('mgStatusHow'), t('mgStatusEx')]
+    ];
+    const open = importGuideOpen ? '' : ' hidden';
+    return '<section class="card import-guide">'
+      + '<div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(t('mgEyebrow')) + '</div><h2 style="margin:0">' + escape(t('mgTitle')) + '</h2></div>'
+      + '<button type="button" class="button small" data-action="toggleImportGuide" aria-expanded="' + (importGuideOpen ? 'true' : 'false') + '" aria-controls="import-guide-body">'
+      + escape(importGuideOpen ? t('mgHide') : t('mgShow')) + '</button></div>'
+      + '<div id="import-guide-body"' + open + '>'
+      + '<p class="muted">' + escape(t('mgIntro')) + '</p>'
+      + '<h3>' + escape(t('mgTableTitle')) + '</h3>'
+      + '<div class="import-guide-table">'
+      + table([t('mgColHeader'), t('mgColRequired'), t('mgColHow'), t('mgColExample')],
+        fieldRows.map(row => [escape(row[0]), escape(row[1]), escape(row[2]), escape(row[3])]))
+      + '</div>'
+      + '<h3>' + escape(t('mgExampleTitle')) + '</h3>'
+      + '<div class="import-guide-table">'
+      + table([t('mgColHeader'), t('mgColValue')],
+        [
+          ['id', escape(t('mgExBlank'))],
+          ['version', escape(t('mgExBlank'))],
+          ['name', '示例学员甲'],
+          ['sjamId', '00001234'],
+          ['ic', escape(t('mgExBlank'))],
+          ['race', escape(t('mgExBlank'))],
+          ['form', escape(t('mgExBlank'))],
+          ['joined', escape(t('mgExBlank'))],
+          ['status', escape(t('mgExBlank')) + ' → Active']
+        ])
+      + '</div>'
+      + '<p class="hint">' + escape(t('mgExampleNote')) + '</p>'
+      + '<h3>' + escape(t('mgStatusValuesTitle')) + '</h3>'
+      + '<ul class="rule-list import-rules">'
+      + '<li>' + escape(t('mgStatusActive')) + '</li>'
+      + '<li>' + escape(t('mgStatusGraduated')) + '</li>'
+      + '<li>' + escape(t('mgStatusWithdrawn')) + '</li>'
+      + '</ul>'
+      + '<h3>' + escape(t('mgLegendTitle')) + '</h3>'
+      + '<ul class="import-legend">'
+      + '<li><span class="legend-swatch legend-system" aria-hidden="true"></span>' + escape(t('mgLegendSystem')) + '</li>'
+      + '<li><span class="legend-swatch legend-required" aria-hidden="true"></span>' + escape(t('mgLegendRequired')) + '</li>'
+      + '<li><span class="legend-swatch legend-optional" aria-hidden="true"></span>' + escape(t('mgLegendOptional')) + '</li>'
+      + '</ul>'
+      + '<p class="hint">' + escape(t('mgLegendNote')) + '</p>'
+      + '<h3>' + escape(t('mgRulesTitle')) + '</h3>'
+      + '<ul class="rule-list import-rules">'
+      + '<li>' + escape(t('mgRuleBlank')) + '</li>'
+      + '<li>' + escape(t('mgRuleDup')) + '</li>'
+      + '<li>' + escape(t('mgRuleSameName')) + '</li>'
+      + '<li>' + escape(t('mgRuleHeaders')) + '</li>'
+      + '<li>' + escape(t('mgRuleRow2')) + '</li>'
+      + '<li>' + escape(t('mgRuleNoFormula')) + '</li>'
+      + '</ul>'
+      + '</div></section>';
+  }
   function importView() {
     const type = importType;
     const isAll = type === 'ALL';
@@ -1025,7 +1091,9 @@
       + '<div class="file-input"><label for="excel-file">' + escape(t('importChooseFile')) + '</label><br><input id="excel-file" type="file" accept=".xlsx"></div>'
       + '<div class="toolbar">' + button(t('importPreviewBtn'), 'previewImport') + '</div>'
       + (isAll ? '<p class="hint">' + escape(t('importAdvancedNote')) + '</p>' : '')
-      + '</section><section class="card"><div class="eyebrow">Portable records</div><h2>Export &amp; backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
+      + '</section><section class="card"><div class="eyebrow">Portable records</div><h2>Export &amp; backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div>'
+      + importMembersGuide()
+      + '<section id="import-preview" style="margin-top:24px"></section>';
   }
   function docProgress(pkg) {
     const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived);
@@ -1904,6 +1972,11 @@
       const opts = importType === 'ALL' ? undefined : { table: importType };
       KPTWorkbook.download(state, true, null, opts);
       notice(t('importTemplateDone'));
+      return;
+    }
+    if (name === 'toggleImportGuide') {
+      importGuideOpen = !importGuideOpen;
+      render();
       return;
     }
     if (name === 'importExisting') {

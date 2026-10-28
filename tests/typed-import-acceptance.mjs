@@ -26,6 +26,15 @@ try {
   await choice.waitFor();
   assert.equal(await choice.inputValue(), 'Members', 'Beginner import defaults to members.');
   const action = name => page.locator(`[data-action="${name}"]`).first();
+  const guide = page.locator('#import-guide-body');
+  await guide.waitFor({ state: 'visible' });
+  const guideText = await guide.innerText();
+  for (const field of KPT.fields.Members) assert.ok(guideText.includes(field), 'The on-page guide covers ' + field);
+  for (const value of ['00001234', 'Active', 'Graduated', 'Withdrawn', 'YYYY-MM-DD']) assert.ok(guideText.includes(value), 'The guide explains ' + value);
+  await action('toggleImportGuide').click();
+  await guide.waitFor({ state: 'hidden' });
+  await action('toggleImportGuide').click();
+  await guide.waitFor({ state: 'visible' });
   const before = await page.evaluate(() => KPTTransport.call({ action: 'bootstrap' }));
   await page.evaluate(() => {
     window.__importCalls = [];
@@ -42,6 +51,20 @@ try {
     assert.deepEqual(book.SheetNames, [table]);
     assert.deepEqual(XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0], KPT.fields[table]);
     assert.ok(download.suggestedFilename().includes(table));
+    if (table === 'Members') {
+      const sheet = book.Sheets.Members;
+      for (let column = 0; column < KPT.fields.Members.length; column++) {
+        const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: column })];
+        assert.ok(cell.c?.some(note => note.t.length > 25), 'Each member header has a useful filling note: ' + cell.v);
+      }
+      const zip = XLSX.CFB.read(bytes, { type: 'buffer' });
+      const xml = name => Buffer.from(zip.FileIndex[zip.FullPaths.indexOf('Root Entry/' + name)].content).toString('utf8');
+      assert.match(xml('xl/worksheets/sheet1.xml'), /state="frozen"/, 'The downloaded workbook freezes the header.');
+      assert.match(xml('xl/worksheets/sheet1.xml'), /<dataValidations\b/, 'The downloaded workbook contains actual Excel dropdowns.');
+      assert.ok((xml('xl/styles.xml').match(/<fill>/g) || []).length > 2, 'Downloaded bytes contain designed fills.');
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false }).filter(row => row.some(value => value !== '' && value != null));
+      assert.equal(rows.length, 1, 'Teaching examples must never become importable member rows.');
+    }
   }
   await choice.selectOption('Members');
   await page.locator('#excel-file').setInputFiles(file({ Members: [{ name: 'Typed import fictional member', sjamId: '00009999' }] }, { Awards: [{ name: 'MUST_NOT_IMPORT', memberId: 'missing' }], UnknownSheet: [{ unexpected: 'ignore me' }] }));

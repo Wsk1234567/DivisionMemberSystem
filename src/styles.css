@@ -164,3 +164,18 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 
 .import-steps{margin:12px 0 16px;padding-left:1.2rem}.import-steps li{margin:6px 0;font-size:.88rem}
 .grid-two>.card{min-width:0}.file-input input[type="file"]{max-width:100%}
+
+.import-guide h3{margin:16px 0 8px;font-size:.95rem}.import-rules li{display:block;padding:8px 0;font-size:.86rem;line-height:1.5}.import-guide .table-wrap{margin:10px 0}
+
+.import-guide-table{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.import-guide-table .table-wrap{max-width:100%}
+.import-legend{list-style:none;padding:0;margin:8px 0}
+.import-legend li{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:.86rem}
+.legend-swatch{width:14px;height:14px;border-radius:4px;border:1px solid var(--line);flex-shrink:0}
+.legend-system{background:#d9d9d9}
+.legend-required{background:#fff2cc}
+.legend-optional{background:#d6e4f0}
+@media(max-width:760px){
+  .import-guide-table{overflow-x:auto}
+  .import-guide .table-wrap table{min-width:520px}
+}
