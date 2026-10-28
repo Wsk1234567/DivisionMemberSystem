@@ -161,3 +161,6 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 @media (prefers-reduced-motion: reduce){
   .hub-progress span,button,a{transition:none!important}
 }
+
+.import-steps{margin:12px 0 16px;padding-left:1.2rem}.import-steps li{margin:6px 0;font-size:.88rem}
+.grid-two>.card{min-width:0}.file-input input[type="file"]{max-width:100%}

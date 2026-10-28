@@ -122,6 +122,12 @@
   let dialogRevision;
   let importFile;
   let importPreview;
+  // Typed import: one data kind at a time. ALL is the advanced multi-sheet path.
+  let importType = 'Members';
+  let importGeneration = 0;
+  let importIgnoredSheets = [];
+  let importFileName = '';
+  const IMPORT_TYPES = ['Members', 'Attendance', 'Exams', 'Duty', 'Awards', 'Activities', 'Enrolments', 'ALL'];
   let setupDefaultsPreview;
   let backups = [];
   let busy = false;
@@ -993,7 +999,33 @@
     return '<p class="page-intro">Prepare the choices used in later phases before regular data entry begins.</p>' + setupActions + '<div class="setup-grid">' + memberOptions + rules + recommended + '</div>' + advanced;
   }
   function importView() {
-    return '<div class="grid-two"><section class="card"><div class="eyebrow">Batch updates</div><h2>Import an Excel file</h2><p class="muted">Phase 1 新学生只需填写 Members sheet 的 name；sjamId 可以填写或留空。id、version、status 留空即可。</p><div class="file-input"><label for="excel-file">Choose an .xlsx file (maximum 10 MB)</label><br><input id="excel-file" type="file" accept=".xlsx"></div><div class="toolbar">' + button('Download template', 'template') + button('Preview import', 'previewImport') + '</div><p class="hint">系统会为新学生建立内部 ID，并把空白 status 设为 Active。其他 sheets 可以完全留空。Existing records 必须保留原本的 ID 和 version。</p></section><section class="card"><div class="eyebrow">Portable records</div><h2>Export & backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
+    const type = importType;
+    const isAll = type === 'ALL';
+    const typeLabel = t('importType.' + type);
+    const typeHelp = t('importHelp.' + type);
+    const options = IMPORT_TYPES.map(value => '<option value="' + escape(value) + '"' + (value === type ? ' selected' : '') + '>' + escape(t('importType.' + value)) + '</option>').join('');
+    const steps = '<ol class="import-steps">'
+      + '<li>' + escape(t('importStep.pick')) + '</li>'
+      + '<li>' + escape(t('importStep.template')) + '</li>'
+      + '<li>' + escape(t('importStep.fill')) + '</li>'
+      + '<li>' + escape(t('importStep.upload')) + '</li>'
+      + '<li>' + escape(t('importStep.confirm')) + '</li>'
+      + '</ol>';
+    return '<div class="grid-two"><section class="card"><div class="eyebrow">' + escape(t('importTitle')) + '</div>'
+      + '<h2>' + escape(t('importPickerLabel')) + '</h2>'
+      + '<div class="field full"><label for="import-type">' + escape(t('importPickerLabel')) + '</label>'
+      + '<select id="import-type" data-action="importTypeChange">' + options + '</select>'
+      + '<p class="hint">' + escape(typeHelp) + '</p></div>'
+      + steps
+      + '<div class="toolbar">'
+      + button(t('importDownloadTemplate'), 'importTemplate')
+      + button(t('importDownloadExisting'), 'importExisting')
+      + '</div>'
+      + '<p class="hint">' + escape(isAll ? t('importAllHint') : String(t('importTypedHint')).replace('{type}', typeLabel)) + '</p>'
+      + '<div class="file-input"><label for="excel-file">' + escape(t('importChooseFile')) + '</label><br><input id="excel-file" type="file" accept=".xlsx"></div>'
+      + '<div class="toolbar">' + button(t('importPreviewBtn'), 'previewImport') + '</div>'
+      + (isAll ? '<p class="hint">' + escape(t('importAdvancedNote')) + '</p>' : '')
+      + '</section><section class="card"><div class="eyebrow">Portable records</div><h2>Export &amp; backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div><section id="import-preview" style="margin-top:24px"></section>';
   }
   function docProgress(pkg) {
     const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived);
@@ -1547,8 +1579,19 @@
   }
   function renderImport() {
     const element = byId('import-preview');
-    if (!element || !importPreview) return;
-    element.innerHTML = '<div class="card"><h2>Import preview</h2><p>' + importPreview.changes.length + ' proposed changes · ' + importPreview.errors.length + ' errors</p>' + (importPreview.errors.length ? table(['Sheet', 'Excel row', 'Problem'], importPreview.errors.slice(0, 100).map(row => [escape(row.sheet), escape(row.row || '—'), escape(row.message)])) : table(['Sheet', 'Excel row', 'Record', 'Change'], importPreview.changes.slice(0, 100).map(row => [escape(row.sheet), escape(row.row), escape(row.id), escape(row.change)]))) + '<p class="hint">Showing the first 100 entries. No data has been changed. A private backup is created before applying an import.</p>' + (!importPreview.errors.length && importPreview.changes.length ? '<button class="button primary" type="button" data-action="commitImport" style="margin-top:18px">Confirm and import ' + importPreview.changes.length + ' changes</button>' : '') + '</div>';
+    if (!element) return;
+    if (!importPreview) { element.innerHTML = ''; return; }
+    const ignored = importIgnoredSheets && importIgnoredSheets.length
+      ? '<p class="hint">' + escape(t('importIgnoredSheets')) + ' <strong>' + escape(importIgnoredSheets.join(', ')) + '</strong></p>'
+      : '';
+    const typeNote = '<p class="muted">' + escape(t('importPreviewFor')) + ' <strong>' + escape(t('importType.' + importType)) + '</strong>' + (importFileName ? ' · ' + escape(importFileName) : '') + '</p>';
+    element.innerHTML = '<div class="card"><h2>' + escape(t('importPreviewTitle')) + '</h2>' + typeNote
+      + '<p>' + importPreview.changes.length + ' proposed changes · ' + importPreview.errors.length + ' errors</p>'
+      + ignored
+      + (importPreview.errors.length ? table(['Sheet', 'Excel row', 'Problem'], importPreview.errors.slice(0, 100).map(row => [escape(row.sheet), escape(row.row || '—'), escape(row.message)])) : table(['Sheet', 'Excel row', 'Record', 'Change'], importPreview.changes.slice(0, 100).map(row => [escape(row.sheet), escape(row.row), escape(row.id), escape(row.change)])))
+      + '<p class="hint">' + escape(t('importPreviewHint')) + '</p>'
+      + (!importPreview.errors.length && importPreview.changes.length ? '<button class="button primary" type="button" data-action="commitImport" style="margin-top:18px">' + escape(t('importConfirmBtn')) + ' ' + importPreview.changes.length + '</button>' : '')
+      + '</div>';
   }
   function renderBackups() {
     if (!byId('backup-list')) return;
@@ -1857,6 +1900,19 @@
     if (name === 'next') { if ((page + 1) * 40 < Number(id)) page++; render(); return; }
     if (name === 'selectAll' || name === 'clearAll') { document.querySelectorAll('#attendance-form input[name="present"]').forEach(input => { input.checked = name === 'selectAll'; }); return; }
     if (name === 'template') { KPTWorkbook.download(state, true); return; }
+    if (name === 'importTemplate') {
+      const opts = importType === 'ALL' ? undefined : { table: importType };
+      KPTWorkbook.download(state, true, null, opts);
+      notice(t('importTemplateDone'));
+      return;
+    }
+    if (name === 'importExisting') {
+      // Export this type's current rows (with IDs) so updates can keep id/version.
+      const opts = importType === 'ALL' ? undefined : { table: importType };
+      KPTWorkbook.download(state, false, null, opts);
+      notice(t('importExistingDone'));
+      return;
+    }
     if (name === 'export' || name === 'exportSummary') { KPTWorkbook.download(state, false, name === 'exportSummary' ? summaryRows() : null); return; }
     if (name === 'delete') {
       const preview = KPT.recycleBundle(state, tableName, id);
@@ -2161,18 +2217,79 @@
     }
     if (name === 'previewImport') {
       const file = byId('excel-file').files[0];
-      if (!file || !/\.xlsx$/i.test(file.name)) throw new Error('Choose an .xlsx file.');
-      if (file.size > 10 * 1024 * 1024) throw new Error('Use a file smaller than 10 MB.');
-      const parsed = KPTWorkbook.parse(await file.arrayBuffer());
+      if (!file || !/\.xlsx$/i.test(file.name)) throw new Error(t('importNeedXlsx'));
+      if (file.size > 10 * 1024 * 1024) throw new Error(t('importTooLarge'));
+      const generation = ++importGeneration;
+      const typeAtStart = importType;
+      const opts = typeAtStart === 'ALL' ? undefined : { table: typeAtStart };
+      let parsed;
+      try {
+        parsed = KPTWorkbook.parse(await file.arrayBuffer(), opts);
+      } catch (error) {
+        if (generation !== importGeneration || typeAtStart !== importType) return;
+        importFile = null;
+        importPreview = { changes: [], errors: [{ sheet: '', row: '', message: error.message || String(error) }], revision: state.revision };
+        importIgnoredSheets = [];
+        renderImport();
+        notice(t('importParseFailed'), true);
+        return;
+      }
+      // Stale parse from a previous type/file — discard.
+      if (generation !== importGeneration || typeAtStart !== importType) return;
       importFile = parsed.workbook;
-      importPreview = parsed.errors.length ? { changes: [], errors: parsed.errors, revision: state.revision } : await call({ action: 'previewImport', workbook: importFile, revision: state.revision });
+      importFileName = file.name;
+      importIgnoredSheets = parsed.ignoredSheets || [];
+      if (parsed.errors && parsed.errors.length) {
+        importPreview = { changes: [], errors: parsed.errors, revision: state.revision, generation, type: typeAtStart, fileName: file.name };
+        renderImport();
+        notice(t('importParseFailed'), true);
+        return;
+      }
+      // Missing selected sheet must fail — do not guess another type.
+      if (typeAtStart !== 'ALL') {
+        const sheets = parsed.workbook && parsed.workbook.SheetNames ? parsed.workbook.SheetNames : [];
+        if (sheets.length && !sheets.includes(typeAtStart)) {
+          importPreview = {
+            changes: [],
+            errors: [{ sheet: typeAtStart, row: '', message: t('importMissingSheet') }],
+            revision: state.revision, generation, type: typeAtStart, fileName: file.name
+          };
+          importFile = null;
+          renderImport();
+          notice(t('importMissingSheet'), true);
+          return;
+        }
+      }
+      let preview;
+      try {
+        preview = await call({ action: 'previewImport', workbook: importFile, revision: state.revision });
+      } catch (error) {
+        if (generation !== importGeneration || typeAtStart !== importType) return;
+        importPreview = { changes: [], errors: [{ sheet: '', row: '', message: error.message || String(error) }], revision: state.revision, generation, type: typeAtStart, fileName: file.name };
+        importFile = null;
+        renderImport();
+        notice(t('importPreviewFailed'), true);
+        return;
+      }
+      if (generation !== importGeneration || typeAtStart !== importType) return;
+      importPreview = Object.assign({}, preview, { generation, type: typeAtStart, fileName: file.name });
       renderImport();
       return;
     }
     if (name === 'commitImport') {
-      if (!importPreview || importPreview.errors.length || !importFile) throw new Error('Preview a valid file first.');
+      if (!importPreview || importPreview.errors.length || !importFile) throw new Error(t('importPreviewFirst'));
+      // Only the last successful preview of this type/file/generation may commit.
+      if (importPreview.generation !== importGeneration || importPreview.type !== importType) throw new Error(t('importStalePreview'));
+      const file = byId('excel-file').files[0];
+      if (file && importPreview.fileName && file.name !== importPreview.fileName) throw new Error(t('importStalePreview'));
       element.disabled = true;
-      try { applySave(await call({ action: 'commitImport', workbook: importFile, revision: importPreview.revision })); } finally { element.disabled = false; }
+      try {
+        applySave(await call({ action: 'commitImport', workbook: importFile, revision: importPreview.revision }));
+        importPreview = null;
+        importFile = null;
+        importIgnoredSheets = [];
+        renderImport();
+      } finally { element.disabled = false; }
       return;
     }
     if (name === 'retrySync') { applySave(await call({ action: 'retrySync' })); return; }
@@ -2256,7 +2373,26 @@
   });
   document.addEventListener('change', event => {
     if (dialogTable === 'Exams' && ['field-activityId', 'field-memberId'].includes(event.target.id)) updateExamLink();
-    if (event.target.id === 'excel-file') { importPreview = null; importFile = null; if (byId('import-preview')) byId('import-preview').innerHTML = ''; }
+    if (event.target.id === 'import-type') {
+      // Type switch must invalidate in-flight parse/preview — not just clear UI.
+      importGeneration += 1;
+      importType = IMPORT_TYPES.includes(event.target.value) ? event.target.value : 'Members';
+      importPreview = null;
+      importFile = null;
+      importIgnoredSheets = [];
+      importFileName = '';
+      render();
+      notice(t('importTypeChanged'));
+      return;
+    }
+    if (event.target.id === 'excel-file') {
+      importGeneration += 1;
+      importPreview = null;
+      importFile = null;
+      importIgnoredSheets = [];
+      importFileName = '';
+      if (byId('import-preview')) byId('import-preview').innerHTML = '';
+    }
     const docUploadId = event.target.dataset && event.target.dataset.docUpload;
     if (docUploadId) {
       const file = event.target.files && event.target.files[0];
