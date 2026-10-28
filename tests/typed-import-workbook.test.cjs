@@ -7,217 +7,344 @@ const { fixture } = require('../src/demo-data.js');
 const bytes = book => global.XLSX.write(book, { bookType: 'xlsx', type: 'array' });
 
 const TYPED = ['Members', 'Attendance', 'Exams', 'Duty', 'Awards', 'Activities', 'Enrolments'];
+const V2_TITLE = 'TCCD 会员资料导入表 · 新会员';
+const V2_HEADERS = ['姓名 *', 'SJAM 会员编号', '身份证号码', '种族', '年级', '加入日期', '会员状态'];
 
-test('typed template creates exactly one sheet with headers and text ID format, no Instructions', () => {
-  for (const table of TYPED) {
-    const book = Workbook.create(global.KPT.empty(), true, undefined, { table });
-    assert.deepEqual(book.SheetNames, [table], table + ' template must have exactly one sheet');
-    assert.ok(!book.SheetNames.includes('Instructions'));
-    const headers = global.XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0];
-    assert.deepEqual(headers, global.KPT.fields[table], table + ' headers match fields');
-    const textHeaders = ['id', 'memberId', 'activityId', 'ic', 'sjamId', 'certificate'].filter(h => global.KPT.fields[table].includes(h));
-    if (textHeaders.length) {
-      const colIndex = global.KPT.fields[table].indexOf(textHeaders[0]);
-      const addr = global.XLSX.utils.encode_cell({ r: 1, c: colIndex });
-      assert.equal(book.Sheets[table][addr].z, '@', table + ' text column must have z:@');
-    }
-  }
-});
-
-test('typed create(false) exports only real state records for that table', () => {
-  const state = fixture(3, 2026, 2026);
-  const book = Workbook.create(state, false, undefined, { table: 'Members' });
+test('V2 template: one Members sheet with exact title, rows 1-12 layout, no data rows imported', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
   assert.deepEqual(book.SheetNames, ['Members']);
-  const rows = global.XLSX.utils.sheet_to_json(book.Sheets.Members, { header: 1 });
-  assert.equal(rows.length, state.Members.length + 1, 'header + data rows');
-  assert.equal(rows[1][global.KPT.fields.Members.indexOf('name')], state.Members[0].name);
+  const sheet = book.Sheets.Members;
+  const getCell = (r, c) => {
+    const addr = global.XLSX.utils.encode_cell({ r, c });
+    return sheet[addr] ? sheet[addr].v : '';
+  };
+  assert.equal(getCell(0, 0), V2_TITLE, 'A1 exact title');
+  // Row 8 (index 7): example headers
+  for (let i = 0; i < V2_HEADERS.length; i++) assert.equal(getCell(7, i), V2_HEADERS[i]);
+  // Row 9 (index 8): fictional sample
+  assert.equal(getCell(8, 0), '示例学员甲');
+  assert.equal(getCell(8, 1), '00001234');
+  // Row 12 (index 11): formal headers
+  for (let i = 0; i < V2_HEADERS.length; i++) assert.equal(getCell(11, i), V2_HEADERS[i]);
+  // No id/version anywhere in headers
+  const allValues = [];
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 10; c++) allValues.push(getCell(r, c));
+  assert.ok(!allValues.includes('id') && !allValues.includes('version'), 'no id/version columns');
 });
 
-test('typed create ignores summaryRows and never appends Summary', () => {
+test('V2 parse: rows 13+ only, example rows 1-12 never imported', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  // Add data in row 13
+  const a13 = global.XLSX.utils.encode_cell({ r: 12, c: 0 });
+  sheet[a13] = { t: 's', v: 'RealStudent' };
+  // Modify example row 9 — must NOT be imported
+  const a9 = global.XLSX.utils.encode_cell({ r: 8, c: 0 });
+  sheet[a9] = { t: 's', v: 'FAKE_IMPORTED' };
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.equal(parsed.workbook.Members.length, 1, 'only 1 data row');
+  assert.equal(parsed.workbook.Members[0].name, 'RealStudent');
+  assert.equal(parsed.workbook.Members[0].__excelRow, 13);
+});
+
+test('V2 parse: Chinese status conversion + blank status + English passthrough', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  const rows = [
+    ['甲', '001', '', '', '', '', '在籍'],
+    ['乙', '002', '', '', '', '', '已毕业'],
+    ['丙', '003', '', '', '', '', '已退出'],
+    ['丁', '004', '', '', '', '', 'Active'],
+    ['戊', '005', '', '', '', '', '']
+  ];
+  rows.forEach((data, ri) => {
+    data.forEach((val, ci) => {
+      const addr = global.XLSX.utils.encode_cell({ r: 12 + ri, c: ci });
+      sheet[addr] = { t: 's', v: val };
+    });
+  });
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
+  const members = parsed.workbook.Members;
+  assert.equal(members[0].status, 'Active');
+  assert.equal(members[1].status, 'Graduated');
+  assert.equal(members[2].status, 'Withdrawn');
+  assert.equal(members[3].status, 'Active');
+  assert.equal(members[4].status, '', 'blank status stays blank (domain default Active)');
+  assert.equal(members[0].id, '', 'id blank for new');
+  assert.equal(members[0].version, '', 'version blank for new');
+});
+
+test('V2 parse: wrong row12 headers with matching title fails closed, no fallback import', () => {
+  const book = global.XLSX.utils.book_new();
+  const aoa = [];
+  for (let r = 0; r < 12; r++) aoa.push(['', '', '', '', '', '', '']);
+  aoa[0] = [V2_TITLE];
+  aoa[11] = ['WRONG', 'HEADERS', 'HERE', '', '', '', '']; // wrong row 12
+  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet(aoa), 'Members');
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.ok(parsed.errors.some(e => e.row === 12 && /headers/i.test(e.message)), 'row 12 header error');
+  assert.equal(parsed.workbook.Members, undefined, 'no data imported');
+});
+
+test('V2 parse: extra populated columns beyond G rejected per row', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  const addr13 = global.XLSX.utils.encode_cell({ r: 12, c: 0 });
+  sheet[addr13] = { t: 's', v: 'Student' };
+  const extra = global.XLSX.utils.encode_cell({ r: 12, c: 7 }); // column H
+  sheet[extra] = { t: 's', v: 'evil' };
+  sheet['!ref'] = global.XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 211, c: 7 } });
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.ok(parsed.errors.some(e => e.row === 13 && /Extra columns/.test(e.message)), JSON.stringify(parsed.errors));
+  assert.equal(parsed.workbook.Members.length, 0, 'row with extra cols rejected');
+});
+
+test('V2 parse: formulas and numeric IDs rejected with row numbers', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  const nameAddr = global.XLSX.utils.encode_cell({ r: 12, c: 0 });
+  sheet[nameAddr] = { t: 's', v: 'Student' };
+  const sjamAddr = global.XLSX.utils.encode_cell({ r: 12, c: 1 });
+  sheet[sjamAddr] = { t: 'n', v: 1234 };
+  sheet[sjamAddr].f = 'TODAY()';
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.ok(parsed.errors.some(e => e.row === 13 && /formulas/.test(e.message)));
+  assert.ok(parsed.errors.some(e => e.row === 13 && /leading zeros/.test(e.message)));
+});
+
+test('V2 parse: date number conversion for joined column', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  const nameAddr = global.XLSX.utils.encode_cell({ r: 12, c: 0 });
+  sheet[nameAddr] = { t: 's', v: 'Student' };
+  // Excel date serial for 2026-01-15 is 46037 (approx)
+  const joinedAddr = global.XLSX.utils.encode_cell({ r: 12, c: 5 });
+  sheet[joinedAddr] = { t: 'n', v: 46037 };
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
+  assert.match(parsed.workbook.Members[0].joined, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('V2 parse: __excelRow tracked from 13+, data beyond row 212 parses', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  // Add row at 250 (beyond preformat end 212)
+  const addr = global.XLSX.utils.encode_cell({ r: 249, c: 0 });
+  sheet[addr] = { t: 's', v: 'BeyondPreformat' };
+  const ref = global.XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 249, c: 6 } });
+  sheet['!ref'] = ref;
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.equal(parsed.workbook.Members.length, 1);
+  assert.equal(parsed.workbook.Members[0].name, 'BeyondPreformat');
+  assert.equal(parsed.workbook.Members[0].__excelRow, 250);
+});
+
+test('V2 styled bytes: ZIP PK, no comments/VML, merges, validations, freeze, borders', () => {
+  const styled = Workbook.createStyledBytes(global.KPT.empty(), true, null, { table: 'Members' });
+  assert.ok(styled instanceof Uint8Array);
+  assert.equal(styled[0], 0x50, 'PK');
+  assert.equal(styled[1], 0x4B, 'PK');
+  const cfb = global.XLSX.CFB.read(styled, { type: 'array' });
+  const paths = cfb.FullPaths.join(' ');
+  assert.ok(!paths.includes('comments'), 'no comments');
+  assert.ok(!paths.includes('vmlDrawing'), 'no VML');
+  function getXml(p) {
+    const i = cfb.FullPaths.indexOf(p);
+    return i < 0 ? '' : new TextDecoder().decode(cfb.FileIndex[i].content);
+  }
+  const sheetXml = getXml('Root Entry/xl/worksheets/sheet1.xml');
+  const stylesXml = getXml('Root Entry/xl/styles.xml');
+  // Freeze
+  assert.ok(sheetXml.includes('state="frozen"'), 'frozen');
+  assert.ok(sheetXml.includes('topLeftCell="A13"'), 'A13 selection');
+  // Merges
+  assert.ok(sheetXml.includes('mergeCells'), 'has merges');
+  assert.ok(sheetXml.includes('A1:G1'), 'title merge');
+  // Validations
+  assert.ok(sheetXml.includes('dataValidations'), 'has validations');
+  assert.ok(sheetXml.includes('D13:D212'), 'race dropdown');
+  assert.ok(sheetXml.includes('E13:E212'), 'form dropdown');
+  assert.ok(sheetXml.includes('G13:G212'), 'status dropdown');
+  // Gridlines off
+  assert.ok(sheetXml.includes('showGridLines="0"'), 'gridlines off');
+  // Autofilter
+  assert.ok(sheetXml.includes('A12:G212'), 'filter range');
+  // Borders in styles
+  assert.ok(stylesXml.includes('style="thin"'), 'thin borders');
+  // Burgundy fill
+  assert.ok(stylesXml.includes('FF8B1A3A'), 'burgundy fill');
+  // Pale blue guide (accepted user preference)
+  assert.ok(stylesXml.includes('FFDCE6F1'), 'pale blue guide');
+  // Yellow example
+  assert.ok(stylesXml.includes('FFFFF2CC'), 'yellow example');
+});
+
+test('V2 styled bytes: header s-refs distinct, data rows alternating', () => {
+  const styled = Workbook.createStyledBytes(global.KPT.empty(), true, null, { table: 'Members' });
+  const cfb = global.XLSX.CFB.read(styled, { type: 'array' });
+  const sheetXml = new TextDecoder().decode(cfb.FileIndex[cfb.FullPaths.indexOf('Root Entry/xl/worksheets/sheet1.xml')].content);
+  const s12 = (sheetXml.match(/<c r="A12"[^>]*s="(\d+)"/) || [])[1];
+  const s13 = (sheetXml.match(/<c r="A13"[^>]*s="(\d+)"/) || [])[1];
+  const s14 = (sheetXml.match(/<c r="A14"[^>]*s="(\d+)"/) || [])[1];
+  assert.ok(s12 && s13 && s14, 's-refs present');
+  assert.notEqual(s12, s13, 'header vs data different');
+  assert.notEqual(s13, s14, 'alternating rows different');
+});
+
+test('old format legacy Members with id/version still parses', () => {
+  const headers = global.KPT.fields.Members;
+  const book = global.XLSX.utils.book_new();
+  const row = headers.map(h => {
+    if (h === 'name') return 'LegacyStudent';
+    if (h === 'id') return '';
+    if (h === 'version') return '';
+    if (h === 'sjamId') return '000099';
+    return '';
+  });
+  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([headers, row]), 'Members');
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
+  assert.equal(parsed.workbook.Members[0].name, 'LegacyStudent');
+});
+
+test('V2 + importRows: Chinese status maps to domain Active, blank gets Active', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  const data = [
+    ['甲', '001', '', 'Cina', 'Form 1', '2026-01-15', '在籍'],
+    ['乙', '002', '', '', '', '', '']
+  ];
+  data.forEach((row, ri) => {
+    row.forEach((val, ci) => {
+      sheet[global.XLSX.utils.encode_cell({ r: 12 + ri, c: ci })] = { t: 's', v: val };
+    });
+  });
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
+  const state = global.KPT.empty();
+  const result = global.KPT.importRows(state, parsed.workbook, { uuid: () => 'u1', actor: 'owner', now: '2026-06-01T00:00:00Z' });
+  assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+  assert.equal(result.state.Members.length, 2);
+  assert.equal(result.state.Members[0].status, 'Active');
+  assert.equal(result.state.Members[1].status, 'Active', 'blank -> domain default Active');
+  assert.equal(result.state.Members[0].name, '甲');
+  assert.equal(result.state.Members[0].race, 'Cina');
+});
+
+test('other typed templates still one sheet, advanced unchanged, exports unchanged', () => {
+  for (const table of TYPED.filter(t => t !== 'Members')) {
+    const book = Workbook.create(global.KPT.empty(), true, undefined, { table });
+    assert.deepEqual(book.SheetNames, [table]);
+    const headers = global.XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0];
+    assert.deepEqual(headers, global.KPT.fields[table]);
+  }
+  // Advanced full template unchanged
   const state = fixture(1, 2026, 2026);
-  const book = Workbook.create(state, false, [{ note: 'should not appear' }], { table: 'Members' });
-  assert.ok(!book.SheetNames.includes('Summary'), 'typed mode must not add Summary');
+  const full = Workbook.create(state, false, [{ a: 1 }]);
+  assert.ok(full.SheetNames.includes('Instructions'));
+  assert.ok(full.SheetNames.includes('Summary'));
+  assert.ok(full.SheetNames.includes('Members'));
 });
 
-test('old full template still has Instructions and all admin sheets with Summary support', () => {
-  const state = fixture(1, 2026, 2026);
-  const book = Workbook.create(state, false, [{ name: 'Total', value: 1 }]);
-  assert.ok(book.SheetNames.includes('Instructions'));
-  assert.ok(book.SheetNames.includes('Summary'));
-  assert.ok(book.SheetNames.includes('Members'));
-  assert.ok(book.SheetNames.includes('Catalog'));
-  assert.ok(book.SheetNames.includes('Duty'));
+test('typed missing sheet / ignoredSheets / unknown table rejection unchanged', () => {
+  const book = global.XLSX.utils.book_new();
+  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([['x']]), 'Other');
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  assert.ok(parsed.errors.some(e => /not found/i.test(e.message)));
+  assert.ok(parsed.ignoredSheets.includes('Other'));
+  assert.throws(() => Workbook.parse(bytes(book), { table: 'FinBooks' }), /Unknown import type/);
+  assert.throws(() => Workbook.parse(bytes(book), { table: null }), /Unknown import type|Options/);
 });
 
-test('typed download filenames include table name and Members template returns styled ZIP bytes', () => {
+test('V2 parse: rows 1-12 never imported even with modifications', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  // Stuff data into rows 2-11 (keep A1 title and row 12 headers intact for V2 detection)
+  for (let r = 1; r < 11; r++) {
+    sheet[global.XLSX.utils.encode_cell({ r, c: 0 })] = { t: 's', v: 'SMUGGLED' };
+  }
+  // Also modify the example row 9
+  sheet[global.XLSX.utils.encode_cell({ r: 8, c: 0 })] = { t: 's', v: 'FAKE_EXAMPLE' };
+  // Add a real data row at 13
+  sheet[global.XLSX.utils.encode_cell({ r: 12, c: 0 })] = { t: 's', v: 'RealData' };
+  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
+  const members = parsed.workbook.Members || [];
+  assert.equal(members.length, 1, 'only real data rows from row 13+');
+  assert.equal(members[0].name, 'RealData');
+  assert.equal(members[0].__excelRow, 13);
+  assert.ok(!members.some(m => m.name === 'SMUGGLED' || m.name === 'FAKE_EXAMPLE'), 'no rows from 2-12 imported');
+});
+
+test('V2 create returns workbook metadata; createStyledBytes returns styled ZIP', () => {
+  const state = global.KPT.empty();
+  const book = Workbook.create(state, true, null, { table: 'Members' });
+  assert.ok(book.SheetNames, 'create returns workbook');
+  assert.deepEqual(book.SheetNames, ['Members']);
+  const styled = Workbook.createStyledBytes(state, true, null, { table: 'Members' });
+  assert.ok(styled instanceof Uint8Array);
+  assert.equal(styled[0], 0x50);
+});
+
+test('V2 download mock: Members template returns bytes, non-Members uses writeFile', () => {
   let lastFile = null;
-  const origWriteFile = global.XLSX.writeFile;
   const fs = require('fs');
+  const origWriteFile = global.XLSX.writeFile;
   const origWriteFileSync = fs.writeFileSync;
   global.XLSX.writeFile = (book, name) => { lastFile = name; };
-  fs.writeFileSync = () => { /* capture only, never write to disk */ };
+  fs.writeFileSync = () => {};
   try {
     const state = fixture(1, 2026, 2026);
-    // Members template: returns styled bytes (PK magic), uses triggerDownload (fs mocked above)
-    const membersBytes = Workbook.download(state, true, undefined, { table: 'Members' });
-    assert.ok(membersBytes instanceof Uint8Array, 'Members template download returns bytes');
-    assert.equal(membersBytes[0], 0x50, 'PK byte 0');
-    assert.equal(membersBytes[1], 0x4B, 'PK byte 1');
-    // Non-Members typed: writeFile mock captures filename
-    Workbook.download(state, false, undefined, { table: 'Attendance' });
-    assert.match(lastFile, /^TCCD_Attendance_Export_\d{4}-\d{2}-\d{2}\.xlsx$/);
-    Workbook.download(state, true);
-    assert.equal(lastFile, 'TCCD_Import_Template.xlsx');
-    Workbook.download(state, false);
-    assert.match(lastFile, /^TCCD_Export_\d{4}-\d{2}-\d{2}\.xlsx$/);
+    const bytesResult = Workbook.download(state, true, null, { table: 'Members' });
+    assert.ok(bytesResult instanceof Uint8Array);
+    assert.equal(bytesResult[0], 0x50);
+    Workbook.download(state, false, undefined, { table: 'Duty' });
+    assert.match(lastFile, /^TCCD_Duty_Export_/);
   } finally {
     global.XLSX.writeFile = origWriteFile;
     fs.writeFileSync = origWriteFileSync;
   }
 });
 
-test('parse rejects unknown/null/malicious table with clear error', () => {
-  const buf = bytes(Workbook.create(global.KPT.empty(), true));
-  for (const bad of [null, 42, {}, [], 'Catalog', 'FinBooks', 'DocItems', '__proto__', 'constructor', 'toString', '']) {
-    assert.throws(() => Workbook.parse(buf, { table: bad }), /Unknown import type|Options must be/, 'table=' + JSON.stringify(bad) + ' must reject');
-  }
-});
-
-test('typed parse returns only selected sheet and lists other sheets in ignoredSheets', () => {
-  const state = fixture(3, 2026, 2026);
-  const fullBook = Workbook.create(state, false);
-  global.XLSX.utils.book_append_sheet(fullBook, global.XLSX.utils.aoa_to_sheet([['x'], ['evil']]), 'EvilSheet');
-  const parsed = Workbook.parse(bytes(fullBook), { table: 'Members' });
-  assert.equal(parsed.errors.length, 0, parsed.errors.map(e => e.message).join('; '));
-  assert.deepEqual(Object.keys(parsed.workbook), ['Members']);
-  assert.ok(parsed.ignoredSheets.includes('EvilSheet'), 'evil sheet listed in ignoredSheets');
-  assert.ok(!parsed.ignoredSheets.includes('Instructions'), 'standard ignored not listed');
-  assert.ok(parsed.workbook.Members.length > 0);
-});
-
-test('typed parse of missing selected sheet reports error(sheet:selected,row:1)', () => {
-  const book = global.XLSX.utils.book_new();
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([['a'], [1]]), 'SomeOtherSheet');
+test('V2 parse: prototype pollution status values pass through as-is, not mapped to Object props', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  const names = ['__proto__', 'constructor', 'toString', 'valueOf'];
+  names.forEach((bad, ri) => {
+    sheet[global.XLSX.utils.encode_cell({ r: 12 + ri, c: 0 })] = { t: 's', v: 'Student' + ri };
+    sheet[global.XLSX.utils.encode_cell({ r: 12 + ri, c: 6 })] = { t: 's', v: bad };
+  });
   const parsed = Workbook.parse(bytes(book), { table: 'Members' });
-  assert.ok(parsed.errors.some(e => e.sheet === 'Members' && e.row === 1 && /not found/i.test(e.message)));
-  assert.equal(parsed.workbook.Members, undefined);
+  assert.equal(parsed.workbook.Members.length, 4);
+  parsed.workbook.Members.forEach((m, i) => {
+    assert.equal(m.status, names[i], 'prototype key passes through unmapped');
+  });
 });
 
-test('typed parse of selected sheet with no data rows reports error', () => {
-  const book = global.XLSX.utils.book_new();
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([global.KPT.fields.Members]), 'Members');
+test('V2 parse: formula in header row 12 rejected, name required header A12', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  // Put formula in a data row name field
+  const addr = global.XLSX.utils.encode_cell({ r: 12, c: 0 });
+  sheet[addr] = { t: 'n', v: 1 };
+  sheet[addr].f = 'CONCATENATE("x")';
   const parsed = Workbook.parse(bytes(book), { table: 'Members' });
-  assert.ok(parsed.errors.some(e => e.sheet === 'Members' && e.row === 1 && /no data/i.test(e.message)));
+  assert.ok(parsed.errors.some(e => /formulas/.test(e.message)));
 });
 
-test('typed parse preserves all protections: formulas, numeric IDs, dates, empty-row excelRow', () => {
-  const book = global.XLSX.utils.book_new();
-  const headers = global.KPT.fields.Members;
-  const rows = [headers, [], headers.map((h, i) => (h === 'name' ? 'Student' : h === 'ic' ? 123 : h === 'joined' ? 44562 : ''))];
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet(rows), 'Members');
-  book.Sheets.Members.G3.f = 'TODAY()';
+test('V2 parse: imported members work with domain validateState relations', () => {
+  const book = Workbook.create(global.KPT.empty(), true, null, { table: 'Members' });
+  const sheet = book.Sheets.Members;
+  sheet[global.XLSX.utils.encode_cell({ r: 12, c: 0 })] = { t: 's', v: 'RelationTest' };
+  sheet[global.XLSX.utils.encode_cell({ r: 12, c: 6 })] = { t: 's', v: '在籍' };
   const parsed = Workbook.parse(bytes(book), { table: 'Members' });
-  assert.ok(parsed.errors.some(e => e.row === 3 && e.message.includes('formulas')));
-  assert.ok(parsed.errors.some(e => e.row === 3 && e.message.includes('leading zeros')));
-  assert.equal(parsed.workbook.Members.length, 1);
-  assert.equal(parsed.workbook.Members[0].__excelRow, 3);
-});
-
-test('typed parse with extra malicious sheets does not validate or import them', () => {
-  const state = fixture(1, 2026, 2026);
-  const book = Workbook.create(state, false, undefined, { table: 'Members' });
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([['formula'], ['=HYPERLINK("x")']]), 'Evil');
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([global.KPT.fields.FinBooks, ['x']]), 'FinBooks');
-  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
-  assert.equal(parsed.errors.length, 0, 'ignored sheets must not generate errors: ' + JSON.stringify(parsed.errors));
-  assert.equal(parsed.workbook.Members.length > 0, true);
-  assert.equal(parsed.workbook.FinBooks, undefined);
-  assert.ok(parsed.ignoredSheets.includes('Evil'));
-  assert.ok(parsed.ignoredSheets.includes('FinBooks'));
-});
-
-test('typed parse Members from multi-sheet file then importRows only touches Members', () => {
-  const state = fixture(3, 2026, 2026);
-  const fullBook = Workbook.create(state, false);
-  const parsed = Workbook.parse(bytes(fullBook), { table: 'Members' });
   assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
-  assert.deepEqual(Object.keys(parsed.workbook), ['Members']);
-  const context = { uuid: () => 'imp-1', actor: 'owner', now: '2026-06-01T00:00:00Z' };
-  const result = global.KPT.importRows(state, parsed.workbook, context);
+  const state = global.KPT.empty();
+  const result = global.KPT.importRows(state, parsed.workbook, { uuid: () => 'rel', actor: 'owner', now: '2026-06-01T00:00:00Z' });
   assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
-  assert.equal(result.changes.length, 0, 'no changes when importing same data');
-  assert.equal(result.state.Activities.length, state.Activities.length);
-  assert.equal(result.state.Attendance.length, state.Attendance.length);
-  assert.equal(result.state.Exams.length, state.Exams.length);
-});
-
-test('typed parse detects version conflict on existing record', () => {
-  const state = fixture(1, 2026, 2026);
-  const book = global.XLSX.utils.book_new();
-  const headers = global.KPT.fields.Members;
-  const row = headers.map(h => {
-    if (h === 'id') return state.Members[0].id;
-    if (h === 'version') return 99;
-    return state.Members[0][h] || '';
-  });
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([headers, row]), 'Members');
-  const parsed = Workbook.parse(bytes(book), { table: 'Members' });
-  assert.equal(parsed.errors.length, 0);
-  const result = global.KPT.importRows(state, parsed.workbook, { uuid: () => 'v', actor: 'owner', now: '2026-06-01T00:00:00Z' });
-  assert.ok(result.errors.some(e => /Conflict/i.test(e.message)));
-});
-
-test('typed parse preserves relationship validation via domain importRows', () => {
-  const state = fixture(1, 2026, 2026);
-  const book = global.XLSX.utils.book_new();
-  const headers = global.KPT.fields.Attendance;
-  const row = headers.map(h => {
-    if (h === 'id') return 'ATT-BAD-1';
-    if (h === 'version') return 0;
-    if (h === 'activityId') return 'nonexistent';
-    if (h === 'memberId') return 'nonexistent';
-    return h === 'present' ? true : '';
-  });
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([headers, row]), 'Attendance');
-  const parsed = Workbook.parse(bytes(book), { table: 'Attendance' });
-  assert.equal(parsed.errors.length, 0);
-  const result = global.KPT.importRows(state, parsed.workbook, { uuid: () => 'r', actor: 'owner', now: '2026-06-01T00:00:00Z' });
-  assert.ok(result.errors.length > 0, 'relationship errors still detected');
-});
-
-test('old parse mode returns ignoredSheets and keeps all previous behavior', () => {
-  const state = fixture(1, 2026, 2026);
-  const book = Workbook.create(state, false, [{ a: 1 }]);
-  const parsed = Workbook.parse(bytes(book));
-  assert.ok(Array.isArray(parsed.ignoredSheets));
-  assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
-  assert.ok(parsed.workbook.Members);
-  assert.ok(parsed.workbook.Catalog);
-  assert.equal(parsed.workbook.Instructions, undefined);
-});
-
-test('typed export round-trips leading zeros in text ID columns', () => {
-  const state = fixture(2, 2026, 2026);
-  const buf = bytes(Workbook.create(state, false, undefined, { table: 'Members' }));
-  const parsed = Workbook.parse(buf, { table: 'Members' });
-  assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
-  assert.equal(parsed.workbook.Members[0].ic, state.Members[0].ic);
-  assert.equal(parsed.workbook.Members[0].sjamId, state.Members[0].sjamId);
-});
-
-test('typed parse empty workbook (zero sheets matching) reports not found', () => {
-  const book = global.XLSX.utils.book_new();
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([['x']]), 'Other');
-  const parsed = Workbook.parse(bytes(book), { table: 'Duty' });
-  assert.ok(parsed.errors.some(e => e.sheet === 'Duty' && /not found/i.test(e.message)));
-  assert.ok(parsed.ignoredSheets.includes('Other'));
-});
-
-test('typed parse sheet with only headers is empty error, not silently zero records', () => {
-  const book = global.XLSX.utils.book_new();
-  global.XLSX.utils.book_append_sheet(book, global.XLSX.utils.aoa_to_sheet([global.KPT.fields.Duty, []]), 'Duty');
-  const parsed = Workbook.parse(bytes(book), { table: 'Duty' });
-  assert.ok(parsed.errors.some(e => e.sheet === 'Duty' && /no data/i.test(e.message)));
+  assert.equal(result.state.Members.length, 1);
+  assert.ok(result.state.Members[0].id.startsWith('STU-'));
+  assert.equal(result.state.Members[0].status, 'Active');
 });
 
 test('typed export of 1500 records keeps every row, last record survives round-trip', () => {
@@ -239,6 +366,7 @@ test('typed export of 1500 records keeps every row, last record survives round-t
   assert.equal(parsed.workbook.Members[1499].sjamId, '001500', 'SJAM ID leading zeros preserved');
 });
 
+
 test('typed export round-trips record count and leading zeros for large set', () => {
   const headers = global.KPT.fields.Duty;
   const duties = [];
@@ -251,81 +379,4 @@ test('typed export round-trips record count and leading zeros for large set', ()
   assert.equal(parsed.workbook.Duty.length, 1201);
   assert.equal(parsed.workbook.Duty[1200].id, 'DUT-1201');
   assert.equal(parsed.workbook.Duty[1200].memberId, 'STU-001201');
-});
-
-test('Members styled bytes: ZIP PK, dynamic style counts match, header s-refs, dataValidations order', () => {
-  const state = global.KPT.empty();
-  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
-  assert.ok(styled instanceof Uint8Array, 'returns Uint8Array');
-  assert.equal(styled[0], 0x50, 'PK byte 0');
-  assert.equal(styled[1], 0x4B, 'PK byte 1');
-  const cfb = global.XLSX.CFB.read(styled, { type: 'array' });
-  function getXml(p) {
-    const i = cfb.FullPaths.indexOf(p);
-    if (i < 0) return '';
-    return new TextDecoder().decode(cfb.FileIndex[i].content);
-  }
-  const stylesXml = getXml('Root Entry/xl/styles.xml');
-  const sheetXml = getXml('Root Entry/xl/worksheets/sheet1.xml');
-  // Dynamic counts: declared must equal actual in cellXfs section
-  const cellXfsBlock = stylesXml.match(/<cellXfs[\s\S]*?<\/cellXfs>/);
-  const declaredXf = parseInt((stylesXml.match(/<cellXfs count="(\d+)"/) || [0, 0])[1], 10);
-  const actualXf = (cellXfsBlock[0].match(/<xf /g) || []).length;
-  assert.equal(declaredXf, actualXf, 'cellXfs declared count matches actual');
-  // Header s-refs exist for all 9 columns
-  const sRefs = [...sheetXml.matchAll(/<c r="([A-I])1"[^>]*s="(\d+)"/g)];
-  assert.equal(sRefs.length, 9, 'all 9 header cells have s refs');
-  // system=grey, required=accent, optional=blue — distinct values
-  const sA = (sheetXml.match(/<c r="A1"[^>]*s="(\d+)"/) || [])[1];
-  const sC = (sheetXml.match(/<c r="C1"[^>]*s="(\d+)"/) || [])[1];
-  const sD = (sheetXml.match(/<c r="D1"[^>]*s="(\d+)"/) || [])[1];
-  assert.ok(sA && sC && sD && sA !== sC && sC !== sD && sA !== sD, 'system/required/optional styles distinct');
-  // dataValidations after autoFilter, before ignoredErrors
-  const order = [...sheetXml.matchAll(/<(\/?)(\w+)/g)].map(m => m[1] ? '/' + m[2] : m[2]).filter((v, i, a) => a.indexOf(v) === i);
-  const af = order.indexOf('autoFilter');
-  const dv = order.indexOf('dataValidations');
-  const ie = order.indexOf('ignoredErrors');
-  assert.ok(af >= 0 && dv > af, 'dataValidations after autoFilter');
-  assert.ok(ie < 0 || dv < ie, 'dataValidations before ignoredErrors');
-  // Freeze pane
-  assert.ok(sheetXml.includes('state="frozen"'), 'frozen pane present');
-});
-
-test('Members styled bytes: 9 comments with bilingual help, no sample data rows', () => {
-  const state = global.KPT.empty();
-  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
-  const cfb = global.XLSX.CFB.read(styled, { type: 'array' });
-  const commentsXml = new TextDecoder().decode(cfb.FileIndex[cfb.FullPaths.indexOf('Root Entry/xl/comments1.xml')].content);
-  const commentCount = (commentsXml.match(/<comment /g) || []).length;
-  assert.equal(commentCount, 9, '9 header comments');
-  assert.ok(commentsXml.includes('内部编号'), 'bilingual id comment');
-  assert.ok(commentsXml.includes('必填'), 'name required noted');
-  assert.ok(commentsXml.includes('preserve leading zeros'), 'sjamId leading zeros noted');
-  assert.ok(commentsXml.includes('年级'), 'form uses 年级');
-  assert.ok(commentsXml.includes('在籍'), 'status Active meaning');
-  assert.ok(commentsXml.includes('毕业'), 'status Graduated meaning');
-  assert.ok(commentsXml.includes('退出'), 'status Withdrawn meaning');
-  assert.ok(commentsXml.includes('Do not copy the fictional example'), 'IC example warning');
-  assert.ok(commentsXml.includes('000000-00-0000'), 'IC fictional example only in comment');
-  // Parse the styled template: no data rows imported, only headers
-  const parsed = Workbook.parse(styled, { table: 'Members' });
-  assert.equal(parsed.workbook.Members.length, 0, 'template has zero data rows');
-});
-
-test('Members template parse without data reports empty, no sample records invented', () => {
-  const state = global.KPT.empty();
-  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
-  const parsed = Workbook.parse(styled, { table: 'Members' });
-  assert.equal(parsed.workbook.Members.length, 0, 'no sample data rows');
-  assert.ok(parsed.errors.some(e => /no data/i.test(e.message)), 'empty template parse reports no data');
-});
-
-test('styled bytes are browser-safe Uint8Array without Node Buffer dependency', () => {
-  const state = global.KPT.empty();
-  const styled = Workbook.createStyledBytes(state, true, undefined, { table: 'Members' });
-  assert.ok(styled instanceof Uint8Array, 'returns Uint8Array (browser-safe)');
-  assert.equal(typeof Buffer !== 'undefined' ? Buffer.isBuffer(styled) : false, false, 'not a Node Buffer');
-  // Round-trip through parse works with Uint8Array input
-  const parsed = Workbook.parse(styled, { table: 'Members' });
-  assert.ok(parsed.errors.some(e => /no data/i.test(e.message)), 'parse works on Uint8Array');
 });

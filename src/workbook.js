@@ -13,6 +13,13 @@
     }
     return table;
   }
+  // --- V2 Members import contract ---
+  const V2_TITLE = 'TCCD 会员资料导入表 · 新会员';
+  const V2_HEADERS = ['姓名 *', 'SJAM 会员编号', '身份证号码', '种族', '年级', '加入日期', '会员状态'];
+  const V2_FIELD_MAP = ['name', 'sjamId', 'ic', 'race', 'form', 'joined', 'status'];
+  const V2_STATUS_MAP = { '在籍': 'Active', '已毕业': 'Graduated', '已退出': 'Withdrawn', 'Active': 'Active', 'Graduated': 'Graduated', 'Withdrawn': 'Withdrawn' };
+  const V2_DATA_START = 13; // row index 12 (0-based), Excel row 13
+  const V2_PREFORMAT_END = 212; // Excel row 212 (0-based 211)
   function parse(buffer, options) {
     const library = requireLibrary();
     const typedTable = resolveTypedTable(options);
@@ -43,6 +50,71 @@
       }
       const range = library.utils.decode_range(sheet['!ref']);
       if (range.e.r > 100000 || range.e.c > 30) { errors.push({ sheet: name, row: 1, message: 'Sheet is too large.' }); return; }
+      // V2 detection: exact A1 title + row 12 exact headers
+      if (name === 'Members') {
+        const a1 = sheet[library.utils.encode_cell({ r: 0, c: 0 })];
+        const a1v = a1 ? String(a1.v || '').trim() : '';
+        if (a1v === V2_TITLE) {
+          // Verify row 12 headers
+          const row12 = [];
+          for (let col = 0; col < V2_HEADERS.length; col++) {
+            const cell = sheet[library.utils.encode_cell({ r: 11, c: col })];
+            row12.push(String(cell && cell.v || '').trim());
+          }
+          const headersMatch = V2_HEADERS.every((h, i) => row12[i] === h && !sheet[library.utils.encode_cell({ r: 11, c: i })]?.f)
+            && !Array.from({ length: Math.max(0, range.e.c - 6) }, (_, i) => sheet[library.utils.encode_cell({ r: 11, c: i + 7 })]).some(cell => cell && (cell.f || (cell.v !== '' && cell.v != null)));
+          if (!headersMatch) {
+            errors.push({ sheet: 'Members', row: 12, message: 'Column headers in row 12 must match the template exactly. Do not modify row 12 headers.' });
+            return;
+          }
+          // V2 parse: rows 13+ only
+          output.Members = [];
+          for (let rowIndex = 12; rowIndex <= range.e.r; rowIndex++) {
+            const row = {};
+            let hasValue = false;
+            let extraCols = false;
+            for (let col = 0; col < V2_FIELD_MAP.length; col++) {
+              const cell = sheet[library.utils.encode_cell({ r: rowIndex, c: col })];
+              let value = cell ? cell.v : '';
+              if (value !== '' && value != null) hasValue = true;
+              if (cell && cell.f) errors.push({ sheet: 'Members', row: rowIndex + 1, message: V2_HEADERS[col] + ': formulas are not accepted; paste values.' });
+              if (['ic', 'sjamId'].includes(V2_FIELD_MAP[col]) && typeof value === 'number') errors.push({ sheet: 'Members', row: rowIndex + 1, message: V2_HEADERS[col] + ': must be text to preserve leading zeros.' });
+              if (V2_FIELD_MAP[col] === 'joined' && typeof value === 'number') {
+                const parsed = library.SSF.parse_date_code(value);
+                value = parsed ? parsed.y + '-' + String(parsed.m).padStart(2, '0') + '-' + String(parsed.d).padStart(2, '0') : '';
+              }
+              // Status Chinese conversion
+              if (V2_FIELD_MAP[col] === 'status' && value) {
+                const sv = String(value).trim();
+                value = Object.prototype.hasOwnProperty.call(V2_STATUS_MAP, sv) ? V2_STATUS_MAP[sv] : sv;
+              }
+              row[V2_FIELD_MAP[col]] = value == null ? '' : value;
+            }
+            // Reject extra populated columns beyond G
+            for (let col = V2_FIELD_MAP.length; col <= range.e.c; col++) {
+              const cell = sheet[library.utils.encode_cell({ r: rowIndex, c: col })];
+              if (cell && (cell.f || (cell.v !== '' && cell.v != null))) extraCols = true;
+            }
+            if (extraCols) {
+              errors.push({ sheet: 'Members', row: rowIndex + 1, message: 'Extra columns beyond G are not allowed. Only fill columns A to G.' });
+              continue;
+            }
+            if (hasValue) {
+              row.id = '';
+              row.version = '';
+              if (!row.status) row.status = ''; // domain default Active applied at importRows
+              row.__excelRow = rowIndex + 1;
+              output.Members.push(row);
+              count++;
+            }
+          }
+          if (!output.Members.length) {
+            errors.push({ sheet: 'Members', row: V2_DATA_START, message: 'No data rows found. Enter member data starting from row 13.' });
+          }
+          return;
+        }
+      }
+      // Legacy parse (row 1 machine headers)
       const headers = [];
       for (let column = 0; column <= range.e.c; column++) {
         const cell = sheet[library.utils.encode_cell({ r: 0, c: column })];
@@ -106,30 +178,11 @@
     Object.keys(sheet).filter(key => !key.startsWith('!')).forEach(address => { if (sheet[address].t === 's') sheet[address].z = '@'; });
     sheet['!autofilter'] = { ref: root.XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(rowCount - 1, 1), c: headers.length - 1 } }) };
   }
-  // --- Members visual template: SheetJS comments + CFB OOXML style injection ---
-  const MEMBERS_COL_STYLES = { id: 'system', version: 'system', name: 'required', ic: 'optional', sjamId: 'optional', race: 'optional', form: 'optional', joined: 'optional', status: 'optional' };
-  const MEMBERS_COMMENTS = {
-    id: 'Internal ID / 内部编号\nLeave blank for new members. / 新成员请留空。\nKeep existing ID when updating. / 更新时请保留原ID。\nExample (fictional): STU-000001 / 示例（虚构）：STU-000001',
-    version: 'Record version / 记录版本\nLeave blank for new members. / 新成员请留空。\nKeep existing version when updating. / 更新时请保留原版本号。\nExample (fictional): 1 / 示例（虚构）：1',
-    name: 'Full name / 姓名（必填）\nRequired. / 必填。\nEnter the official full name. / 请填写正式全名。\nExample (fictional): Ahmad bin Abu / 示例（虚构）：Ahmad bin Abu',
-    ic: 'IC number / 身份证号（可选）\nOptional. Text format preserves leading zeros. / 可选。文本格式保留前导零。\nEnter actual official IC if needed; leave blank if unknown. / 如有需要请填写真实身份证号；不清楚可留空。\nDo not copy the fictional example below. / 请勿照抄下方虚构示例。\nExample (fictional): 000000-00-0000 / 示例（虚构）：000000-00-0000',
-    sjamId: 'SJAM ID / 圣约翰编号（可选）\nOptional. Official SJAM number as text; preserve leading zeros. / 可选。官方圣约翰编号，文本格式；保留前导零。\nNo prescribed format. / 无固定格式。\nNot the same as IC or internal ID. / 与身份证号和内部编号不同。\nLeave blank if unknown. / 不清楚可留空。\nExample (fictional): 000001 / 示例（虚构）：000001',
-    race: 'Race / 种族（可选）\nOptional. Choose from dropdown. / 可选。请从下拉选择。\nOptions: Melayu, India, Cina, Other / 选项：Melayu, India, Cina, Other',
-    form: 'Form / 年级（可选）\nOptional. Choose from dropdown. / 可选。请从下拉选择。\nOptions: Peralihan, Form 1–5, Adult / 选项：Peralihan, Form 1–5, Adult',
-    joined: 'Join date / 入会日期（可选）\nOptional. Format: YYYY-MM-DD / 可选。格式：YYYY-MM-DD\nLeave blank if unknown. / 不清楚可留空。\nExample (fictional): 2026-01-15 / 示例（虚构）：2026-01-15',
-    status: 'Status / 状态\nActive = 在籍, Graduated = 毕业, Withdrawn = 退出\nNew members: leave blank (auto Active). / 新成员：留空（自动设为 Active）。\nExisting members: must keep or update; cannot leave blank. / 已有成员：须保留或修改，不可留空。'
-  };
-  const MEMBERS_VALIDATIONS = [
-    { col: 'F', formula: '"Melayu,India,Cina,Other"' },
-    { col: 'G', formula: '"Peralihan,Form 1,Form 2,Form 3,Form 4,Form 5,Adult"' },
-    { col: 'I', formula: '"Active,Graduated,Withdrawn"' }
-  ];
-  // Browser-safe UTF-8 helpers (no Node Buffer dependency)
+  // Browser-safe UTF-8 helpers
   const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
   const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder() : null;
   function utf8Encode(str) {
     if (textEncoder) return textEncoder.encode(str);
-    // Node fallback
     const B = typeof Buffer !== 'undefined' ? Buffer : null;
     if (B) return new Uint8Array(B.from(str, 'utf8'));
     throw new Error('TextEncoder unavailable.');
@@ -153,117 +206,209 @@
     if (i >= 0) { cfb.FileIndex[i].content = bytes; cfb.FileIndex[i].size = bytes.length; return; }
     cfb.utils.cfb_add(cfb, path, bytes);
   }
-  function patchStylesXml(existingXml) {
-    const extraFonts =
-      '<font><b/><sz val="12"/><color rgb="FF404040"/><name val="Calibri"/><family val="2"/></font>' +
-      '<font><b/><sz val="12"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font>' +
-      '<font><sz val="12"/><color rgb="FF333333"/><name val="Calibri"/><family val="2"/></font>';
-    const extraFills =
-      '<fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill>' +
-      '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>' +
-      '<fill><patternFill patternType="solid"><fgColor rgb="FFD6E4F0"/><bgColor indexed="64"/></patternFill></fill>';
-    // Dynamic counts: parse existing, append, update count attributes
-    const fontCount = parseInt((existingXml.match(/<fonts count="(\d+)"/) || [0, 1])[1], 10);
-    const fillCount = parseInt((existingXml.match(/<fills count="(\d+)"/) || [0, 2])[1], 10);
-    const xfCount = parseInt((existingXml.match(/<cellXfs count="(\d+)"/) || [0, 1])[1], 10);
-    // New font indexes: fontCount+0=system bold gray, fontCount+1=required bold black, fontCount+2=optional normal
-    const sysFontId = fontCount;
-    const reqFontId = fontCount + 1;
-    const optFontId = fontCount + 2;
-    // New fill indexes: fillCount+0=gray, fillCount+1=accent yellow, fillCount+2=light blue
-    const sysFillId = fillCount;
-    const reqFillId = fillCount + 1;
-    const optFillId = fillCount + 2;
-    // New cellXf indexes
-    const sysXf = xfCount;
-    const reqXf = xfCount + 1;
-    const optXf = xfCount + 2;
-    const extraXfs =
-      '<xf numFmtId="0" fontId="' + sysFontId + '" fillId="' + sysFillId + '" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
-      '<xf numFmtId="0" fontId="' + reqFontId + '" fillId="' + reqFillId + '" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
-      '<xf numFmtId="0" fontId="' + optFontId + '" fillId="' + optFillId + '" borderId="0" xfId="0" applyFont="1" applyFill="1"/>';
-    let xml = existingXml;
-    xml = xml.replace(/<fonts count="(\d+)"/, '<fonts count="' + (fontCount + 3) + '"');
-    xml = xml.replace(/<\/fonts>/, extraFonts + '</fonts>');
-    xml = xml.replace(/<fills count="(\d+)"/, '<fills count="' + (fillCount + 3) + '"');
-    xml = xml.replace(/<\/fills>/, extraFills + '</fills>');
-    xml = xml.replace(/<cellXfs count="(\d+)"/, '<cellXfs count="' + (xfCount + 3) + '"');
-    xml = xml.replace(/<\/cellXfs>/, extraXfs + '</cellXfs>');
-    return { xml, sysXf, reqXf, optXf };
+  // --- V2 Members template build ---
+  function buildV2SheetAoa() {
+    // Each guide row must have all 7 cells (A:G) so merge styling works on the full bar
+    const full = (...cells) => {
+      const row = cells.slice(0, 7);
+      while (row.length < 7) row.push('');
+      return row;
+    };
+    const rows = [];
+    rows[0] = full(V2_TITLE); // row 1
+    rows[1] = full('填写指南 · 新会员导入只需填写正式填写区，示范区仅供参考'); // row 2
+    rows[2] = full('1. 姓名必填，请填写正式全名。SJAM 会员编号、身份证号码等为选填。'); // row 3
+    rows[3] = full('2. SJAM 会员编号和身份证号码请设为文本格式，保留前导零。加入日期格式：YYYY-MM-DD。'); // row 4
+    rows[4] = full('3. 种族、年级、会员状态请从下拉列表选择。新会员状态可留空，系统自动设为在籍。'); // row 5
+    rows[5] = full('4. 请勿修改第 12 行表头。示范区（第 7-9 行）仅供参考，不会被导入。正式数据从第 13 行开始填写。'); // row 6
+    rows[6] = full('示范区 · 仅供参考，不会导入'); // row 7
+    rows[7] = full(...V2_HEADERS); // row 8 example headers
+    rows[8] = full('示例学员甲', '00001234', '', 'Cina', 'Form 1', '2026-01-15', '在籍'); // row 9
+    rows[9] = full(''); // row 10 spacer
+    rows[10] = full('正式填写区 · 从第 13 行开始，每人一行'); // row 11
+    rows[11] = full(...V2_HEADERS); // row 12 formal headers
+    for (let i = 12; i < V2_PREFORMAT_END; i++) rows[i] = full('', '', '', '', '', '', '');
+    return rows;
   }
-  function patchSheetXml(existingXml, headers, xfMap) {
+  function buildV2StylesXml(existingXml) {
+    // Fonts: 0=normal, 1=title white bold 14, 2=guide dark text, 3=section bold white, 4=example header dark bold, 5=formal header bold, 6=data normal
+    const fonts =
+      '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' +
+      '<font><b/><sz val="14"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>' +
+      '<font><sz val="11"/><color rgb="FF1A1A2E"/><name val="Calibri"/><family val="2"/></font>' +
+      '<font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>' +
+      '<font><b/><sz val="11"/><color rgb="FF333333"/><name val="Calibri"/><family val="2"/></font>' +
+      '<font><b/><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font>' +
+      '<font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font>';
+    // Fills: 0=none, 1=gray125, 2=burgundy title, 3=pale blue guide, 4=yellow example, 5=required accent (A12 name), 6=pale blue alt row, 7=formal header
+    const fills =
+      '<fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FF8B1A3A"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F1"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFE8B4B8"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFEEF3FA"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFB0C4DE"/><bgColor indexed="64"/></patternFill></fill>';
+    // Borders: 0=none, 1=thin all
+    const borders =
+      '<border><left/><right/><top/><bottom/><diagonal/></border>' +
+      '<border><left style="thin"><color rgb="FFB0B0B0"/></left><right style="thin"><color rgb="FFB0B0B0"/></right><top style="thin"><color rgb="FFB0B0B0"/></top><bottom style="thin"><color rgb="FFB0B0B0"/></bottom><diagonal/></border>';
+    // cellXfs:
+    // 0=normal, 1=title(burgundy white bold), 2=subtitle(pale blue dark), 3=instruction(pale blue dark wrap),
+    // 4=example label(yellow bold), 5=example header(yellow bold border), 6=example data(yellow border),
+    // 7=spacer, 8=formal section(burgundy white bold), 9=formal header required A(burgundy accent bold),
+    // 10=formal header optional(blue accent bold), 11=data even(white border), 12=data odd(pale blue border),
+    // 13=text even, 14=text odd
+    const xfs =
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' + // 0
+      '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' + // 1 title
+      '<xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' + // 2 subtitle
+      '<xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' + // 3 instruction
+      '<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' + // 4 example label
+      '<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' + // 5 example header
+      '<xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>' + // 6 example data
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' + // 7 spacer
+      '<xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' + // 8 formal section
+      '<xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' + // 9 required header A
+      '<xf numFmtId="0" fontId="5" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' + // 10 optional header B-G
+      '<xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>' + // 11 data white
+      '<xf numFmtId="0" fontId="6" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>' + // 12 data pale blue
+      '<xf numFmtId="49" fontId="6" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>' + // 13 text even
+      '<xf numFmtId="49" fontId="6" fillId="6" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>'; // 14 text odd
     let xml = existingXml;
-    // Freeze header: inject pane into sheetView
+    xml = xml.replace(/<fonts count="\d+">[\s\S]*?<\/fonts>/, '<fonts count="7">' + fonts + '</fonts>');
+    xml = xml.replace(/<fills count="\d+">[\s\S]*?<\/fills>/, '<fills count="8">' + fills + '</fills>');
+    xml = xml.replace(/<borders count="\d+">[\s\S]*?<\/borders>/, '<borders count="2">' + borders + '</borders>');
+    xml = xml.replace(/<cellXfs count="\d+">[\s\S]*?<\/cellXfs>/, '<cellXfs count="15">' + xfs + '</cellXfs>');
+    return xml;
+  }
+  function buildV2SheetXml(existingXml) {
+    let xml = existingXml;
+    // Gridlines off
+    xml = xml.replace(/<sheetView([^>]*?)\/>/, '<sheetView$1 showGridLines="0"><pane ySplit="12" topLeftCell="A13" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A13" sqref="A13"/></sheetView>');
     if (!xml.includes('state="frozen"')) {
-      xml = xml.replace(/<sheetView([^>]*?)\/>/, '<sheetView$1><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView>');
-      if (!xml.includes('state="frozen"')) {
-        xml = xml.replace(/<sheetView([^>]*?)><\/sheetView>/, '<sheetView$1><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView>');
-      }
+      xml = xml.replace(/<sheetView([^>]*?)><\/sheetView>/, '<sheetView$1 showGridLines="0"><pane ySplit="12" topLeftCell="A13" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A13" sqref="A13"/></sheetView>');
     }
-    // Header style refs: replace or add s attribute
-    const styleMap = { system: xfMap.sysXf, required: xfMap.reqXf, optional: xfMap.optXf };
-    headers.forEach((header, i) => {
-      const kind = MEMBERS_COL_STYLES[header] || 'optional';
-      const styleId = styleMap[kind];
-      const ref = String.fromCharCode(65 + i) + '1';
-      // Replace existing s="..." or add s="..."
-      const re = new RegExp('(<c r="' + ref + '")([^>]*?)(/?>)');
-      xml = xml.replace(re, (m, prefix, attrs, close) => {
-        const cleaned = attrs.replace(/ s="[^"]*"/, '');
-        return prefix + ' s="' + styleId + '"' + cleaned + close;
-      });
-    });
-    // Data validations: OOXML schema order — after autoFilter/mergeCells, before ignoredErrors/drawing
-    const validations = MEMBERS_VALIDATIONS.map(v =>
-      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="' + v.col + '2:' + v.col + '1000">' +
-      '<formula1>' + v.formula + '</formula1></dataValidation>'
-    ).join('');
-    const block = '<dataValidations count="' + MEMBERS_VALIDATIONS.length + '">' + validations + '</dataValidations>';
-    if (xml.includes('</autoFilter>')) {
-      xml = xml.replace('</autoFilter>', '</autoFilter>' + block);
-    } else if (xml.includes('<ignoredErrors')) {
-      xml = xml.replace('<ignoredErrors', block + '<ignoredErrors');
-    } else if (xml.includes('<legacyDrawing')) {
-      xml = xml.replace('<legacyDrawing', block + '<legacyDrawing');
-    } else {
-      xml = xml.replace('</sheetData>', '</sheetData>' + block);
+    // Merges for title (A1:G1), subtitle (A2:G2), instructions (A3:G3..A6:G6), example label (A7:G7), spacer (A10:G10), formal section (A11:G11)
+    const merges = '<mergeCells count="8">' +
+      '<mergeCell ref="A1:G1"/>' +
+      '<mergeCell ref="A2:G2"/>' +
+      '<mergeCell ref="A3:G3"/>' +
+      '<mergeCell ref="A4:G4"/>' +
+      '<mergeCell ref="A5:G5"/>' +
+      '<mergeCell ref="A6:G6"/>' +
+      '<mergeCell ref="A7:G7"/>' +
+      '<mergeCell ref="A11:G11"/>' +
+      '</mergeCells>';
+    if (!xml.includes('<mergeCells')) {
+      if (/<autoFilter\b[^>]*\/>/.test(xml)) xml = xml.replace(/<autoFilter\b[^>]*\/>/, match => match + merges);
+      else if (xml.includes('</autoFilter>')) xml = xml.replace('</autoFilter>', '</autoFilter>' + merges);
+      else xml = xml.replace('</sheetData>', '</sheetData>' + merges);
+    }
+    // Data validations: D=col3 (race), E=col4 (form), G=col6 (status Chinese)
+    const validations =
+      '<dataValidations count="3">' +
+      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="D13:D212"><formula1>"Melayu,India,Cina,Other"</formula1></dataValidation>' +
+      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="E13:E212"><formula1>"Peralihan,Form 1,Form 2,Form 3,Form 4,Form 5,Adult"</formula1></dataValidation>' +
+      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="G13:G212"><formula1>"在籍,已毕业,已退出"</formula1></dataValidation>' +
+      '</dataValidations>';
+    if (!xml.includes('<dataValidations')) {
+      if (xml.includes('</mergeCells>')) {
+        xml = xml.replace('</mergeCells>', '</mergeCells>' + validations);
+      } else if (xml.includes('</autoFilter>')) {
+        xml = xml.replace('</autoFilter>', '</autoFilter>' + validations);
+      } else if (xml.includes('<ignoredErrors')) {
+        xml = xml.replace('<ignoredErrors', validations + '<ignoredErrors');
+      } else if (xml.includes('<legacyDrawing')) {
+        xml = xml.replace('<legacyDrawing', validations + '<legacyDrawing');
+      } else {
+        xml = xml.replace('</mergeCells>', '</mergeCells>' + validations);
+      }
     }
     return xml;
   }
-  function buildMembersBook(state, template) {
+  function buildV2TemplateBytes() {
     const library = requireLibrary();
-    const headers = root.KPT.fields.Members;
-    const records = template ? [] : state.Members;
-    const rows = [headers, ...records.map(row => headers.map(header => Array.isArray(row[header]) ? row[header].join('|') : row[header] == null ? '' : row[header]))];
-    const sheet = library.utils.aoa_to_sheet(rows);
-    applyTextFormat(sheet, headers, rows.length, !!template);
-    // Native SheetJS comments (writer handles rels/VML/Content_Types)
-    if (template) {
-      headers.forEach((header, i) => {
-        const text = MEMBERS_COMMENTS[header];
-        if (!text) return;
-        const addr = library.utils.encode_cell({ r: 0, c: i });
-        if (!sheet[addr]) sheet[addr] = { t: 's', v: header };
-        sheet[addr].c = [{ a: 'TCCD', t: text }];
+    const aoa = buildV2SheetAoa();
+    const sheet = library.utils.aoa_to_sheet(aoa);
+    // Column widths
+    sheet['!cols'] = [
+      { wch: 18 }, // A name
+      { wch: 16 }, // B sjamId
+      { wch: 16 }, // C ic
+      { wch: 10 }, // D race
+      { wch: 10 }, // E form
+      { wch: 12 }, // F joined
+      { wch: 10 }  // G status
+    ];
+    // Emit all cells so merged panels and blank entry cells have full fills/borders.
+    for (let r = 0; r < V2_PREFORMAT_END; r++) {
+      for (let c = 0; c < 7; c++) {
+        const address = library.utils.encode_cell({ r, c });
+        if (!sheet[address]) sheet[address] = { t: 's', v: '' };
+      }
+    }
+    // Row heights
+    const rows = [];
+    rows[0] = { hpt: 36 }; // title
+    rows[1] = { hpt: 22 }; // subtitle
+    for (let i = 2; i <= 5; i++) rows[i] = { hpt: 30 }; // instructions
+    rows[6] = { hpt: 22 }; // example label
+    rows[7] = { hpt: 20 }; // example headers
+    rows[8] = { hpt: 18 }; // example data
+    rows[9] = { hpt: 10 }; // spacer
+    rows[10] = { hpt: 24 }; // formal section
+    rows[11] = { hpt: 22 }; // formal headers
+    for (let i = 12; i < V2_PREFORMAT_END; i++) rows[i] = { hpt: 18 };
+    sheet['!rows'] = rows;
+    // Autofilter on formal headers (row 12) through preformatted end
+    sheet['!autofilter'] = { ref: 'A12:G212' };
+    // Ref range
+    sheet['!ref'] = library.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: V2_PREFORMAT_END - 1, c: 6 } });
+    // Text format for SJAM (B) and IC (C) data rows
+    for (let r = 12; r < V2_PREFORMAT_END; r++) {
+      ['B', 'C'].forEach(col => {
+        const addr = col + (r + 1);
+        if (!sheet[addr]) sheet[addr] = { t: 's', v: '', z: '@' };
+        else sheet[addr].z = '@';
       });
     }
     const book = library.utils.book_new();
     library.utils.book_append_sheet(book, sheet, 'Members');
     return book;
   }
-  function buildMembersTemplateBytes(state) {
+  function buildV2StyledBytes() {
     const library = requireLibrary();
-    const book = buildMembersBook(state, true);
+    const book = buildV2TemplateBytes();
     const raw = library.write(book, { bookType: 'xlsx', type: 'array' });
-    // Normalize to Uint8Array for CFB compatibility (type:'array' returns ArrayBuffer)
     const buf = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-    // CFB patch: styles + freeze + data validations
     const cfb = library.CFB.read(buf, { type: 'array' });
+    // Patch styles
     const stylesXml = cfbGetXml(cfb, 'Root Entry/xl/styles.xml');
-    const patched = patchStylesXml(stylesXml);
-    cfbSetXml(cfb, 'Root Entry/xl/styles.xml', patched.xml);
+    cfbSetXml(cfb, 'Root Entry/xl/styles.xml', buildV2StylesXml(stylesXml));
+    // Patch sheet: merges, validations, freeze, gridlines
     const sheetXml = cfbGetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml');
-    cfbSetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml', patchSheetXml(sheetXml, root.KPT.fields.Members, patched));
+    cfbSetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml', buildV2SheetXml(sheetXml));
+    // Every emitted cell receives one style reference, replacing SheetJS's text style.
+    const finalSheet = cfbGetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml').replace(/<c\b([^>]*)>/g, (tag, attrs) => {
+      const match = attrs.match(/\br="([A-G])(\d+)"/);
+      if (!match) return tag;
+      const col = match[1];
+      const row = Number(match[2]);
+      let style = 0;
+      if (row === 1) style = 1;
+      else if (row === 2) style = 2;
+      else if (row <= 6) style = 3;
+      else if (row === 7) style = 4;
+      else if (row === 8) style = 5;
+      else if (row === 9) style = 6;
+      else if (row === 11) style = 8;
+      else if (row === 12) style = col === 'A' ? 9 : 10;
+      else if (row >= 13) style = ['B', 'C'].includes(col) ? ((row - 13) % 2 ? 14 : 13) : ((row - 13) % 2 ? 12 : 11);
+      return '<c' + attrs.replace(/\s+s="[^"]*"/g, '').replace(/\/$/, '') + ' s="' + style + '"' + (attrs.endsWith('/') ? '/>' : '>');
+    });
+    cfbSetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml', finalSheet);
     const out = library.CFB.write(cfb, { fileType: 'zip', type: 'array', compression: true });
     return out instanceof Uint8Array ? out : new Uint8Array(out);
   }
@@ -271,6 +416,10 @@
     const library = requireLibrary();
     const typedTable = resolveTypedTable(options);
     const book = library.utils.book_new();
+    if (typedTable === 'Members' && template) {
+      // V2 template
+      return buildV2TemplateBytes();
+    }
     if (typedTable) {
       const headers = root.KPT.fields[typedTable];
       const records = template ? [] : state[typedTable];
@@ -309,12 +458,11 @@
   function createStyledBytes(state, template, summaryRows, options) {
     const library = requireLibrary();
     const typedTable = resolveTypedTable(options);
-    if (typedTable === 'Members' && template) return buildMembersTemplateBytes(state);
+    if (typedTable === 'Members' && template) return buildV2StyledBytes();
     const book = create(state, template, summaryRows, options);
     return library.write(book, { bookType: 'xlsx', type: 'array' });
   }
   function triggerDownload(bytes, fileName) {
-    // Browser: Blob + URL + temporary anchor. Node: writeFile fallback.
     const library = requireLibrary();
     if (typeof Blob !== 'undefined' && typeof document !== 'undefined' && document.createElement) {
       const blob = new Blob([bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)], { type: 'application/octet-stream' });
@@ -328,7 +476,6 @@
       if (typeof URL.revokeObjectURL !== 'undefined') setTimeout(() => URL.revokeObjectURL(url), 60000);
       return;
     }
-    // Node.js fallback: write file
     const fs = typeof require === 'function' ? require('fs') : null;
     if (fs) { fs.writeFileSync(fileName, Buffer.from(bytes)); return; }
     library.writeFile(bytes, fileName);
@@ -343,11 +490,10 @@
       fileName = template ? 'TCCD_Import_Template.xlsx' : 'TCCD_Export_' + new Date().toISOString().slice(0, 10) + '.xlsx';
     }
     if (typedTable === 'Members' && template) {
-      const bytes = buildMembersTemplateBytes(state);
+      const bytes = buildV2StyledBytes();
       triggerDownload(bytes, fileName);
       return bytes;
     }
-    // Non-Members or non-template: original writeFile(book, name) behavior
     const book = create(state, template, summaryRows, options);
     library.writeFile(book, fileName);
     return book;

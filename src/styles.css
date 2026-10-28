@@ -179,3 +179,5 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
   .import-guide-table{overflow-x:auto}
   .import-guide .table-wrap table{min-width:520px}
 }
+
+.legend-title{background:#852b3d}.legend-guide{background:#dce8f8}.legend-example{background:#fff3b0}.legend-entry{background:#fff;border:1px solid #852b3d}

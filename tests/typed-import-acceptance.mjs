@@ -26,6 +26,7 @@ try {
   await choice.waitFor();
   assert.equal(await choice.inputValue(), 'Members', 'Beginner import defaults to members.');
   const action = name => page.locator(`[data-action="${name}"]`).first();
+  let designedTemplate;
   const guide = page.locator('#import-guide-body');
   await guide.waitFor({ state: 'visible' });
   const guideText = await guide.innerText();
@@ -49,21 +50,24 @@ try {
     const bytes = await fs.readFile(await download.path());
     const book = XLSX.read(bytes, { type: 'buffer' });
     assert.deepEqual(book.SheetNames, [table]);
-    assert.deepEqual(XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0], KPT.fields[table]);
+    if (table !== 'Members') assert.deepEqual(XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0], KPT.fields[table]);
     assert.ok(download.suggestedFilename().includes(table));
     if (table === 'Members') {
       const sheet = book.Sheets.Members;
-      for (let column = 0; column < KPT.fields.Members.length; column++) {
-        const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: column })];
-        assert.ok(cell.c?.some(note => note.t.length > 25), 'Each member header has a useful filling note: ' + cell.v);
-      }
+      designedTemplate = bytes;
+      assert.equal(sheet.A1.v, 'TCCD 会员资料导入表 · 新会员');
+      const headings = Array.from({ length: 7 }, (_, c) => sheet[XLSX.utils.encode_cell({ r: 11, c })].v);
+      assert.deepEqual(headings, ['姓名 *', 'SJAM 会员编号', '身份证号码', '种族', '年级', '加入日期', '会员状态']);
+      assert.ok(!Object.values(sheet).some(cell => cell?.c?.length), 'No overlaying comments or notes.');
       const zip = XLSX.CFB.read(bytes, { type: 'buffer' });
       const xml = name => Buffer.from(zip.FileIndex[zip.FullPaths.indexOf('Root Entry/' + name)].content).toString('utf8');
       assert.match(xml('xl/worksheets/sheet1.xml'), /state="frozen"/, 'The downloaded workbook freezes the header.');
       assert.match(xml('xl/worksheets/sheet1.xml'), /<dataValidations\b/, 'The downloaded workbook contains actual Excel dropdowns.');
       assert.ok((xml('xl/styles.xml').match(/<fill>/g) || []).length > 2, 'Downloaded bytes contain designed fills.');
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false }).filter(row => row.some(value => value !== '' && value != null));
-      assert.equal(rows.length, 1, 'Teaching examples must never become importable member rows.');
+      assert.ok((xml('xl/styles.xml').match(/<border>/g) || []).length > 1, 'Entry cells have real borders.');
+      assert.ok(!zip.FullPaths.some(path => /comments|vmlDrawing/.test(path)), 'No drawing overlays in the archive.');
+      const empty = await page.evaluate(bytes => KPTWorkbook.parse(new Uint8Array(bytes), { table: 'Members' }), [...bytes]);
+      assert.equal(empty.workbook.Members?.length, 0, 'Examples are excluded from parsed data.');
     }
   }
   await choice.selectOption('Members');
@@ -82,6 +86,29 @@ try {
   assert.equal(imported.status, 'Active');
   for (const table of ['Attendance', 'Activities', 'Exams', 'Duty', 'Awards', 'Enrolments', 'Catalog']) assert.deepEqual(after.state[table], before.state[table], table + ' must remain unchanged.');
   console.log('PASS: seven single-sheet templates; selected Members payload only; leading zeros and defaults; unrelated records unchanged');
+
+  const designedBook = XLSX.read(designedTemplate, { type: 'buffer' });
+  Object.assign(designedBook.Sheets.Members, {
+    A13: { t: 's', v: 'Designed template fictional graduate' },
+    B13: { t: 's', v: '00007777', z: '@' },
+    G13: { t: 's', v: '已毕业' },
+    A14: { t: 's', v: 'Designed template fictional active' }
+  });
+  await page.locator('#excel-file').setInputFiles({ name: 'designed-members.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(XLSX.write(designedBook, { type: 'array', bookType: 'xlsx' })) });
+  await action('previewImport').click();
+  await action('commitImport').waitFor();
+  const v2Request = await page.evaluate(() => window.__importCalls.filter(r => r.action === 'previewImport').at(-1));
+  assert.equal(v2Request.workbook.Members.length, 2);
+  assert.equal(v2Request.workbook.Members[0].status, 'Graduated');
+  assert.equal(v2Request.workbook.Members[0].__excelRow, 13);
+  await action('commitImport').click();
+  await page.waitForFunction(async () => (await KPTTransport.call({ action: 'bootstrap' })).state.Members.some(row => row.name === 'Designed template fictional graduate'));
+  const designedAfter = await page.evaluate(() => KPTTransport.call({ action: 'bootstrap' }));
+  assert.equal(designedAfter.state.Members.length, after.state.Members.length + 2);
+  assert.equal(designedAfter.state.Members.find(r => r.name === 'Designed template fictional graduate').sjamId, '00007777');
+  assert.equal(designedAfter.state.Members.find(r => r.name === 'Designed template fictional active').status, 'Active');
+  assert.ok(!designedAfter.state.Members.some(r => r.name === '示例学员甲'));
+  console.log('PASS: designed template ignores example, imports row 13, translates Chinese status and preserves zeros/defaults');
 
   await page.locator('#excel-file').setInputFiles(file({ Members: [{ name: 'Must not survive type change' }] }));
   await action('previewImport').click();
