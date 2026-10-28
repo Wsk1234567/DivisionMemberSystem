@@ -267,9 +267,49 @@
       + '<button type="button" class="button' + (hubTab === 'studio' ? ' primary' : '') + '" data-action="hubTab" data-id="studio" aria-current="' + (hubTab === 'studio' ? 'page' : 'false') + '">' + escape(t('hub.studio')) + '</button>'
       + '<button type="button" class="button' + (hubTab === 'hall' ? ' primary' : '') + '" data-action="hubTab" data-id="hall" aria-current="' + (hubTab === 'hall' ? 'page' : 'false') + '">' + escape(t('hub.hall')) + (counts.pendingSubmit || counts.pendingCheck || counts.pendingReview ? ' <span class="hub-badge quiet">' + (counts.pendingSubmit + counts.pendingCheck + counts.pendingReview) + '</span>' : '') + '</button>'
       + '<button type="button" class="button' + (hubTab === 'notifications' ? ' primary' : '') + '" data-action="hubTab" data-id="notifications" aria-current="' + (hubTab === 'notifications' ? 'page' : 'false') + '">' + escape(t('hub.notifications')) + (unread ? ' <span class="hub-badge">' + unread + '</span>' : '') + '</button>'
-      + button(window.KPTI18n && window.KPTI18n.getLang() === 'zh' ? 'English' : '中文', 'toggleLang')
-      + button('Telegram', 'telegramSettings')
       + '</div>';
+  }
+  function hubSidebar() {
+    const counts = hubCounters();
+    const unread = hubNotifications.unreadCount || 0;
+    const lang = (window.KPTI18n && window.KPTI18n.getLang()) || 'en';
+    const navItem = (id, label, badge) =>
+      '<button type="button" data-action="hubTab" data-id="' + id + '" aria-current="' + (hubTab === id ? 'page' : 'false') + '"' + (hubTab === id ? ' class="active"' : '') + '>' + icon + '<span>' + escape(label) + '</span>' + (badge ? ' ' + badge : '') + '</button>';
+    const taskBadge = (counts.pendingSubmit || counts.pendingCheck || counts.pendingReview)
+      ? '<span class="hub-badge quiet">' + (counts.pendingSubmit + counts.pendingCheck + counts.pendingReview) + '</span>' : '';
+    const unreadBadge = unread ? '<span class="hub-badge">' + unread + '</span>' : '';
+    let html = '<div class="nav hub-nav" role="navigation" aria-label="' + escape(t('hub.studio')) + '">'
+      + navItem('studio', t('hub.studio'))
+      + navItem('hall', t('hub.hall'), taskBadge)
+      + navItem('notifications', t('hub.notifications'), unreadBadge);
+    const packages = hubPackages();
+    if (packages.length > 1) {
+      html += '<div class="hub-nav-section">' + packages.map(pkg => {
+        const label = pkg.activityType + ' ' + pkg.year;
+        return '<button type="button" data-action="hubPick" data-id="' + escape(pkg.id) + '"' + (hubSelectedId === pkg.id ? ' class="active"' : '') + '>' + icon + '<span>' + escape(label) + '</span></button>';
+      }).join('') + '</div>';
+    } else if (packages.length === 1) {
+      html += '<div class="hub-nav-section"><button type="button" data-action="hubPick" data-id="' + escape(packages[0].id) + '">' + icon + '<span>' + escape(packages[0].activityType + ' ' + packages[0].year) + '</span></button></div>';
+    }
+    html += '<div class="hub-nav-section">'
+      + '<button type="button" data-action="toggleLang">' + icon + '<span>' + (lang === 'zh' ? 'English' : '中文') + '</span></button>'
+      + '<button type="button" data-action="telegramSettings">' + icon + '<span>Telegram</span></button>'
+      + '</div>';
+    html += '</div>';
+    byId('navigation').innerHTML = html;
+    document.querySelectorAll('#navigation [data-action="hubTab"]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.id === hubTab);
+    });
+  }
+  function hubDefaultTab() {
+    // OC lives in submissions; OS/OT live in workbench. Concurrent roles keep workbench.
+    if (hubHas('oc') && !hubHas('os') && !hubHas('ot')) return 'hall';
+    return 'studio';
+  }
+  function hubNotificationTab(row) {
+    if (row && row.role === 'oc') return 'hall';
+    if (row && (row.kind === 'ReturnedByOC' || row.kind === 'ReturnedByFinal')) return 'studio';
+    return row && row.destination === 'studio' ? 'studio' : 'hall';
   }
   function hubActivityPicker() {
     const packages = hubPackages();
@@ -294,45 +334,46 @@
     const book = (state.FinBooks || []).find(row => row.packageId === pkg.id && !row.archived) || null;
     // Capability is a union of real roles. Admin is not auto finance editor/approver.
     const canOs = hubHas('os') || hubHas('owner') || hubHas('admin');
-    const canOt = hubHas('ot') || hubHas('owner');
+    const canOt = hubHas('ot') || hubHas('owner') || hubHas('treasurer');
     const canOc = hubHas('oc') || hubHas('owner') || hubHas('admin');
-    const canFinEdit = hubHas('ot') || hubHas('owner') || hubHas('treasurer');
-    let body = '<section class="card"><div class="eyebrow">' + escape(t('hub.doWork')) + '</div><h2 style="margin-top:0">' + escape(t('hub.identity')) + ' · ' + hubRoleChip() + '</h2><p class="muted">' + escape(t('hub.doWorkHint')) + '</p></section>';
-    if (canOs || canOc) {
-      const rows = items.filter(row => (canOs && ['Pending', 'Draft', 'Rejected'].indexOf(row.status) >= 0) || (canOc && ['Pending', 'Draft', 'Rejected', 'AwaitingOC'].includes(row.status)));
-      body += '<section class="card"><h2>' + escape(t('docs.checklist')) + '</h2>' + table(['#', t('docs.document'), t('docs.due'), t('docs.statusCol'), t('docs.actions')], rows.map(item => {
+    const counts = hubCounters();
+    let title = t('hub.workbenchTitle.oc');
+    if (canOs && canOt) title = t('hub.workbenchTitle.os') + ' · ' + t('hub.workbenchTitle.ot');
+    else if (canOs) title = t('hub.workbenchTitle.os');
+    else if (canOt) title = t('hub.workbenchTitle.ot');
+    let body = '<section class="card"><div class="eyebrow">' + escape(t('hub.doWork')) + '</div>'
+      + '<h2 style="margin-top:0">' + escape(title) + '</h2>'
+      + '<p class="muted">' + escape(t(canOs || canOt ? 'hub.doWorkHint' : 'hub.ocPersonalHint')) + '</p>'
+      + '<div class="toolbar"><button type="button" class="button btn-submit" data-action="hubTab" data-id="hall">' + escape(t(canOs || canOt ? 'hub.readyToSubmit' : 'hub.hall')) + '</button></div></section>';
+    if (canOs) {
+      const rows = items.filter(row => ['Pending', 'Draft', 'Rejected'].indexOf(row.status) >= 0);
+      body += '<section class="card"><h2>' + escape(t('docs.checklist')) + '</h2>'
+        + '<p class="muted">' + escape(t('hub.role.os')) + '</p>'
+        + table(['#', t('docs.document'), t('docs.due'), t('docs.statusCol'), t('docs.actions')], rows.map(item => {
         const tools = [];
         if (item.fileId) tools.push(button(t('docs.download'), 'docDownload', item.id));
         if (item.templateId) tools.push(button(t('docs.template'), 'docDownloadTemplate', item.id));
-        if (canOs && ['Pending', 'Draft', 'Rejected'].indexOf(item.status) >= 0) {
-          tools.push('<label class="button small" for="hub-up-' + escape(item.id) + '">' + escape(t('docs.upload')) + '<input id="hub-up-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
-        }
-        // Check / return live in Studio; formal submit/forward stay in Hall.
-        if (canOc && item.status === 'AwaitingOC') {
-          tools.push('<button type="button" class="button small btn-check" data-action="docCheck" data-id="' + escape(item.id) + '" data-table="pass">' + escape(t('hub.checkPass')) + '</button>');
-          tools.push('<button type="button" class="button small btn-return" data-action="docCheck" data-id="' + escape(item.id) + '">' + escape(t('hub.return')) + '</button>');
-        }
+        tools.push('<label class="button small" for="hub-up-' + escape(item.id) + '">' + escape(t('docs.upload')) + '<input id="hub-up-' + escape(item.id) + '" type="file" data-doc-upload="' + escape(item.id) + '" accept=".docx,.xlsx,.pdf,.pptx,.jpg,.jpeg,.png,.zip" hidden></label>');
         return [String(item.sortOrder), '<span data-hub-entity="' + escape(item.id) + '">' + escape(item.title) + '</span>', escape(docDueBadge(pkg, item)), pill(workflowStatusLabel(item.status)), '<div class="row-tools">' + tools.join(' ') + '</div>'];
       })) + '</section>';
     }
-    if (canOt || canFinEdit) {
+    if (canOt) {
       if (book && (!financeDraft || financeDraft.packageId !== pkg.id)) loadFinanceDraft(book);
       body += financeDraft && financeDraft.packageId === pkg.id ? financeEditor() : '<section class="card"><h2>' + escape(t('hub.noFinanceBook')) + '</h2><button class="button primary" type="button" data-action="financeAddBook">' + escape(t('hub.createFinanceBook')) + '</button></section>';
-    } else if (canOc && book) {
-      body += financeDraft && financeDraft.id === book.id ? financeEditor() : '<section class="card"><h2>' + escape(t('hub.openFinance')) + '</h2><p class="muted">' + escape(workflowStatusLabel(book.status || 'Draft')) + '</p>'
-        + '<div class="toolbar">' + button(t('hub.openFinance'), 'financeOpenBook', book.id) + '</div></section>';
     }
-    if (canOc && book && book.status === 'AwaitingOC') {
-      body += '<section class="card"><div class="eyebrow">' + escape(t('hub.role.oc')) + '</div><h2>' + escape(t('hub.checkPass')) + '</h2>'
-        + '<div class="toolbar"><button type="button" class="button btn-check" data-action="finCheck" data-id="' + escape(book.id) + '" data-table="pass">' + escape(t('hub.checkPass')) + '</button>'
-        + '<button type="button" class="button btn-return" data-action="finCheck" data-id="' + escape(book.id) + '">' + escape(t('hub.return')) + '</button></div></section>';
+    if (canOc && !canOs && !canOt) {
+      body += '<section class="card"><h2>' + escape(t('hub.progress')) + '</h2><p class="muted">' + escape(t('hub.ocHint')) + '</p>'
+        + '<div class="hub-count-row"><span class="hub-count">' + escape(t('hub.count.pendingSubmit')) + ' <strong>' + counts.pendingSubmit + '</strong></span>'
+        + '<span class="hub-count">' + escape(t('hub.count.pendingCheck')) + ' <strong>' + counts.pendingCheck + '</strong></span>'
+        + '<span class="hub-count">' + escape(t('hub.count.pendingReview')) + ' <strong>' + counts.pendingReview + '</strong></span></div>'
+        + '<div class="toolbar"><button type="button" class="button btn-submit" data-action="hubTab" data-id="hall">' + escape(t('hub.hall')) + '</button></div></section>';
+    } else {
+      body += '<section class="card"><h2>' + escape(t('hub.progress')) + '</h2>'
+        + '<div class="hub-count-row"><span class="hub-count">' + escape(t('hub.count.pendingSubmit')) + ' <strong>' + counts.pendingSubmit + '</strong></span>'
+        + '<span class="hub-count">' + escape(t('hub.count.pendingCheck')) + ' <strong>' + counts.pendingCheck + '</strong></span>'
+        + '<span class="hub-count">' + escape(t('hub.count.pendingReview')) + ' <strong>' + counts.pendingReview + '</strong></span></div>'
+        + '</section>';
     }
-    const counts = hubCounters();
-    body += '<section class="card"><h2>' + escape(t('hub.progress')) + '</h2>'
-      + '<div class="hub-count-row"><span class="hub-count">' + escape(t('hub.count.pendingSubmit')) + ' <strong>' + counts.pendingSubmit + '</strong></span>'
-      + '<span class="hub-count">' + escape(t('hub.count.pendingCheck')) + ' <strong>' + counts.pendingCheck + '</strong></span>'
-      + '<span class="hub-count">' + escape(t('hub.count.pendingReview')) + ' <strong>' + counts.pendingReview + '</strong></span></div>'
-      + '<button type="button" class="button" data-action="hubTab" data-id="hall">' + escape(t('hub.hall')) + '</button></section>';
     return body;
   }
   function hubHallBody(pkg) {
@@ -352,28 +393,46 @@
     const docRows = items.map(item => {
       const tools = [];
       if (item.fileId) tools.push(button(t('docs.download'), 'docDownload', item.id));
-      if (canOs && (item.status === 'Draft' || item.status === 'Rejected')) tools.push('<button type="button" class="button small btn-submit" data-action="docSubmit" data-id="' + escape(item.id) + '">' + escape(t('hub.submitToOc')) + '</button>');
-      if (canOc && item.status === 'AwaitingOC') tools.push('<button type="button" class="button small" data-action="hubTab" data-id="studio">' + escape(t('hub.doWork')) + ' · ' + escape(t('hub.checkPass')) + '</button>');
-      if (canOc && item.status === 'OCChecked') tools.push('<button type="button" class="button small btn-submit" data-action="docForward" data-id="' + escape(item.id) + '">' + escape(t('hub.forward')) + '</button>');
+      if (canOs && (item.status === 'Draft' || item.status === 'Rejected')) {
+        tools.push('<button type="button" class="button small btn-submit" data-action="docSubmit" data-id="' + escape(item.id) + '">' + escape(t('hub.submitToOc')) + '</button>');
+      }
+      // OC checks and sends on right here — no jump to workbench.
+      if (canOc && item.status === 'AwaitingOC') {
+        tools.push('<button type="button" class="button small btn-check" data-action="docCheck" data-id="' + escape(item.id) + '" data-table="pass">' + escape(t('hub.checkPass')) + '</button>');
+        tools.push('<button type="button" class="button small btn-return" data-action="docCheck" data-id="' + escape(item.id) + '">' + escape(t('hub.returnOs')) + '</button>');
+      }
+      if (canOc && item.status === 'OCChecked') {
+        tools.push('<button type="button" class="button small btn-submit" data-action="docForward" data-id="' + escape(item.id) + '">' + escape(t('hub.forwardDoc')) + '</button>');
+      }
       if (canFinalDoc && item.status === 'Submitted') {
         tools.push(button(t('docs.approve'), 'docApprove', item.id));
         tools.push(button(t('docs.reject'), 'docReject', item.id));
       }
       return [String(item.sortOrder), '<span data-hub-entity="' + escape(item.id) + '">' + escape(item.title) + '</span>', escape(t('hub.stage.' + hubStageOf(item.status))), pill(workflowStatusLabel(item.status)), '<div class="row-tools">' + tools.join(' ') + '</div>'];
     });
-    body += '<section class="card"><h2>' + escape(t('docs.checklist')) + '</h2>' + table(['#', t('docs.document'), t('hub.stage'), t('docs.statusCol'), t('docs.actions')], docRows) + '</section>';
+    body += '<section class="card"><h2>' + escape(t('docs.checklist')) + '</h2>'
+      + (canOc ? '<p class="muted">' + escape(t('hub.ocHint')) + '</p>' : '')
+      + table(['#', t('docs.document'), t('hub.stage'), t('docs.statusCol'), t('docs.actions')], docRows) + '</section>';
     if (book) {
       const st = book.status || 'Draft';
       const tools = [];
-      if (canOt && (st === 'Draft' || st === 'Rejected')) tools.push('<button type="button" class="button small btn-submit" data-action="finSubmit" data-id="' + escape(book.id) + '">' + escape(t('hub.submitToOc')) + '</button>');
-      if (canOc && st === 'AwaitingOC') tools.push('<button type="button" class="button small" data-action="hubTab" data-id="studio">' + escape(t('hub.doWork')) + ' · ' + escape(t('hub.checkPass')) + '</button>');
-      if (canOc && st === 'OCChecked') tools.push('<button type="button" class="button small btn-submit" data-action="finForward" data-id="' + escape(book.id) + '">' + escape(t('hub.forward')) + '</button>');
+      if (canOt && (st === 'Draft' || st === 'Rejected')) {
+        tools.push('<button type="button" class="button small btn-submit" data-action="finSubmit" data-id="' + escape(book.id) + '">' + escape(t('hub.submitToOc')) + '</button>');
+      }
+      if (canOc && st === 'AwaitingOC') {
+        tools.push('<button type="button" class="button small btn-check" data-action="finCheck" data-id="' + escape(book.id) + '" data-table="pass">' + escape(t('hub.checkPass')) + '</button>');
+        tools.push('<button type="button" class="button small btn-return" data-action="finCheck" data-id="' + escape(book.id) + '">' + escape(t('hub.returnOt')) + '</button>');
+      }
+      if (canOc && st === 'OCChecked') {
+        tools.push('<button type="button" class="button small btn-submit" data-action="finForward" data-id="' + escape(book.id) + '">' + escape(t('hub.forwardFin')) + '</button>');
+      }
       if (canFinalFin && st === 'Submitted') {
-        tools.push(button('Approve', 'finApprove', book.id));
-        tools.push(button('Reject', 'finReject', book.id));
+        tools.push(button(t('docs.approve'), 'finApprove', book.id));
+        tools.push(button(t('docs.reject'), 'finReject', book.id));
       }
       body += '<section class="card"><h2>' + escape(t('hub.openFinance')) + '</h2><p>' + escape(workflowStatusLabel(st)) + '</p><div class="toolbar">'
         + button(t('hub.openFinance'), 'financeOpenBook', book.id) + tools.join(' ') + '</div></section>';
+      if (financeDraft && financeDraft.id === book.id) body += financeEditor();
     }
     return body;
   }
@@ -386,31 +445,28 @@
         const kind = t('hub.kind.' + row.kind) || row.kind;
         return '<article class="hub-notif' + (row.unread ? ' unread' : '') + '">'
           + (row.unread ? '<span class="hub-dot" aria-label="' + escape(t('hub.unread')) + '"></span>' : '<span class="hub-dot none"></span>')
-          + '<div><strong>' + escape(kind) + '</strong><div class="when">' + escape(row.entityTitle || '') + ' · ' + escape(t('hub.dest.' + row.destination) || row.destination) + '</div></div>'
+          + '<div><strong>' + escape(kind) + '</strong><div class="when">' + escape(row.entityTitle || '') + ' · ' + escape(t('hub.dest.' + hubNotificationTab(row))) + '</div></div>'
           + '<button type="button" class="button small" data-action="hubOpenNotif" data-id="' + escape(row.id) + '" data-package="' + escape(row.packageId || '') + '" data-entity="' + escape(row.entityId || '') + '">' + escape(t('hub.openItem')) + '</button>'
           + '</article>';
       }).join('') + '</div>' : '<p class="muted">' + escape(t('hub.notificationsEmpty')) + '</p>')
       + '<p class="hint">' + escape(t('hub.reducedMotionNote')) + '</p></section>';
   }
   function hubView() {
-    if (hubTab === 'notifications') return hubTabsBar() + hubNotificationsBody();
+    if (hubTab === 'notifications') return hubNotificationsBody();
     const packages = hubPackages();
     const pkg = hubPackage();
-    if (!packages.length) return hubTabsBar() + hubActivityPicker();
-    if (!pkg) return hubTabsBar() + hubActivityPicker();
+    if (!packages.length) return hubActivityPicker();
+    if (!pkg) return hubActivityPicker();
     const body = hubTab === 'hall' ? hubHallBody(pkg) : hubTab === 'notifications' ? hubNotificationsBody() : hubStudioBody(pkg);
-    return hubTabsBar()
-      + '<p class="muted">' + escape(pkg.activityType + ' ' + pkg.year) + ' · ' + hubRoleChip() + ' · <button type="button" class="button small" data-action="hubPick" data-id="">' + escape(t('hub.pickActivity')) + '</button></p>'
+    return '<p class="muted">' + escape(pkg.activityType + ' ' + pkg.year) + ' · ' + hubRoleChip() + '</p>'
       + activityAboutCard(pkg) + body;
   }
   function hubRefreshBadges() {
     // Partial badge update only — never re-render the page (would clobber dirty inputs).
     const unread = hubNotifications.unreadCount || 0;
-    const studioUnread = hubNotifications.studioUnread || {};
-    const activityUnread = hubNotifications.activityUnread || {};
-    let activityTotal = 0;
-    Object.keys(activityUnread).forEach(k => { activityTotal += Number(activityUnread[k] || 0); });
-    const studioTotal = Object.keys(studioUnread).reduce((sum, k) => sum + Number(studioUnread[k] || 0), 0);
+    const unreadItems = (hubNotifications.notifications || []).filter(row => row.unread);
+    const studioTotal = unreadItems.filter(row => hubNotificationTab(row) === 'studio').length;
+    const activityTotal = unreadItems.filter(row => hubNotificationTab(row) === 'hall').length;
     document.querySelectorAll('[data-action="hubTab"]').forEach(btn => {
       const id = btn.dataset.id;
       let badge = btn.querySelector('.hub-badge:not(.quiet)');
@@ -645,7 +701,7 @@
     const pkg = savedBook && savedBook.packageId ? (state.DocPackages || []).find(p => p.id === savedBook.packageId) : null;
     const roles = pkg ? packageRolesFor(pkg, user && user.email) : [];
     // OC may view drafts read-only; only Owner / Treasurer / this activity's OT can edit attachments.
-    const canEditAttach = !locked && !!bookId && !!(user.owner || user.treasurer || roles.indexOf('ot') >= 0);
+    const canEditAttach = !(document.body.dataset.mode === 'hub' && hubTab === 'hall') && !locked && !!bookId && !!(user.owner || user.treasurer || roles.indexOf('ot') >= 0);
     return '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(t('hub.receipts')) + '</div><h2 style="margin:0">' + escape(t('hub.receipts')) + '</h2></div>'
       + (canEditAttach ? '<label class="button" for="hub-receipt-file">' + escape(t('hub.uploadReceipt')) + '<input id="hub-receipt-file" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple hidden></label>' : '')
       + '</div><p class="hint">' + escape(t('hub.receiptsHint')) + ' ' + escape(t('hub.exportOptional')) + '</p>'
@@ -871,7 +927,8 @@
     const savedBook = book.id ? (state && state.FinBooks || []).find(row => row.id === book.id) : null;
     const liveStatus = savedBook ? (savedBook.status || 'Draft') : 'Draft';
     const locked = ['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].indexOf(liveStatus) >= 0;
-    const canEdit = !locked && (() => {
+    const reviewView = document.body.dataset.mode === 'hub' && hubTab === 'hall';
+    const canEdit = !reviewView && !locked && (() => {
       if (!book.id && !book.packageId) return !!(user.owner || user.treasurer);
       if (!book.packageId) return !!(user.owner || user.treasurer);
       const pkg = (state && state.DocPackages || []).find(p => p.id === book.packageId);
@@ -883,7 +940,9 @@
     const readOnly = locked || !canEdit ? ' readonly' : '';
     const disableAdd = locked || !canEdit ? ' disabled' : '';
     const reviewBar = canReview && liveStatus === 'Submitted' ? '<div class="toolbar">' + button('Approve', 'finApprove', book.id) + button('Reject', 'finReject', book.id) + '</div>' : '';
-    const how = '<section class="card how-card"><h2>' + escape(langLabel('Your finance workspace', '你的财务工作室')) + '</h2><ol><li>' + escape(langLabel('Fill in the accounts and reimbursement forms, then save.', '填写账目和报销表格，然后保存。')) + '</li><li>' + escape(langLabel('Upload JPG, PNG or PDF receipts below. Unsaved account changes are saved before upload.', '在下方上传 JPG、PNG 或 PDF 收据；上传前会先保存尚未保存的账目。')) + '</li><li>' + escape(langLabel('Go to Activity Hall when ready to submit to OC. Excel and PDF downloads are optional.', '准备好后前往活动大厅提交给 OC。下载 Excel 或 PDF 是可选操作。')) + '</li></ol></section>';
+    const how = canEdit
+      ? '<section class="card how-card"><h2>' + escape(langLabel('Your OT finance workbench', '你的 OT 财务工作台')) + '</h2><ol><li>' + escape(langLabel('Fill in the accounts and reimbursement forms, then save.', '填好账目和报销表，记得保存。')) + '</li><li>' + escape(langLabel('Add your JPG, PNG or PDF receipts below. Account changes are saved before uploading.', '在下方加上 JPG、PNG 或 PDF 收据。上传前会先保存账目。')) + '</li><li>' + escape(langLabel('When ready, open Submissions & approvals and hand it in to OC. No Excel or PDF download is needed.', '做好后去「提交与审批」交给 OC，不用先下载 Excel 或 PDF。')) + '</li></ol></section>'
+      : '<section class="card how-card"><h2>' + escape(langLabel('Read the accounts and receipts', '看看账目和收据')) + '</h2><p>' + escape(langLabel('This is a read-only copy. OC can check it here, then send it to the Treasurer for approval.', '这里可以看账目和收据，不能直接改。OC 看过没问题后，再交给财政批准。')) + '</p></section>';
     return '<div class="section-heading"><div><div class="eyebrow">' + escape(langLabel('Activity finance', '活动财务')) + ' · ' + escape(workflowStatusLabel(liveStatus)) + '</div><h2 style="margin:0">' + escape(book.activityName || 'New activity') + '</h2></div><div class="toolbar">' + button('Back to list', 'financeBack') + reviewBar + (canEdit && !locked ? '<button class="button primary" type="button" data-action="financeSave">Save</button>' : '') + '</div></div>' + (locked ? '<p class="hint">' + escape(langLabel('This book is in the approval flow. Editing is locked until it is returned or reopened.', '本账本正在审批流中，退回或重开前不能编辑。')) + '</p>' : '') + how + '<section class="card"><div class="field full"><label for="finance-activity-name">Activity name</label><input id="finance-activity-name" type="text" data-fin="book" data-index="0" data-key="activityName" value="' + escape(book.activityName) + '" maxlength="200" placeholder="e.g. Badminton Competition 2026"' + readOnly + '></div></section>' +
       '<section class="card" style="margin-top:18px"><div class="section-heading" style="margin-top:0"><div><div class="eyebrow">Step 1</div><h2 style="margin:0">Income &amp; Expenses</h2></div><div class="toolbar"><button class="button small" type="button" data-action="financeAddIncome"' + disableAdd + '>Add income</button><button class="button small" type="button" data-action="financeAddExpense"' + disableAdd + '>Add expense</button>' + button('Download Excel', 'financeDownloadIE') + '</div></div>' +
       '<h3>Income · RM ' + moneyText(incomeTotal) + '</h3>' + financeRows('income', book.incomes, [{ label: 'Date', key: 'date', type: 'date', attrs: readOnly.trim() }, { label: 'Description', key: 'description', type: 'text', attrs: readOnly.trim() }, { label: 'Amount (RM)', key: 'amount', type: 'number', attrs: 'min="0" step="0.01" inputmode="decimal"' + readOnly }]) +
@@ -979,7 +1038,7 @@
         tools.push(button(langLabel('Return', '退回'), 'docCheck', item.id, 'return'));
       }
     } else if (item.status === 'OCChecked') {
-      if (isOc) tools.push(button(langLabel('Forward for approval', '转交审批'), 'docForward', item.id));
+      if (isOc) tools.push(button(t('hub.forwardDoc'), 'docForward', item.id));
     } else if (item.status === 'Submitted') {
       if (isFinal) {
         tools.push(button(t('docs.approve'), 'docApprove', item.id));
@@ -1040,8 +1099,8 @@
     const lang = (window.KPTI18n && window.KPTI18n.getLang()) === 'zh' ? 'zh' : 'en';
     const copy = Object.assign({}, window.KPTActivityIntro.introFor(pkg.activityType, lang));
     copy.eyebrow = lang === 'zh' ? '活动指南 · ' + pkg.activityType : 'Activity guide · ' + pkg.activityType;
-    copy.do = lang === 'zh' ? '按工作室中的岗位分工准备资料，完成后前往活动大厅提交或交接。' : 'Prepare the work assigned to your role in My Studio, then use Activity Hall to submit or hand off.';
-    copy.note = lang === 'zh' ? '工作室用于准备和检查，大厅用于正式提交与转交；兼任岗位的功能会一起显示。' : 'Prepare and check work in My Studio. Formal submissions and handoffs happen in Activity Hall. Concurrent roles share this workspace.';
+    copy.do = lang === 'zh' ? '按你的岗位在工作台准备资料，准备好后到「提交与审批」交上去。' : 'Prepare your part on My Workbench, then hand it in under Submissions & approvals.';
+    copy.note = lang === 'zh' ? '工作台用来准备，提交与审批用来交上去和批准；兼任岗位会看到自己的全部任务。' : 'My Workbench is for preparing. Submissions & approvals is for handing in and approving. Concurrent roles see all of their own tasks.';
     const icon = pkg.activityType === 'AGM'
       ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="4" y="3" width="16" height="18" rx="2"/></svg>'
       : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>';
@@ -1163,7 +1222,7 @@
       + (ocDocQueue.length ? table(['#', 'Document', 'Due', 'Actions'], ocDocQueue.map(item => [String(item.sortOrder), escape(item.title), escape(docDueBadge(pkg, item)), '<div class="row-tools">' + button(langLabel('Check pass', '检查通过'), 'docCheck', item.id, 'pass') + button(langLabel('Return', '退回'), 'docCheck', item.id) + '</div>'])) : '<p class="muted">' + escape(langLabel('No documents waiting.', '没有待检查文书。')) + '</p>')
       + '<h2 style="margin-top:18px">' + escape(langLabel('Finance waiting for OC', '待检查财务')) + '</h2>'
       + (ocFinQueued ? '<div class="toolbar">' + button(langLabel('Check pass', '检查通过'), 'finCheck', ocFinBook.id, 'pass') + button(langLabel('Return', '退回'), 'finCheck', ocFinBook.id) + '</div>'
-        : ocFinChecked ? '<p>' + escape(langLabel('Finance is OC checked. Forward for approval.', '财务已通过 OC 检查，可转交审批。')) + '</p><div class="toolbar">' + button(langLabel('Forward for approval', '转交审批'), 'finForward', ocFinBook.id) + '</div>'
+        : ocFinChecked ? '<p>' + escape(t('hub.ocHint')) + '</p><div class="toolbar">' + button(t('hub.forwardFin'), 'finForward', ocFinBook.id) + '</div>'
         : '<p class="muted">' + escape(langLabel('No finance waiting for OC.', '没有待检查财务。')) + '</p>')
       + '</section>' : '';
     const osBlock = isOs ? '<section class="card"><div class="eyebrow">' + escape(langLabel('OS · Documents', 'OS · 文书')) + '</div><h2 style="margin-top:0">' + escape(langLabel('Upload and submit documents to OC', '上传并提交文书给 OC')) + '</h2><p class="muted">' + escape(langLabel('Draft files here, then Submit to OC. Returned items show the reason.', '在此上传草稿后提交给 OC。被退回的文件会显示原因。')) + '</p></section>' : '';
@@ -1202,14 +1261,14 @@
   }
   function workflowStatusLabel(status) {
     const map = {
-      AwaitingOC: langLabel('Waiting for OC', '等待 OC 检查'),
-      OCChecked: langLabel('OC checked', 'OC 已检查'),
-      Submitted: langLabel('Waiting for approval', '等待最终审批'),
+      AwaitingOC: langLabel('Waiting for OC to look at it', '等 OC 看一遍'),
+      OCChecked: langLabel('OC looked at it', 'OC 已看过'),
+      Submitted: langLabel('Waiting for the approver', '等审批人批准'),
       Approved: langLabel('Approved', '已批准'),
-      Rejected: langLabel('Returned', '已退回'),
+      Rejected: langLabel('Returned for edits', '已退回修改'),
       Draft: langLabel('Draft', '草稿'),
-      Pending: langLabel('Pending', '待处理'),
-      NotRequired: langLabel('Not required', '不需要')
+      Pending: langLabel('Not started yet', '还没开始'),
+      NotRequired: langLabel('Not needed', '不需要')
     };
     return map[status] || status;
   }
@@ -1245,7 +1304,7 @@
     if (!state) return;
     const useHub = workspaceMode === 'oc' || isOcOnly() || (user && !user.owner && !user.admin && !user.treasurer && ocPackages().length > 0);
     if (useHub) {
-      byId('navigation').innerHTML = '';
+      hubSidebar();
       document.body.dataset.mode = 'hub';
       const eyebrow = document.querySelector('.admin-top .eyebrow');
       if (eyebrow) eyebrow.textContent = t('brand.ActivityWorkspace');
@@ -1329,7 +1388,7 @@
     if (!financeDraft || !byId('finance-activity-name')) return;
     const saved = state.FinBooks.find(book => book.id === financeDraft.id);
     const pkg = state.DocPackages.find(item => item.id === financeDraft.packageId);
-    const editable = (user.owner || user.treasurer || packageRolesFor(pkg, user.email).includes('ot')) && !['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].includes(saved && saved.status);
+    const editable = !(document.body.dataset.mode === 'hub' && hubTab === 'hall') && (user.owner || user.treasurer || packageRolesFor(pkg, user.email).includes('ot')) && !['AwaitingOC', 'OCChecked', 'Submitted', 'Approved'].includes(saved && saved.status);
     if (editable) return;
     document.querySelectorAll('#content input, #content textarea, #content select').forEach(input => { input.readOnly = true; if (input.type === 'file' || input.tagName === 'SELECT') input.disabled = true; });
     document.querySelectorAll('#content [data-action]').forEach(element => { if (/^finance(Add|Remove)/.test(element.dataset.action)) element.disabled = true; });
@@ -1386,6 +1445,8 @@
     docFolders = response.docFolders || { templates: '', submissions: '' };
     currentPhase = response.currentPhase || 1;
     workspaceMode = preferredMode();
+    // Role-based default: OC in submissions; OS/OT in workbench.
+    hubTab = hubDefaultTab();
     const packageParam = new URLSearchParams(String(location.search || '')).get('package');
     if (packageParam && state && state.DocPackages) {
       const linked = state.DocPackages.find(row => row.id === packageParam);
@@ -1396,8 +1457,8 @@
         const entityId = new URLSearchParams(location.search).get('entity');
         const linkedBook = state.FinBooks.find(book => book.id === entityId && book.packageId === linked.id);
         const linkedItem = state.DocItems.find(item => item.id === entityId && item.packageId === linked.id);
-        if (linkedBook) { loadFinanceDraft(linkedBook); hubTab = linkedBook.status === 'Submitted' ? 'hall' : 'studio'; }
-        if (linkedItem) hubTab = ['OCChecked', 'Submitted', 'Approved'].includes(linkedItem.status) ? 'hall' : 'studio';
+        if (linkedBook) { loadFinanceDraft(linkedBook); hubTab = hubHas('oc') || linkedBook.status === 'Submitted' ? 'hall' : 'studio'; }
+        if (linkedItem) hubTab = hubHas('oc') || ['OCChecked', 'Submitted', 'Approved'].includes(linkedItem.status) ? 'hall' : 'studio';
       }
     }
     if (workspaceMode === 'portal') view = 'Portal';
@@ -1522,6 +1583,8 @@
       hubSelectedId = id || null;
       openDocPackageId = id || null;
       financeDraft = null;
+      // Multi-activity: pick first, then default tab by role.
+      if (id) hubTab = hubDefaultTab();
       render();
       return;
     }
@@ -1574,8 +1637,18 @@
       if (entityId && state) {
         const item = (state.DocItems || []).find(r => r.id === entityId);
         const book = (state.FinBooks || []).find(r => r.id === entityId);
-        hubTab = row && row.destination === 'hall' ? 'hall' : 'studio';
-        if (book) { hubTab = 'studio'; loadFinanceDraft(book); }
+        const kind = row && row.kind;
+        const isReturn = kind === 'ReturnedByOC' || kind === 'ReturnedByFinal';
+        const isOcFacing = kind === 'SubmittedToOC' || kind === 'OCChecked' || kind === 'ForwardedForApproval';
+        // Historical destination stays compatible; otherwise route by kind.
+        if (row) hubTab = hubNotificationTab(row);
+        else if (isOcFacing) hubTab = 'hall';
+        else if (isReturn) hubTab = 'studio';
+        else hubTab = hubDefaultTab();
+        if (book) {
+          // Finance opened from submissions stays put — no forced jump back to workbench.
+          loadFinanceDraft(book);
+        }
         if (!item && !book) { await hubLoadNotifications(true); render(); notice('This item is no longer available.', true); return; }
       }
       render();
@@ -1680,10 +1753,10 @@
       financeReceiptFiles = [];
       hubDirty = false;
       view = 'Finance';
-      hubTab = 'studio';
+      if (hubTab !== 'hall') hubTab = 'studio';
       render();
       if (byId('finance-activity-name')) hubMarkEntityRead(book.id, book.version).catch(error => notice(error.message, true));
-      notice('Finance record loaded. Edits stay local until you press Save.');
+      notice(langLabel('Book opened. You can read the entries and receipts here.', '账本打开了，可以在这里看账目和收据。'));
       return;
     }
     if (name === 'financeBack') { if (!hubConfirmLeave()) return; financeDraft = null; financeReceiptFiles = []; render(); return; }
@@ -1869,26 +1942,26 @@
     }
     if (name === 'finSubmit') {
       applySave(await call({ action: 'submitFinBook', bookId: id, revision: state.revision }));
-      notice(langLabel('Finance submitted to OC for check.', '财务已提交给 OC 检查。'));
+      notice(t('hub.submitted'));
       return;
     }
     if (name === 'finCheck') {
       const pass = element && element.dataset.table === 'pass';
       if (!pass) {
-        const remarks = prompt(langLabel('Reason for return (required):', '退回原因（必填）:'));
+        const remarks = prompt(langLabel('Why are you returning this? (required)', '退回原因（必填）:'));
         if (remarks === null) return;
-        if (!String(remarks).trim()) { notice(langLabel('A reason is required when returning.', '退回必须填写原因。'), true); return; }
+        if (!String(remarks).trim()) { notice(langLabel('Please say why you are returning this.', '请填写退回原因。'), true); return; }
         applySave(await call({ action: 'checkFinBook', bookId: id, approve: false, remarks: String(remarks).trim(), revision: state.revision }));
-        notice(langLabel('Finance returned to submitter.', '财务已退回提交者。'));
+        notice(t('hub.returnedOt'));
         return;
       }
       applySave(await call({ action: 'checkFinBook', bookId: id, approve: true, revision: state.revision }));
-      notice(langLabel('OC finance check passed.', 'OC 财务检查通过。'));
+      notice(t('hub.checkedFin'));
       return;
     }
     if (name === 'finForward') {
       applySave(await call({ action: 'forwardFinBook', bookId: id, revision: state.revision }));
-      notice(langLabel('Finance forwarded for final approval.', '财务已转交最终审批。'));
+      notice(t('hub.sentFin'));
       return;
     }
     if (name === 'finApprove') {
@@ -2013,26 +2086,26 @@
     if (name === 'docBack') { openDocPackageId = null; docEditOpen = false; docEditDraft = null; activityIntroExpanded = false; render(); return; }
     if (name === 'docSubmit') {
       applySave(await call({ action: 'docItemSubmit', itemId: id, revision: state.revision }));
-      notice(langLabel('Submitted to OC for check.', '已提交给 OC 检查。'));
+      notice(t('hub.submitted'));
       return;
     }
     if (name === 'docCheck') {
       const pass = element && element.dataset.table === 'pass';
       if (!pass) {
-        const remarks = prompt(langLabel('Reason for return (required):', '退回原因（必填）:'));
+        const remarks = prompt(langLabel('Why are you returning this? (required)', '退回原因（必填）:'));
         if (remarks === null) return;
-        if (!String(remarks).trim()) { notice(langLabel('A reason is required when returning.', '退回必须填写原因。'), true); return; }
+        if (!String(remarks).trim()) { notice(langLabel('Please say why you are returning this.', '请填写退回原因。'), true); return; }
         applySave(await call({ action: 'docItemCheck', itemId: id, approve: false, remarks: String(remarks).trim(), revision: state.revision }));
-        notice(langLabel('Document returned to submitter.', '已退回提交者。'));
+        notice(t('hub.returnedOs'));
         return;
       }
       applySave(await call({ action: 'docItemCheck', itemId: id, approve: true, revision: state.revision }));
-      notice(langLabel('OC check passed.', 'OC 检查通过。'));
+      notice(t('hub.checkedDoc'));
       return;
     }
     if (name === 'docForward') {
       applySave(await call({ action: 'docItemForward', itemId: id, revision: state.revision }));
-      notice(langLabel('Forwarded for final approval.', '已转交最终审批。'));
+      notice(t('hub.sentDoc'));
       return;
     }
     if (name === 'docApprove') {

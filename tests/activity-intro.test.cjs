@@ -44,10 +44,11 @@ test('activity intro expand region is keyboard and mobile friendly', () => {
 
 test('workflow statuses use user labels and hide implementation details', () => {
   const source = read('src/admin.js');
-  assert.match(source, /Waiting for OC/);
-  assert.match(source, /OC checked/);
+  assert.match(source, /Waiting for OC to look at it/);
+  assert.match(source, /OC looked at it/);
   assert.doesNotMatch(source, /linked by packageId/);
   assert.match(source, /此活动尚未关联财务账本/);
   assert.match(source, /activePackageRoles/);
   assert.match(source, /OC check queue|待检查队列/);
+  assert.doesNotMatch(source, /转交审批|终审/);
 });

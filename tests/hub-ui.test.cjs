@@ -24,19 +24,26 @@ test('hub role capability is a union, not a single collapsed role', () => {
   assert.match(admin, /canOs = hubHas\('os'\)/);
   assert.match(admin, /canOt = hubHas\('ot'\)/);
   assert.match(admin, /canOc = hubHas\('oc'\)/);
-  // Admin must not automatically get finance edit.
-  assert.match(admin, /canFinEdit = hubHas\('ot'\) \|\| hubHas\('owner'\) \|\| hubHas\('treasurer'\)/);
+  // Admin must not automatically get finance edit — OT/Owner/Treasurer only.
+  assert.match(admin, /canOt = hubHas\('ot'\) \|\| hubHas\('owner'\) \|\| hubHas\('treasurer'\)/);
+  assert.doesNotMatch(admin, /canOt = hubHas\('ot'\) \|\| hubHas\('owner'\) \|\| hubHas\('admin'\)/);
 });
 
-test('check/return stay in studio; formal submit/forward stay in hall', () => {
+test('OC checks and sends on in submissions; hand-in stays there too', () => {
   const admin = read('src/admin.js');
-  assert.match(admin, /Check \/ return live in Studio; formal submit\/forward stay in Hall/);
   assert.match(admin, /hubStudioBody/);
   assert.match(admin, /hubHallBody/);
   assert.match(admin, /data-action="docSubmit"/);
   assert.match(admin, /data-action="docForward"/);
   assert.match(admin, /data-action="finSubmit"/);
   assert.match(admin, /data-action="finForward"/);
+  // OC one-stop approvals page: check + return + forward all in hall.
+  assert.match(admin, /hub\.checkPass/);
+  assert.match(admin, /hub\.forwardDoc/);
+  assert.match(admin, /hub\.forwardFin/);
+  assert.match(admin, /hub\.returnOs/);
+  assert.match(admin, /hub\.returnOt/);
+  assert.doesNotMatch(admin, /Check \/ return live in Studio/);
 });
 
 test('receipts edit only for Owner, Treasurer or package OT', () => {

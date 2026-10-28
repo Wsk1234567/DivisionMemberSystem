@@ -44,7 +44,7 @@ try {
   const event = await page.evaluate(async id => (await KPTTransport.call({ action: 'getHubNotifications' })).notifications.find(row => row.entityId === id), itemId);
   assert.equal(event.unread, true, 'Opening list does not clear unread.');
   await action('hubOpenNotif', event.id).click();
-  await page.waitForFunction(() => document.querySelector('[data-action="hubTab"][data-id="studio"]').getAttribute('aria-current') === 'page');
+  await page.waitForFunction(() => document.querySelector('[data-action="hubTab"][data-id="hall"]').getAttribute('aria-current') === 'page');
   for (let i = 0; i < 30; i++) {
     const feed = await page.evaluate(() => KPTTransport.call({ action: 'getHubNotifications' }));
     if (!feed.notifications.find(row => row.id === event.id).unread) break;
@@ -56,7 +56,7 @@ try {
   await role('oc');
   await page.locator('[data-action="docCheck"][data-id="' + itemId + '"][data-table="pass"]').click();
   await waitState(s => s.DocItems.find(r => r.id === itemId).status === 'OCChecked');
-  assert.equal(await action('docForward', itemId).count(), 0);
+  assert.equal(await action('docForward', itemId).count(), 1, 'OC can send the checked document on from the same submissions page.');
   await tab('hall'); await action('docForward', itemId).click();
   await waitState(s => s.DocItems.find(r => r.id === itemId).status === 'Submitted');
   await role('admin'); await action('docOpen', pkg.id).click(); await tab('hall'); await action('docApprove', itemId).click();
@@ -134,7 +134,7 @@ try {
   assert.equal(focusActions.includes('bootstrap'), false, 'Focus does not bootstrap: ' + focusActions.join(','));
   assert.equal(await page.locator('#finance-activity-name').inputValue(), 'Keep this unsaved text', 'Focus does not overwrite dirty draft');
   assert.equal(focusActions.every(a => ['liveProbe', 'liveSnapshot', 'getHubNotifications'].includes(a)), true, 'Focus only runs lightweight live checks: ' + focusActions.join(','));
-  await page.locator('[data-action="hubPick"][data-id=""]').click();
+  await page.locator('[data-action="hubPick"][data-id="' + pkg.id + '"]').first().click();
   assert.equal(await page.locator('#finance-activity-name').inputValue(), 'Keep this unsaved text', 'Activity picker also guards dirty data.');
   await action('financeSave').click();
   await waitState(s => s.FinBooks.some(r => r.activityName === 'Keep this unsaved text'));
@@ -159,7 +159,7 @@ try {
   console.log('PASS: multiple activities, concurrent roles, dirty polling/navigation, badge separation and failed read markers');
   await role('os'); await page.setViewportSize({ width: 375, height: 812 });
   await action('toggleLang').click();
-  assert.match(await page.locator('[data-action="hubTab"][data-id="studio"]').first().innerText(), /^我的工作室(?:\s+\d+)?$/);
+  assert.match(await page.locator('[data-action="hubTab"][data-id="studio"]').first().innerText(), /^我的工作台(?:\s+\d+)?$/);
   await action('toggleLang').click();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false);
   assert.deepEqual(errors, []);

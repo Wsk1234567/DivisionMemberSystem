@@ -106,6 +106,11 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 .hub-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
 .hub-tabs .button{min-height:44px}
 .hub-tabs .button[aria-current="page"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.hub-nav .hub-nav-section{margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}
+.hub-nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;border-radius:8px;padding:11px 12px;color:var(--muted);font-size:.86rem;min-height:44px}
+.hub-nav button:hover{background:var(--surface);color:var(--ink)}
+.hub-nav button.active,.hub-nav button[aria-current="page"]{background:var(--soft);color:var(--accent);font-weight:650}
+.hub-nav button:focus-visible{outline:3px solid #be8291;outline-offset:2px}
 .hub-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#b4232f;color:#fff;font-size:.72rem;font-weight:700}
 .hub-badge.quiet{background:var(--surface);color:var(--muted);border:1px solid var(--line)}
 .hub-role-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-size:.82rem;font-weight:650;border:1px solid var(--line)}
@@ -143,6 +148,11 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 .hub-count{display:inline-flex;gap:8px;align-items:center;padding:8px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line);font-size:.82rem}
 .hub-count strong{font-size:1rem}
 @media(max-width:760px){
+  #navigation>.hub-nav{width:100%;min-width:0}
+  .hub-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}
+  .hub-nav>button{min-width:0;white-space:normal;flex-wrap:wrap;justify-content:center;padding:10px 6px;gap:6px}
+  .hub-nav .hub-nav-section{grid-column:1/-1;display:flex;flex-wrap:wrap;margin-top:4px;padding-top:4px}
+  .hub-nav .hub-nav-section button{width:auto;flex:1;white-space:normal;justify-content:center}
   .hub-tabs{flex-direction:column}
   .hub-tabs .button{width:100%}
   .hub-card-grid{grid-template-columns:1fr}
