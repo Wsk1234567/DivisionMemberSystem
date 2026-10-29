@@ -1000,89 +1000,21 @@
     return '<p class="page-intro">Prepare the choices used in later phases before regular data entry begins.</p>' + setupActions + '<div class="setup-grid">' + memberOptions + rules + recommended + '</div>' + advanced;
   }
   function importMembersGuide() {
-    if (importType !== 'Members') return '';
+    const info = typeof KPTWorkbook.templateInfo === 'function' ? KPTWorkbook.templateInfo(importType) : null;
+    if (!info) return '';
     const open = importGuideOpen ? '' : ' hidden';
-    // V2 new-member template: seven Chinese columns, data starts row 13, no id/version.
-    const fieldRows = [
-      [t('mgHName'), t('mgNameReq'), t('mgNameHow'), t('mgNameEx')],
-      [t('mgHSjam'), t('mgSjamReq'), t('mgSjamHow'), t('mgSjamEx')],
-      [t('mgHIc'), t('mgIcReq'), t('mgIcHow'), t('mgIcEx')],
-      [t('mgHRace'), t('mgRaceReq'), t('mgRaceHow'), t('mgRaceEx')],
-      [t('mgHForm'), t('mgFormReq'), t('mgFormHow'), t('mgFormEx')],
-      [t('mgHJoined'), t('mgJoinedReq'), t('mgJoinedHow'), t('mgJoinedEx')],
-      [t('mgHStatus'), t('mgStatusReq'), t('mgStatusHow'), t('mgStatusEx')]
-    ];
-    return '<section class="card import-guide">'
-      + '<div class="section-heading" style="margin-top:0"><div><div class="eyebrow">' + escape(t('mgEyebrow')) + '</div><h2 style="margin:0">' + escape(t('mgTitle')) + '</h2></div>'
-      + '<button type="button" class="button small" data-action="toggleImportGuide" aria-expanded="' + (importGuideOpen ? 'true' : 'false') + '" aria-controls="import-guide-body">'
-      + escape(importGuideOpen ? t('mgHide') : t('mgShow')) + '</button></div>'
-      + '<p class="muted">' + escape(t('mgQuick')) + '</p>'
-      + '<ol class="import-steps">' + [t('mgQuick1'), t('mgQuick2'), t('mgQuick3'), t('mgQuick4'), t('mgQuick5')].map(step => '<li>' + escape(step) + '</li>').join('') + '</ol>'
-      + '<div id="import-guide-body"' + open + '>'
-      + '<p class="muted">' + escape(t('mgIntro')) + '</p>'
-      + '<h3>' + escape(t('mgLayoutTitle')) + '</h3>'
-      + '<ul class="rule-list import-rules">'
-      + '<li>' + escape(t('mgLayout1')) + '</li>'
-      + '<li>' + escape(t('mgLayout2')) + '</li>'
-      + '<li>' + escape(t('mgLayout3')) + '</li>'
-      + '<li>' + escape(t('mgLayout4')) + '</li>'
-      + '<li>' + escape(t('mgLayout5')) + '</li>'
-      + '<li>' + escape(t('mgLayout6')) + '</li>'
-      + '</ul>'
-      + '<h3>' + escape(t('mgTableTitle')) + '</h3>'
-      + '<div class="import-guide-table">'
-      + table([t('mgColHeader'), t('mgColRequired'), t('mgColHow'), t('mgColExample')],
-        fieldRows.map(row => [escape(row[0]), escape(row[1]), escape(row[2]), escape(row[3])]))
-      + '</div>'
-      + '<p class="hint">' + escape(t('mgCodeNote')) + '</p>'
-      + '<h3>' + escape(t('mgExampleTitle')) + '</h3>'
-      + '<div class="import-guide-table">'
-      + table([t('mgColHeader'), t('mgColValue')],
-        [
-          [t('mgHName'), '示例学员甲'],
-          [t('mgHSjam'), '00001234'],
-          [t('mgHIc'), escape(t('mgExBlank'))],
-          [t('mgHRace'), 'Cina'],
-          [t('mgHForm'), 'Form 1'],
-          [t('mgHJoined'), '2026-01-15'],
-          [t('mgHStatus'), '在籍']
-        ])
-      + '</div>'
-      + '<p class="hint">' + escape(t('mgExampleNote')) + '</p>'
-      + '<h3>' + escape(t('mgStatusValuesTitle')) + '</h3>'
-      + '<ul class="rule-list import-rules">'
-      + '<li>' + escape(t('mgStatusActive')) + '</li>'
-      + '<li>' + escape(t('mgStatusGraduated')) + '</li>'
-      + '<li>' + escape(t('mgStatusWithdrawn')) + '</li>'
-      + '</ul>'
-      + '<h3>' + escape(t('mgNoIdTitle')) + '</h3>'
-      + '<p class="muted">' + escape(t('mgNoIdNote')) + '</p>'
-      + '<h3>' + escape(t('mgUpdateTitle')) + '</h3>'
-      + '<p class="muted">' + escape(t('mgUpdateIntro')) + '</p>'
-      + '<ul class="rule-list import-rules">'
-      + '<li>' + escape(t('mgUpdate1')) + '</li>'
-      + '<li>' + escape(t('mgUpdate2')) + '</li>'
-      + '<li>' + escape(t('mgUpdate3')) + '</li>'
-      + '</ul>'
-      + '<h3>' + escape(t('mgLegendTitle')) + '</h3>'
-      + '<ul class="import-legend">'
-      + '<li><span class="legend-swatch legend-title" aria-hidden="true"></span>' + escape(t('mgLegendTitleColor')) + '</li>'
-      + '<li><span class="legend-swatch legend-guide" aria-hidden="true"></span>' + escape(t('mgLegendGuide')) + '</li>'
-      + '<li><span class="legend-swatch legend-example" aria-hidden="true"></span>' + escape(t('mgLegendExample')) + '</li>'
-      + '<li><span class="legend-swatch legend-entry" aria-hidden="true"></span>' + escape(t('mgLegendEntry')) + '</li>'
-      + '</ul>'
-      + '<p class="hint">' + escape(t('mgLegendNote')) + '</p>'
-      + '<h3>' + escape(t('mgRulesTitle')) + '</h3>'
-      + '<ul class="rule-list import-rules">'
-      + '<li>' + escape(t('mgRuleExample')) + '</li>'
-      + '<li>' + escape(t('mgRuleRow13')) + '</li>'
-      + '<li>' + escape(t('mgRuleHeaders')) + '</li>'
-      + '<li>' + escape(t('mgRuleNoFormula')) + '</li>'
-      + '<li>' + escape(t('mgRuleDup')) + '</li>'
-      + '<li>' + escape(t('mgRuleSameName')) + '</li>'
-      + '<li>' + escape(t('mgRuleDate')) + '</li>'
-      + '</ul>'
-      + '</div></section>';
+    const title = t('guidedTitle').replace('{type}', t('importType.' + importType));
+    const fields = info.columns.map(column => [escape(column.label), escape(t(column.required ? 'guidedRequired' : 'guidedOptional')), escape(column.help), escape(column.example === '' || column.example == null ? t('mgExBlank') : String(column.example))]);
+    return '<section class="card import-guide"><div class="section-heading" style="margin-top:0"><h2 style="margin:0">' + escape(title) + '</h2>'
+      + '<button type="button" class="button small" data-action="toggleImportGuide" aria-expanded="' + (importGuideOpen ? 'true' : 'false') + '" aria-controls="import-guide-body">' + escape(importGuideOpen ? t('mgHide') : t('mgShow')) + '</button></div>'
+      + '<p class="muted">' + escape(t('guidedIntro')) + '</p>'
+      + '<div id="import-guide-body"' + open + '><ol class="import-steps">' + info.instructions.map(note => '<li>' + escape(note) + '</li>').join('') + '</ol>'
+      + '<h3>' + escape(t('mgTableTitle')) + '</h3><div class="import-guide-table">'
+      + table([t('mgColHeader'), t('mgColRequired'), t('mgColHow'), t('mgColExample')], fields) + '</div>'
+      + '<p class="hint">' + escape(t('guidedExamples')) + '</p>'
+      + '<h3>' + escape(t('guidedEnglishTitle')) + '</h3><p>' + escape(t('guidedEnglishNote')) + '</p>'
+      + '<h3>' + escape(t('mgUpdateTitle')) + '</h3><p class="muted">' + escape(t('guidedUpdate')) + '</p>'
+      + '<p class="hint">' + escape(t('guidedLayout')) + '</p></div></section>';
   }
   function importView() {
     const type = importType;

@@ -13,13 +13,59 @@
     }
     return table;
   }
-  // --- V2 Members import contract ---
+  // Retain the original Members title/status mapping for previously downloaded forms.
   const V2_TITLE = 'TCCD 会员资料导入表 · 新会员';
-  const V2_HEADERS = ['姓名 *', 'SJAM 会员编号', '身份证号码', '种族', '年级', '加入日期', '会员状态'];
-  const V2_FIELD_MAP = ['name', 'sjamId', 'ic', 'race', 'form', 'joined', 'status'];
   const V2_STATUS_MAP = { '在籍': 'Active', '已毕业': 'Graduated', '已退出': 'Withdrawn', 'Active': 'Active', 'Graduated': 'Graduated', 'Withdrawn': 'Withdrawn' };
-  const V2_DATA_START = 13; // row index 12 (0-based), Excel row 13
   const V2_PREFORMAT_END = 212; // Excel row 212 (0-based 211)
+  function templateInfo(table) {
+    const field = (field, label, required, help, example, options) => ({ field, label, required, help, example, ...(options ? { options: options.slice() } : {}) });
+    const member = () => field('memberId', '会员内部编号 *', true, '先从会员的「下载这类已有记录」复制 id。不是姓名、IC 或 SJAM ID；会员必须先存在。示范编号只是占位。', 'STU-000001');
+    const activity = required => field('activityId', '活动内部编号' + (required ? ' *' : ''), required, '从活动记录导出文件复制 id。活动必须先存在。考试如填写此栏，日期、考试类别和出席情况必须跟活动一致。', required ? 'ACT-EXAMPLE' : '');
+    const year = () => field('year', '年份 *', true, '填四位数字，范围 1900–2200。例如 2030；不要填「2030年」。', 2030);
+    const date = () => field('date', '日期 *', true, '填写实际日期，格式 YYYY-MM-DD，例如 2030-01-15。', '2030-01-15');
+    const archived = () => field('archived', 'Archived（归档）', false, '新记录通常留空或选 FALSE。TRUE 表示归档；这不是删除记录。', 'FALSE', ['TRUE', 'FALSE']);
+    const certificate = () => field('certificate', '证书编号', false, '按正式证书编号填写，使用文本格式保留开头的 0。没有或不知道就留空。示范值不是正式号码。', '0000-EXAMPLE');
+    const status = required => field('status', '会员状态' + (required ? ' *' : ''), required, '保留英文：Active＝在籍，Graduated＝已毕业，Withdrawn＝已退出。' + (required ? '此表必须选择状态，不要留空。' : '新会员可留空，系统默认 Active。'), 'Active', root.KPT.statuses);
+    const form = () => field('form', '年级', false, '请选择英文选项：Peralihan、Form 1 至 Form 5、Adult。不要自行缩写成 F1；不清楚可留空。', 'Form 1', root.KPT.forms);
+    const configs = {
+      Members: {
+        title: V2_TITLE,
+        columns: [field('name', '姓名 *', true, '填写正式全名。每人一行；姓名相同不代表是同一个人。', '示例学员甲'), field('sjamId', 'SJAM 会员编号', false, '按正式会员编号原样填写，不规定固定长度。使用文本格式保留开头的 0；还没有编号就留空。不是 IC 或系统内部 id。', '00001234'), field('ic', '身份证号码', false, '有需要才填写真实官方号码；不知道就留空。使用文本格式并妥善保密，不要照抄示范号码。', ''), field('race', '种族', false, '从英文选项选择：Melayu、India、Cina、Other。不清楚可留空。', 'Cina', root.KPT.races), form(), field('joined', '加入日期', false, '填写实际加入日期，格式 YYYY-MM-DD。不知道就留空。', '2030-01-15'), status(false)],
+        instructions: ['姓名必填，其他栏位可选。新会员不用填写 id/version，系统会自动生成。', 'SJAM 会员编号、身份证号码请用文本格式，保留开头的 0；不知道就留空。', '状态选 Active / Graduated / Withdrawn；新会员留空默认 Active。日期：YYYY-MM-DD。', '只新增会员；修改已有会员请下载已有记录，保留 id/version。第 9 行示范不会导入。']
+      },
+      Attendance: {
+        title: 'TCCD 出席记录导入表 · 新记录',
+        columns: [activity(true), member(), field('present', '出席（TRUE/FALSE） *', true, 'TRUE＝有出席，FALSE＝没有出席。请明确选择，不要填写 Yes、No 或中文。', 'TRUE', ['TRUE', 'FALSE'])],
+        instructions: ['先建立会员和活动，再从各自导出记录复制 id；不能用姓名或 SJAM ID 代替。', '每行对应一位会员在一个活动的出席情况。TRUE＝出席，FALSE＝未出席。', '同一会员在同一活动只能有一条出席记录；修改原记录请用已有记录导出文件。', '第 9 行编号只是示范，请换成实际 id。正式资料从第 13 行开始，每人每活动一行。']
+      },
+      Activities: {
+        title: 'TCCD 活动资料导入表 · 新记录',
+        columns: [field('name', '活动名称 *', true, '填写实际活动名称。新记录的内部 id 会在导入后自动生成。', '示例活动'), date(), field('tags', '活动类别（Tags） *', true, '英文类别：DIM、Inspection、Exam、Other。多个类别用 | 连接，例如 DIM|Inspection，不用逗号。', 'DIM|Inspection'), field('examType', '考试类别（Exam Type）', false, '只有 Tags 包含 Exam 时必填。照 System Setup 的考试名称原样填写，例如 BFA (New)；其他活动留空。', ''), archived()],
+        instructions: ['活动名称、日期和 Tags 必填。日期格式：YYYY-MM-DD。', 'Tags 保留英文：DIM、Inspection、Exam、Other；多个类别用 | 连接。', 'Tags 包含 Exam 时，Exam Type 必须对应 System Setup 的正式考试名称。', 'Archived 新记录通常留空或 FALSE。新增后可导出活动 id，再填写出席记录。']
+      },
+      Exams: {
+        title: 'TCCD 考试记录导入表 · 新记录',
+        columns: [member(), activity(false), field('type', '考试类别（Exam Type） *', true, '从 System Setup 复制正式考试名称，英文名称和括号保留原样。示范 BFA (New) 也须在你的目录里存在。', 'BFA (New)'), date(), field('result', '考试结果（Result） *', true, '保留英文：Pass＝及格，Fail＝不及格，Pending＝待确认，Absent＝缺席。', 'Pass', root.KPT.results), field('attended', '参与考试（TRUE/FALSE） *', true, 'Pass/Fail 必须选 TRUE；Absent 必须选 FALSE；Pending 按实际参与情况填写。', 'TRUE', ['TRUE', 'FALSE']), certificate(), archived()],
+        instructions: ['会员必须已存在；从会员导出记录复制 id。考试类别须在 System Setup 中存在。', 'Result 使用 Pass / Fail / Pending / Absent；参与考试使用 TRUE / FALSE。', 'Pass、Fail 对应 TRUE，Absent 对应 FALSE。证书编号可留空，填写时用文本格式。', '活动 id 可留空；若填写，必须与该考试活动的日期、类别及出席记录一致。']
+      },
+      Duty: {
+        title: 'TCCD 年度勤务导入表 · 新记录',
+        columns: [member(), year(), field('hours', 'Duty Hours（小时）', false, '只填 0–8784 的数字，可有小数，例如 60.5。0 表示已知为零；留空表示未知，不要加「小时」。', 60.5)],
+        instructions: ['先从会员导出文件复制会员 id。年份填写四位数字，例如 2030。', '每位会员每年只能有一条年度 Duty 记录；这里填写该年度总小时数。', 'Hours 只填数字，范围 0–8784，可有小数；留空＝未知，0＝确认没有时数。', '修改已有年度记录，请下载已有记录，保留 id/version；不要重新新增同一年。']
+      },
+      Awards: {
+        title: 'TCCD 奖项记录导入表 · 新记录',
+        columns: [member(), field('catalogId', '奖项目录编号（Catalog ID）', false, '从 Export all records 导出的 Catalog 表复制 id（可先在 System Setup 查名称）。填有效 Catalog ID 时，系统自动采用目录的类别、名称和等级；不填则后三项必须精确匹配目录。', ''), field('category', '奖项类别（Category）', false, '没有 Catalog ID 时必须填写。保留英文：Probadge、Promotion、Special Service Shield、Service Stripe & Star。', 'Probadge', root.KPT.categories), field('name', '奖项名称（Award Name）', false, '没有 Catalog ID 时必须照目录填写正式名称，不要翻译或自行缩写。示范名称仅供参考。', 'Knowledge of the Order of St. John'), date(), field('level', '奖项等级（Level）', false, '没有 Catalog ID 时必须与目录中该奖项的 Level 一致；目录没有等级则留空。保持英文原文。', 'Category 0'), certificate(), field('notes', '备注', false, '可填写补充说明；没有就留空。', '示例备注'), archived()],
+        instructions: ['会员 id 和获奖日期必填。会员必须先存在，日期使用 YYYY-MM-DD。', '选择一种方式：填有效 Catalog ID；或完整填写与目录一致的 Category、Award Name、Level。', 'Probadge、Service Stripe & Star 等正式名称保留英文。同一会员已有的同一奖项请用导出文件更新。', 'System Setup 可查看目录；Catalog ID 可在 Export all records 的 Catalog 表查找。示范不会导入。']
+      },
+      Enrolments: {
+        title: 'TCCD 年度会员资料导入表 · 新记录',
+        columns: [member(), year(), form(), status(true)],
+        instructions: ['从会员导出记录复制会员 id；年份填写四位数字，例如 2030。', '每位会员每年只能有一条年度会员资料。年级选 Peralihan / Form 1–5 / Adult。', 'Status 必填：Active＝在籍，Graduated＝已毕业，Withdrawn＝已退出；此表不要留空。', '修改已有年度资料，请下载已有记录并保留 id/version，避免重复新增同一年。']
+      }
+    };
+    return Object.prototype.hasOwnProperty.call(configs, table) ? JSON.parse(JSON.stringify({ table, dataStartRow: 13, ...configs[table] })) : null;
+  }
   function parse(buffer, options) {
     const library = requireLibrary();
     const typedTable = resolveTypedTable(options);
@@ -50,69 +96,49 @@
       }
       const range = library.utils.decode_range(sheet['!ref']);
       if (range.e.r > 100000 || range.e.c > 30) { errors.push({ sheet: name, row: 1, message: 'Sheet is too large.' }); return; }
-      // V2 detection: exact A1 title + row 12 exact headers
-      if (name === 'Members') {
-        const a1 = sheet[library.utils.encode_cell({ r: 0, c: 0 })];
-        const a1v = a1 ? String(a1.v || '').trim() : '';
-        if (a1v === V2_TITLE) {
-          // Verify row 12 headers
-          const row12 = [];
-          for (let col = 0; col < V2_HEADERS.length; col++) {
-            const cell = sheet[library.utils.encode_cell({ r: 11, c: col })];
-            row12.push(String(cell && cell.v || '').trim());
-          }
-          const headersMatch = V2_HEADERS.every((h, i) => row12[i] === h && !sheet[library.utils.encode_cell({ r: 11, c: i })]?.f)
-            && !Array.from({ length: Math.max(0, range.e.c - 6) }, (_, i) => sheet[library.utils.encode_cell({ r: 11, c: i + 7 })]).some(cell => cell && (cell.f || (cell.v !== '' && cell.v != null)));
-          if (!headersMatch) {
-            errors.push({ sheet: 'Members', row: 12, message: 'Column headers in row 12 must match the template exactly. Do not modify row 12 headers.' });
-            return;
-          }
-          // V2 parse: rows 13+ only
-          output.Members = [];
-          for (let rowIndex = 12; rowIndex <= range.e.r; rowIndex++) {
-            const row = {};
-            let hasValue = false;
-            let extraCols = false;
-            for (let col = 0; col < V2_FIELD_MAP.length; col++) {
-              const cell = sheet[library.utils.encode_cell({ r: rowIndex, c: col })];
-              let value = cell ? cell.v : '';
-              if (value !== '' && value != null) hasValue = true;
-              if (cell && cell.f) errors.push({ sheet: 'Members', row: rowIndex + 1, message: V2_HEADERS[col] + ': formulas are not accepted; paste values.' });
-              if (['ic', 'sjamId'].includes(V2_FIELD_MAP[col]) && typeof value === 'number') errors.push({ sheet: 'Members', row: rowIndex + 1, message: V2_HEADERS[col] + ': must be text to preserve leading zeros.' });
-              if (V2_FIELD_MAP[col] === 'joined' && typeof value === 'number') {
-                const parsed = library.SSF.parse_date_code(value);
-                value = parsed ? parsed.y + '-' + String(parsed.m).padStart(2, '0') + '-' + String(parsed.d).padStart(2, '0') : '';
-              }
-              // Status Chinese conversion
-              if (V2_FIELD_MAP[col] === 'status' && value) {
-                const sv = String(value).trim();
-                value = Object.prototype.hasOwnProperty.call(V2_STATUS_MAP, sv) ? V2_STATUS_MAP[sv] : sv;
-              }
-              row[V2_FIELD_MAP[col]] = value == null ? '' : value;
+      // Guided forms use a fixed instructional area; only row 13 onward is data.
+      const info = templateInfo(name);
+      if (info && String(sheet.A1?.v || '').trim() === info.title) {
+        const columns = info.columns;
+        const validHeaders = columns.every((column, c) => {
+          const cell = sheet[library.utils.encode_cell({ r: 11, c })];
+          return !cell?.f && String(cell?.v || '').trim() === column.label;
+        }) && !Array.from({ length: Math.max(0, range.e.c + 1 - columns.length) }, (_, i) => sheet[library.utils.encode_cell({ r: 11, c: i + columns.length })]).some(cell => cell && (cell.f || (cell.v !== '' && cell.v != null)));
+        if (!validHeaders) { errors.push({ sheet: name, row: 12, message: 'Column headers in row 12 must match the template exactly. Download a fresh template; do not rename or add columns.' }); return; }
+        output[name] = [];
+        for (let rowIndex = 12; rowIndex <= range.e.r; rowIndex++) {
+          const row = { id: '', version: '' };
+          let hasValue = false;
+          const rowErrors = [];
+          columns.forEach((column, c) => {
+            const cell = sheet[library.utils.encode_cell({ r: rowIndex, c })];
+            let value = cell ? cell.v : '';
+            if (value !== '' && value != null) hasValue = true;
+            if (cell?.f) rowErrors.push(column.label + ': formulas are not accepted; paste values.');
+            if (['memberId', 'activityId', 'catalogId', 'ic', 'sjamId', 'certificate'].includes(column.field) && typeof value === 'number') rowErrors.push(column.label + ': must be text to preserve leading zeros.');
+            if (['date', 'joined'].includes(column.field) && typeof value === 'number') {
+              const date = library.SSF.parse_date_code(value);
+              value = date ? date.y + '-' + String(date.m).padStart(2, '0') + '-' + String(date.d).padStart(2, '0') : '';
             }
-            // Reject extra populated columns beyond G
-            for (let col = V2_FIELD_MAP.length; col <= range.e.c; col++) {
-              const cell = sheet[library.utils.encode_cell({ r: rowIndex, c: col })];
-              if (cell && (cell.f || (cell.v !== '' && cell.v != null))) extraCols = true;
+            // Compatibility with the previously released Chinese Members form.
+            if (name === 'Members' && column.field === 'status' && value) {
+              const status = String(value).trim();
+              value = Object.prototype.hasOwnProperty.call(V2_STATUS_MAP, status) ? V2_STATUS_MAP[status] : status;
             }
-            if (extraCols) {
-              errors.push({ sheet: 'Members', row: rowIndex + 1, message: 'Extra columns beyond G are not allowed. Only fill columns A to G.' });
-              continue;
-            }
-            if (hasValue) {
-              row.id = '';
-              row.version = '';
-              if (!row.status) row.status = ''; // domain default Active applied at importRows
-              row.__excelRow = rowIndex + 1;
-              output.Members.push(row);
-              count++;
-            }
+            row[column.field] = value == null ? '' : value;
+          });
+          for (let c = columns.length; c <= range.e.c; c++) {
+            const cell = sheet[library.utils.encode_cell({ r: rowIndex, c })];
+            if (cell && (cell.f || (cell.v !== '' && cell.v != null))) rowErrors.push('Extra columns are not allowed. Fill only the downloaded template columns.');
           }
-          if (!output.Members.length) {
-            errors.push({ sheet: 'Members', row: V2_DATA_START, message: 'No data rows found. Enter member data starting from row 13.' });
-          }
-          return;
+          if (hasValue) columns.forEach(column => {
+            if (column.required && String(row[column.field] ?? '').trim() === '') rowErrors.push(column.label + ': this field is required.');
+          });
+          rowErrors.forEach(message => errors.push({ sheet: name, row: rowIndex + 1, message }));
+          if (hasValue && !rowErrors.length) { row.__excelRow = rowIndex + 1; output[name].push(row); count++; }
         }
+        if (!output[name].length && !errors.some(error => error.sheet === name)) errors.push({ sheet: name, row: 13, message: 'No data rows found. Enter records starting from row 13; the example is not imported.' });
+        return;
       }
       // Legacy parse (row 1 machine headers)
       const headers = [];
@@ -207,27 +233,18 @@
     cfb.utils.cfb_add(cfb, path, bytes);
   }
   // --- V2 Members template build ---
-  function buildV2SheetAoa() {
-    // Each guide row must have all 7 cells (A:G) so merge styling works on the full bar
-    const full = (...cells) => {
-      const row = cells.slice(0, 7);
-      while (row.length < 7) row.push('');
-      return row;
-    };
-    const rows = [];
-    rows[0] = full(V2_TITLE); // row 1
-    rows[1] = full('填写指南 · 新会员导入只需填写正式填写区，示范区仅供参考'); // row 2
-    rows[2] = full('1. 姓名必填，请填写正式全名。SJAM 会员编号、身份证号码等为选填。'); // row 3
-    rows[3] = full('2. SJAM 会员编号和身份证号码请设为文本格式，保留前导零。加入日期格式：YYYY-MM-DD。'); // row 4
-    rows[4] = full('3. 种族、年级、会员状态请从下拉列表选择。新会员状态可留空，系统自动设为在籍。'); // row 5
-    rows[5] = full('4. 请勿修改第 12 行表头。示范区（第 7-9 行）仅供参考，不会被导入。正式数据从第 13 行开始填写。'); // row 6
-    rows[6] = full('示范区 · 仅供参考，不会导入'); // row 7
-    rows[7] = full(...V2_HEADERS); // row 8 example headers
-    rows[8] = full('示例学员甲', '00001234', '', 'Cina', 'Form 1', '2026-01-15', '在籍'); // row 9
-    rows[9] = full(''); // row 10 spacer
-    rows[10] = full('正式填写区 · 从第 13 行开始，每人一行'); // row 11
-    rows[11] = full(...V2_HEADERS); // row 12 formal headers
-    for (let i = 12; i < V2_PREFORMAT_END; i++) rows[i] = full('', '', '', '', '', '', '');
+  function buildGuidedAoa(info) {
+    const n = info.columns.length;
+    const line = text => [text, ...Array(n - 1).fill('')];
+    const rows = [line(info.title), line('填写指南 · 本模板用于新增记录；更新已有资料请使用导出的记录文件')];
+    info.instructions.forEach((text, i) => rows[i + 2] = line((i + 1) + '. ' + text));
+    rows[6] = line('示范区 · 仅供参考，不会导入');
+    rows[7] = info.columns.map(column => column.label);
+    rows[8] = info.columns.map(column => column.example ?? '');
+    rows[9] = line('');
+    rows[10] = line('正式填写区 · 从第 13 行开始，每行一条记录');
+    rows[11] = info.columns.map(column => column.label);
+    for (let r = 12; r < V2_PREFORMAT_END; r++) rows[r] = Array(n).fill('');
     return rows;
   }
   function buildV2StylesXml(existingXml) {
@@ -266,8 +283,8 @@
       '<xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' + // 2 subtitle
       '<xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' + // 3 instruction
       '<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' + // 4 example label
-      '<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' + // 5 example header
-      '<xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>' + // 6 example data
+      '<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' + // 5 example header
+      '<xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>' + // 6 example data
       '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' + // 7 spacer
       '<xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' + // 8 formal section
       '<xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' + // 9 required header A
@@ -283,118 +300,51 @@
     xml = xml.replace(/<cellXfs count="\d+">[\s\S]*?<\/cellXfs>/, '<cellXfs count="15">' + xfs + '</cellXfs>');
     return xml;
   }
-  function buildV2SheetXml(existingXml) {
-    let xml = existingXml;
-    // Gridlines off
+  function patchGuidedSheetXml(xml, info) {
     xml = xml.replace(/<sheetView([^>]*?)\/>/, '<sheetView$1 showGridLines="0"><pane ySplit="12" topLeftCell="A13" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A13" sqref="A13"/></sheetView>');
-    if (!xml.includes('state="frozen"')) {
-      xml = xml.replace(/<sheetView([^>]*?)><\/sheetView>/, '<sheetView$1 showGridLines="0"><pane ySplit="12" topLeftCell="A13" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A13" sqref="A13"/></sheetView>');
-    }
-    // Merges for title (A1:G1), subtitle (A2:G2), instructions (A3:G3..A6:G6), example label (A7:G7), spacer (A10:G10), formal section (A11:G11)
-    const merges = '<mergeCells count="8">' +
-      '<mergeCell ref="A1:G1"/>' +
-      '<mergeCell ref="A2:G2"/>' +
-      '<mergeCell ref="A3:G3"/>' +
-      '<mergeCell ref="A4:G4"/>' +
-      '<mergeCell ref="A5:G5"/>' +
-      '<mergeCell ref="A6:G6"/>' +
-      '<mergeCell ref="A7:G7"/>' +
-      '<mergeCell ref="A11:G11"/>' +
-      '</mergeCells>';
-    if (!xml.includes('<mergeCells')) {
-      if (/<autoFilter\b[^>]*\/>/.test(xml)) xml = xml.replace(/<autoFilter\b[^>]*\/>/, match => match + merges);
-      else if (xml.includes('</autoFilter>')) xml = xml.replace('</autoFilter>', '</autoFilter>' + merges);
-      else xml = xml.replace('</sheetData>', '</sheetData>' + merges);
-    }
-    // Data validations: D=col3 (race), E=col4 (form), G=col6 (status Chinese)
-    const validations =
-      '<dataValidations count="3">' +
-      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="D13:D212"><formula1>"Melayu,India,Cina,Other"</formula1></dataValidation>' +
-      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="E13:E212"><formula1>"Peralihan,Form 1,Form 2,Form 3,Form 4,Form 5,Adult"</formula1></dataValidation>' +
-      '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="G13:G212"><formula1>"在籍,已毕业,已退出"</formula1></dataValidation>' +
-      '</dataValidations>';
-    if (!xml.includes('<dataValidations')) {
-      if (xml.includes('</mergeCells>')) {
-        xml = xml.replace('</mergeCells>', '</mergeCells>' + validations);
-      } else if (xml.includes('</autoFilter>')) {
-        xml = xml.replace('</autoFilter>', '</autoFilter>' + validations);
-      } else if (xml.includes('<ignoredErrors')) {
-        xml = xml.replace('<ignoredErrors', validations + '<ignoredErrors');
-      } else if (xml.includes('<legacyDrawing')) {
-        xml = xml.replace('<legacyDrawing', validations + '<legacyDrawing');
-      } else {
-        xml = xml.replace('</mergeCells>', '</mergeCells>' + validations);
-      }
-    }
+    const validations = info.columns.flatMap((column, c) => {
+      if (!column.options?.length) return [];
+      const formula = '"' + column.options.join(',') + '"';
+      if (formula.length > 255) return [];
+      const col = requireLibrary().utils.encode_col(c);
+      const escaped = formula.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return ['<dataValidation type="list" allowBlank="1" showErrorMessage="1" errorTitle="请选择列表中的值" error="请使用原有英文选项；填写说明在表格上方。" sqref="' + col + '13:' + col + '212"><formula1>' + escaped + '</formula1></dataValidation>'];
+    });
+    if (validations.length) xml = xml.replace('</mergeCells>', '</mergeCells><dataValidations count="' + validations.length + '">' + validations.join('') + '</dataValidations>');
     return xml;
   }
-  function buildV2TemplateBytes() {
+  function buildGuidedBook(table) {
     const library = requireLibrary();
-    const aoa = buildV2SheetAoa();
-    const sheet = library.utils.aoa_to_sheet(aoa);
-    // Column widths
-    sheet['!cols'] = [
-      { wch: 18 }, // A name
-      { wch: 16 }, // B sjamId
-      { wch: 16 }, // C ic
-      { wch: 10 }, // D race
-      { wch: 10 }, // E form
-      { wch: 12 }, // F joined
-      { wch: 10 }  // G status
-    ];
-    // Emit all cells so merged panels and blank entry cells have full fills/borders.
-    for (let r = 0; r < V2_PREFORMAT_END; r++) {
-      for (let c = 0; c < 7; c++) {
-        const address = library.utils.encode_cell({ r, c });
-        if (!sheet[address]) sheet[address] = { t: 's', v: '' };
-      }
-    }
-    // Row heights
-    const rows = [];
-    rows[0] = { hpt: 36 }; // title
-    rows[1] = { hpt: 22 }; // subtitle
-    for (let i = 2; i <= 5; i++) rows[i] = { hpt: 30 }; // instructions
-    rows[6] = { hpt: 22 }; // example label
-    rows[7] = { hpt: 20 }; // example headers
-    rows[8] = { hpt: 18 }; // example data
-    rows[9] = { hpt: 10 }; // spacer
-    rows[10] = { hpt: 24 }; // formal section
-    rows[11] = { hpt: 22 }; // formal headers
-    for (let i = 12; i < V2_PREFORMAT_END; i++) rows[i] = { hpt: 18 };
-    sheet['!rows'] = rows;
-    // Autofilter on formal headers (row 12) through preformatted end
-    sheet['!autofilter'] = { ref: 'A12:G212' };
-    // Ref range
-    sheet['!ref'] = library.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: V2_PREFORMAT_END - 1, c: 6 } });
-    // Text format for SJAM (B) and IC (C) data rows
-    for (let r = 12; r < V2_PREFORMAT_END; r++) {
-      ['B', 'C'].forEach(col => {
-        const addr = col + (r + 1);
-        if (!sheet[addr]) sheet[addr] = { t: 's', v: '', z: '@' };
-        else sheet[addr].z = '@';
-      });
-    }
+    const info = templateInfo(table);
+    const sheet = library.utils.aoa_to_sheet(buildGuidedAoa(info));
+    const widths = { memberId: 22, activityId: 22, catalogId: 22, date: 16, year: 14, hours: 22, status: 22, form: 16, name: 32, type: 26, examType: 26, tags: 26, category: 26, level: 24, certificate: 22, notes: 28, archived: 22, present: 26, attended: 26 };
+    const membersWidths = [18, 16, 16, 10, 10, 12, 14];
+    const sizes = info.columns.map((column, i) => table === 'Members' ? membersWidths[i] : (widths[column.field] || 20));
+    const extra = Math.max(0, 94 - sizes.reduce((sum, width) => sum + width, 0)) / sizes.length;
+    sheet['!cols'] = sizes.map(width => ({ wch: width + extra }));
+    sheet['!rows'] = Array.from({ length: V2_PREFORMAT_END }, (_, r) => ({ hpt: r === 0 ? 36 : r === 1 ? 26 : r >= 2 && r <= 5 ? 34 : r === 9 ? 10 : r === 7 || r === 11 ? 34 : r === 8 ? 40 : r === 6 || r === 10 ? 26 : 22 }));
+    sheet['!merges'] = [0, 1, 2, 3, 4, 5, 6, 10].map(r => ({ s: { r, c: 0 }, e: { r, c: info.columns.length - 1 } }));
+    const last = library.utils.encode_col(info.columns.length - 1);
+    sheet['!autofilter'] = { ref: 'A12:' + last + '212' };
+    sheet['!ref'] = 'A1:' + last + '212';
+    info.columns.forEach((column, c) => {
+      if (!['memberId', 'activityId', 'catalogId', 'sjamId', 'ic', 'certificate'].includes(column.field)) return;
+      for (let r = 12; r < V2_PREFORMAT_END; r++) sheet[library.utils.encode_cell({ r, c })].z = '@';
+    });
     const book = library.utils.book_new();
-    library.utils.book_append_sheet(book, sheet, 'Members');
+    library.utils.book_append_sheet(book, sheet, table);
     return book;
   }
-  function buildV2StyledBytes() {
+  function buildGuidedStyledBytes(table) {
     const library = requireLibrary();
-    const book = buildV2TemplateBytes();
-    const raw = library.write(book, { bookType: 'xlsx', type: 'array' });
-    const buf = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-    const cfb = library.CFB.read(buf, { type: 'array' });
-    // Patch styles
-    const stylesXml = cfbGetXml(cfb, 'Root Entry/xl/styles.xml');
-    cfbSetXml(cfb, 'Root Entry/xl/styles.xml', buildV2StylesXml(stylesXml));
-    // Patch sheet: merges, validations, freeze, gridlines
-    const sheetXml = cfbGetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml');
-    cfbSetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml', buildV2SheetXml(sheetXml));
-    // Every emitted cell receives one style reference, replacing SheetJS's text style.
-    const finalSheet = cfbGetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml').replace(/<c\b([^>]*)>/g, (tag, attrs) => {
-      const match = attrs.match(/\br="([A-G])(\d+)"/);
+    const info = templateInfo(table);
+    const raw = library.write(buildGuidedBook(table), { bookType: 'xlsx', type: 'array' });
+    const cfb = library.CFB.read(new Uint8Array(raw), { type: 'array' });
+    cfbSetXml(cfb, 'Root Entry/xl/styles.xml', buildV2StylesXml(cfbGetXml(cfb, 'Root Entry/xl/styles.xml')));
+    const xml = patchGuidedSheetXml(cfbGetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml'), info).replace(/<c\b([^>]*)>/g, (tag, attrs) => {
+      const match = attrs.match(/\br="([A-Z]+)(\d+)"/);
       if (!match) return tag;
-      const col = match[1];
+      const c = library.utils.decode_col(match[1]);
       const row = Number(match[2]);
       let style = 0;
       if (row === 1) style = 1;
@@ -404,11 +354,11 @@
       else if (row === 8) style = 5;
       else if (row === 9) style = 6;
       else if (row === 11) style = 8;
-      else if (row === 12) style = col === 'A' ? 9 : 10;
-      else if (row >= 13) style = ['B', 'C'].includes(col) ? ((row - 13) % 2 ? 14 : 13) : ((row - 13) % 2 ? 12 : 11);
+      else if (row === 12) style = info.columns[c]?.required ? 9 : 10;
+      else if (row >= 13) style = ['memberId', 'activityId', 'catalogId', 'sjamId', 'ic', 'certificate'].includes(info.columns[c]?.field) ? ((row - 13) % 2 ? 14 : 13) : ((row - 13) % 2 ? 12 : 11);
       return '<c' + attrs.replace(/\s+s="[^"]*"/g, '').replace(/\/$/, '') + ' s="' + style + '"' + (attrs.endsWith('/') ? '/>' : '>');
     });
-    cfbSetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml', finalSheet);
+    cfbSetXml(cfb, 'Root Entry/xl/worksheets/sheet1.xml', xml);
     const out = library.CFB.write(cfb, { fileType: 'zip', type: 'array', compression: true });
     return out instanceof Uint8Array ? out : new Uint8Array(out);
   }
@@ -416,10 +366,7 @@
     const library = requireLibrary();
     const typedTable = resolveTypedTable(options);
     const book = library.utils.book_new();
-    if (typedTable === 'Members' && template) {
-      // V2 template
-      return buildV2TemplateBytes();
-    }
+    if (typedTable && template) return buildGuidedBook(typedTable);
     if (typedTable) {
       const headers = root.KPT.fields[typedTable];
       const records = template ? [] : state[typedTable];
@@ -458,7 +405,7 @@
   function createStyledBytes(state, template, summaryRows, options) {
     const library = requireLibrary();
     const typedTable = resolveTypedTable(options);
-    if (typedTable === 'Members' && template) return buildV2StyledBytes();
+    if (typedTable && template) return buildGuidedStyledBytes(typedTable);
     const book = create(state, template, summaryRows, options);
     return library.write(book, { bookType: 'xlsx', type: 'array' });
   }
@@ -489,8 +436,8 @@
     } else {
       fileName = template ? 'TCCD_Import_Template.xlsx' : 'TCCD_Export_' + new Date().toISOString().slice(0, 10) + '.xlsx';
     }
-    if (typedTable === 'Members' && template) {
-      const bytes = buildV2StyledBytes();
+    if (typedTable && template) {
+      const bytes = buildGuidedStyledBytes(typedTable);
       triggerDownload(bytes, fileName);
       return bytes;
     }
@@ -498,6 +445,6 @@
     library.writeFile(book, fileName);
     return book;
   }
-  root.KPTWorkbook = { parse, create, createStyledBytes, download, TYPED_TABLES };
+  root.KPTWorkbook = { parse, create, createStyledBytes, download, templateInfo, TYPED_TABLES };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTWorkbook;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -14,5 +14,14 @@ const js = `(function (root) {
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTFinanceTemplates;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 `;
-fs.writeFileSync(path.join(root, 'src', 'finance-templates.js'), js);
-console.log('templates embedded', fs.statSync(path.join(root, 'src', 'finance-templates.js')).size);
+const output = path.join(root, 'src', 'finance-templates.js');
+if (!fs.existsSync(output) || fs.readFileSync(output, 'utf8') !== js) {
+  const temporary = output + '.' + process.pid + '.tmp';
+  try {
+    fs.writeFileSync(temporary, js);
+    fs.renameSync(temporary, output);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
+console.log('templates embedded', fs.statSync(output).size);

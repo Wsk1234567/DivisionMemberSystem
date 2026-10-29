@@ -30,7 +30,8 @@ try {
   const guide = page.locator('#import-guide-body');
   await guide.waitFor({ state: 'visible' });
   const guideText = await guide.innerText();
-  for (const field of KPT.fields.Members) assert.ok(guideText.includes(field), 'The on-page guide covers ' + field);
+  const memberInfo = await page.evaluate(() => KPTWorkbook.templateInfo('Members'));
+  for (const column of memberInfo.columns) assert.ok(guideText.includes(column.label), 'The on-page guide covers ' + column.label);
   for (const value of ['00001234', 'Active', 'Graduated', 'Withdrawn', 'YYYY-MM-DD']) assert.ok(guideText.includes(value), 'The guide explains ' + value);
   await action('toggleImportGuide').click();
   await guide.waitFor({ state: 'hidden' });
@@ -50,7 +51,10 @@ try {
     const bytes = await fs.readFile(await download.path());
     const book = XLSX.read(bytes, { type: 'buffer' });
     assert.deepEqual(book.SheetNames, [table]);
-    if (table !== 'Members') assert.deepEqual(XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0], KPT.fields[table]);
+    const meta = await page.evaluate(table => KPTWorkbook.templateInfo(table), table);
+    assert.ok(meta && meta.columns.length, table + ' exposes filling instructions.');
+    assert.equal(book.Sheets[table].A1.v, meta.title);
+    assert.deepEqual(meta.columns.map((_, c) => book.Sheets[table][XLSX.utils.encode_cell({ r: 11, c })].v), meta.columns.map(column => column.label));
     assert.ok(download.suggestedFilename().includes(table));
     if (table === 'Members') {
       const sheet = book.Sheets.Members;
@@ -61,6 +65,7 @@ try {
       assert.ok(!Object.values(sheet).some(cell => cell?.c?.length), 'No overlaying comments or notes.');
       const zip = XLSX.CFB.read(bytes, { type: 'buffer' });
       const xml = name => Buffer.from(zip.FileIndex[zip.FullPaths.indexOf('Root Entry/' + name)].content).toString('utf8');
+      assert.match(xml('xl/worksheets/sheet1.xml'), /&quot;Active,Graduated,Withdrawn&quot;|"Active,Graduated,Withdrawn"/, 'New templates keep English status choices.');
       assert.match(xml('xl/worksheets/sheet1.xml'), /state="frozen"/, 'The downloaded workbook freezes the header.');
       assert.match(xml('xl/worksheets/sheet1.xml'), /<dataValidations\b/, 'The downloaded workbook contains actual Excel dropdowns.');
       assert.ok((xml('xl/styles.xml').match(/<fill>/g) || []).length > 2, 'Downloaded bytes contain designed fills.');

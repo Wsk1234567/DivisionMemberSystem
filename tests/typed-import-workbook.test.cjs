@@ -236,8 +236,9 @@ test('other typed templates still one sheet, advanced unchanged, exports unchang
   for (const table of TYPED.filter(t => t !== 'Members')) {
     const book = Workbook.create(global.KPT.empty(), true, undefined, { table });
     assert.deepEqual(book.SheetNames, [table]);
-    const headers = global.XLSX.utils.sheet_to_json(book.Sheets[table], { header: 1 })[0];
-    assert.deepEqual(headers, global.KPT.fields[table]);
+    const info = Workbook.templateInfo(table);
+    const headers = info.columns.map((_, c) => book.Sheets[table][global.XLSX.utils.encode_cell({ r: 11, c })].v);
+    assert.deepEqual(headers, info.columns.map(column => column.label));
   }
   // Advanced full template unchanged
   const state = fixture(1, 2026, 2026);
