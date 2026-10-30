@@ -1005,6 +1005,31 @@
     const open = importGuideOpen ? '' : ' hidden';
     const title = t('guidedTitle').replace('{type}', t('importType.' + importType));
     const fields = info.columns.map(column => [escape(column.label), escape(t(column.required ? 'guidedRequired' : 'guidedOptional')), escape(column.help), escape(column.example === '' || column.example == null ? t('mgExBlank') : String(column.example))]);
+    const hasExamType = info.columns.some(column => column.field === 'examType' || column.field === 'type');
+    const isAwards = importType === 'Awards';
+    const hasArchived = info.columns.some(column => column.field === 'archived');
+    let extra = '';
+    if (hasExamType) {
+      extra += '<h3>' + escape(t('guideExamTypeTitle')) + '</h3><p class="muted">' + escape(t('guideExamTypeNote')) + '</p>';
+    }
+    if (isAwards) {
+      extra += '<h3>' + escape(t('guideAwardsTitle')) + '</h3>'
+        + '<p class="muted">' + escape(t('guideAwardsIntro')) + '</p>'
+        + '<ol class="import-steps">'
+        + '<li>' + escape(t('guideAwardsStep1')) + '</li>'
+        + '<li>' + escape(t('guideAwardsStep2')) + '</li>'
+        + '<li>' + escape(t('guideAwardsStep3')) + '</li>'
+        + '</ol>'
+        + '<p class="muted">' + escape(t('guideAwardsCategories')) + '</p>'
+        + '<p class="hint">' + escape(t('guideAwardsLevelNote')) + '</p>';
+    }
+    if (hasArchived) {
+      extra += '<h3>' + escape(t('guideArchivedTitle')) + '</h3>';
+      if (importType === 'Exams') extra += '<p class="muted">' + escape(t('guideArchivedExams')) + '</p>';
+      else if (importType === 'Activities') extra += '<p class="muted">' + escape(t('guideArchivedActivities')) + '</p>';
+      else if (importType === 'Awards') extra += '<p class="muted">' + escape(t('guideArchivedAwards')) + '</p>';
+      else extra += '<p class="muted">' + escape(t('guideArchivedGeneral')) + '</p>';
+    }
     return '<section class="card import-guide"><div class="section-heading" style="margin-top:0"><h2 style="margin:0">' + escape(title) + '</h2>'
       + '<button type="button" class="button small" data-action="toggleImportGuide" aria-expanded="' + (importGuideOpen ? 'true' : 'false') + '" aria-controls="import-guide-body">' + escape(importGuideOpen ? t('mgHide') : t('mgShow')) + '</button></div>'
       + '<p class="muted">' + escape(t('guidedIntro')) + '</p>'
@@ -1013,6 +1038,7 @@
       + table([t('mgColHeader'), t('mgColRequired'), t('mgColHow'), t('mgColExample')], fields) + '</div>'
       + '<p class="hint">' + escape(t('guidedExamples')) + '</p>'
       + '<h3>' + escape(t('guidedEnglishTitle')) + '</h3><p>' + escape(t('guidedEnglishNote')) + '</p>'
+      + extra
       + '<h3>' + escape(t('mgUpdateTitle')) + '</h3><p class="muted">' + escape(t('guidedUpdate')) + '</p>'
       + '<p class="hint">' + escape(t('guidedLayout')) + '</p></div></section>';
   }

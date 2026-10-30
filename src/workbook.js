@@ -18,12 +18,17 @@
   const V2_STATUS_MAP = { '在籍': 'Active', '已毕业': 'Graduated', '已退出': 'Withdrawn', 'Active': 'Active', 'Graduated': 'Graduated', 'Withdrawn': 'Withdrawn' };
   const V2_PREFORMAT_END = 212; // Excel row 212 (0-based 211)
   function templateInfo(table) {
-    const field = (field, label, required, help, example, options) => ({ field, label, required, help, example, ...(options ? { options: options.slice() } : {}) });
+    const field = (field, label, required, help, example, options) => {
+      const base = { field, label, required, help, example };
+      if (typeof options === 'string') return { ...base, refType: options };
+      if (Array.isArray(options)) return { ...base, options: options.slice() };
+      return base;
+    };
     const member = () => field('memberId', '会员姓名 *', true, '从下拉名单选择，也可以输入完整姓名。系统会在预览时核对；同名请选带 SJAM ID 等识别资料的选项。找不到或有多个匹配时不会自动配对。', '示例学员甲');
     const activity = required => field('activityId', '活动名称' + (required ? ' *' : ''), required, '从下拉选择活动名称和日期，也可输入完整活动名称。重名活动必须选含日期的选项。考试如关联活动，类别、日期和出席情况须一致。', required ? '示例活动 · 2030-01-15' : '');
     const year = () => field('year', '年份 *', true, '填四位数字，范围 1900–2200。例如 2030；不要填「2030年」。', 2030);
     const date = () => field('date', '日期 *', true, '填写实际日期，格式 YYYY-MM-DD，例如 2030-01-15。', '2030-01-15');
-    const archived = () => field('archived', 'Archived（归档）', false, '新记录通常留空或选 FALSE。TRUE 表示归档；这不是删除记录。', 'FALSE', ['TRUE', 'FALSE']);
+    const archived = () => field('archived', 'Archived（归档）', false, '新记录通常留空或选 FALSE。TRUE 表示归档保留历史，不是删除或完成。可在系统里 Unarchive 恢复。', 'FALSE', ['TRUE', 'FALSE']);
     const certificate = () => field('certificate', '证书编号', false, '按正式证书编号填写，使用文本格式保留开头的 0。没有或不知道就留空。示范值不是正式号码。', '0000-EXAMPLE');
     const status = required => field('status', '会员状态' + (required ? ' *' : ''), required, '保留英文：Active＝在籍，Graduated＝已毕业，Withdrawn＝已退出。' + (required ? '此表必须选择状态，不要留空。' : '新会员可留空，系统默认 Active。'), 'Active', root.KPT.statuses);
     const form = () => field('form', '年级', false, '请选择英文选项：Peralihan、Form 1 至 Form 5、Adult。不要自行缩写成 F1；不清楚可留空。', 'Form 1', root.KPT.forms);
@@ -40,13 +45,13 @@
       },
       Activities: {
         title: 'TCCD 活动资料导入表 · 新记录',
-        columns: [field('name', '活动名称 *', true, '填写实际活动名称。新记录的内部 id 会在导入后自动生成。', '示例活动'), date(), field('tags', '活动类别（Tags） *', true, '英文类别：DIM、Inspection、Exam、Other。多个类别用 | 连接，例如 DIM|Inspection，不用逗号。', 'DIM|Inspection'), field('examType', '考试类别（Exam Type）', false, '只有 Tags 包含 Exam 时必填。照 System Setup 的考试名称原样填写，例如 BFA (New)；其他活动留空。', ''), archived()],
+        columns: [field('name', '活动名称 *', true, '填写实际活动名称。新记录的内部 id 会在导入后自动生成。', '示例活动'), date(), field('tags', '活动类别（Tags） *', true, '英文类别：DIM、Inspection、Exam、Other。多个类别用 | 连接，例如 DIM|Inspection，不用逗号。', 'DIM|Inspection'), field('examType', '考试类别（Exam Type）', false, '只有 Tags 包含 Exam 时必填。从下拉选择 System Setup 里的正式考试名称；其他活动留空。', '', 'ExamTypes'), archived()],
         instructions: ['活动名称、日期和 Tags 必填。日期格式：YYYY-MM-DD。', 'Tags 保留英文：DIM、Inspection、Exam、Other；多个类别用 | 连接。', 'Tags 包含 Exam 时，Exam Type 必须对应 System Setup 的正式考试名称。', 'Archived 新记录通常留空或 FALSE。新增后可导出活动 id，再填写出席记录。']
       },
       Exams: {
         title: 'TCCD 考试记录导入表 · 新记录',
-        columns: [member(), activity(false), field('type', '考试类别（Exam Type） *', true, '从 System Setup 复制正式考试名称，英文名称和括号保留原样。示范 BFA (New) 也须在你的目录里存在。', 'BFA (New)'), date(), field('result', '考试结果（Result） *', true, '保留英文：Pass＝及格，Fail＝不及格，Pending＝待确认，Absent＝缺席。', 'Pass', root.KPT.results), field('attended', '参与考试（TRUE/FALSE） *', true, 'Pass/Fail 必须选 TRUE；Absent 必须选 FALSE；Pending 按实际参与情况填写。', 'TRUE', ['TRUE', 'FALSE']), certificate(), archived()],
-        instructions: ['会员须已存在，请选择或输入完整姓名。考试类别须在 System Setup 中存在。', 'Result 使用 Pass / Fail / Pending / Absent；参与考试使用 TRUE / FALSE。', 'Pass、Fail 对应 TRUE，Absent 对应 FALSE。证书编号可留空，填写时用文本格式。', '活动名称可留空；若选择活动，必须与该活动的日期、类别及出席记录一致。']
+        columns: [member(), activity(false), field('type', '考试类别（Exam Type） *', true, '从下拉选择 System Setup 里的正式考试名称，英文名称和括号保留原样。示范 BFA (New) 也须在你的目录里存在。', 'BFA (New)', 'ExamTypes'), date(), field('result', '考试结果（Result） *', true, '保留英文：Pass＝及格，Fail＝不及格，Pending＝待确认，Absent＝缺席。', 'Pass', root.KPT.results), field('attended', '参与考试（TRUE/FALSE） *', true, 'Pass/Fail 必须选 TRUE；Absent 必须选 FALSE；Pending 按实际参与情况填写。', 'TRUE', ['TRUE', 'FALSE']), certificate(), field('archived', 'Archived（归档）', false, '新记录通常留空或选 FALSE。TRUE 表示归档保留历史，不是删除或完成；归档的考试记录不参与年度考试参与和 Efficient 判断。可在系统里 Unarchive 恢复。', 'FALSE', ['TRUE', 'FALSE'])],
+        instructions: ['会员须已存在，请选择或输入完整姓名。考试类别须在 System Setup 中存在。', 'Result 使用 Pass / Fail / Pending / Absent；参与考试 TRUE / FALSE；Pass/Fail 对 TRUE，Absent 对 FALSE。活动可留空，选填时须与日期和类别一致。', 'Archived：FALSE／留空＝正常；TRUE＝保留历史但不计入年度考试参与证据，不是已完成。证书编号可留空。', 'Archived 记录可在系统里 Unarchive 恢复。修改已有记录请用导出文件保留 id/version。']
       },
       Duty: {
         title: 'TCCD 年度勤务导入表 · 新记录',
@@ -55,8 +60,8 @@
       },
       Awards: {
         title: 'TCCD 奖项记录导入表 · 新记录',
-        columns: [member(), field('catalogId', '奖项目录编号（Catalog ID）', false, '从 Export all records 导出的 Catalog 表复制 id（可先在 System Setup 查名称）。填有效 Catalog ID 时，系统自动采用目录的类别、名称和等级；不填则后三项必须精确匹配目录。', ''), field('category', '奖项类别（Category）', false, '没有 Catalog ID 时必须填写。保留英文：Probadge、Promotion、Special Service Shield、Service Stripe & Star。', 'Probadge', root.KPT.categories), field('name', '奖项名称（Award Name）', false, '没有 Catalog ID 时必须照目录填写正式名称，不要翻译或自行缩写。示范名称仅供参考。', 'Knowledge of the Order of St. John'), date(), field('level', '奖项等级（Level）', false, '没有 Catalog ID 时必须与目录中该奖项的 Level 一致；目录没有等级则留空。保持英文原文。', 'Category 0'), certificate(), field('notes', '备注', false, '可填写补充说明；没有就留空。', '示例备注'), archived()],
-        instructions: ['会员姓名和获奖日期必填。会员必须先存在，日期使用 YYYY-MM-DD。', '选择一种方式：填有效 Catalog ID；或完整填写与目录一致的 Category、Award Name、Level。', 'Probadge、Service Stripe & Star 等正式名称保留英文。同一会员已有的同一奖项请用导出文件更新。', 'System Setup 可查看目录；Catalog ID 可在 Export all records 的 Catalog 表查找。示范不会导入。']
+        columns: [member(), field('category', '奖项类别（Category） *', true, '从下拉选择英文类别：Probadge、Promotion、Special Service Shield、Service Stripe & Star。只显示当前有可选奖项的类别。', 'Probadge', 'AwardCategory'), field('name', '奖项名称（Award Name） *', true, '从下拉选择正式英文名称，按已选类别过滤。保留空格、&、逗号、括号等原样。不要翻译或缩写。', 'Knowledge of the Order of St. John', 'AwardName'), date(), field('level', '奖项等级（Level）', false, '按已选类别和名称过滤。含义因类别而异：Probadge 的 Category 0–5 是项目分类；Promotion 是军衔如 Lance Corporal；SSS 是小时数/颜色级别；Service Stripe & Star 是年度条纹/星。选了等级不代表自动取得资格或授奖。目录没有等级的项目请留空。', 'Category 0', 'AwardLevel'), certificate(), field('notes', '备注', false, '可填写补充说明；没有就留空。', '示例备注'), field('archived', 'Archived（归档）', false, 'FALSE／留空正常显示。TRUE 表示归档保留历史（不是删除或已颁发），不在公开会员目录展示但可 Unarchive 恢复。已颁发的归档记录仍计入资格集合。', 'FALSE', ['TRUE', 'FALSE'])],
+        instructions: ['会员姓名和获奖日期必填。会员必须先存在，日期使用 YYYY-MM-DD。', '按顺序选择：奖项类别 → 奖项名称 → 奖项等级（如有）。全部来自 System Setup 目录，不编造名称或等级。', 'Level 含义因类别不同：Probadge＝项目分类 Category 0–5，Promotion＝军阶如 Lance Corporal，SSS＝小时/颜色，Service Stripe & Star＝年度条纹/星；无 Level 留空；选了不自动授奖。', 'Archived：FALSE／留空正常显示；TRUE 保留历史但不公开显示，可 Unarchive 恢复。示范不会导入。']
       },
       Enrolments: {
         title: 'TCCD 年度会员资料导入表 · 新记录',
@@ -69,11 +74,39 @@
     info.columns.forEach(column => {
       if (column.field === 'memberId') { column.reference = 'Members'; column.legacyLabel = '会员内部编号 *'; }
       if (column.field === 'activityId') { column.reference = 'Activities'; column.legacyLabel = '活动内部编号' + (column.required ? ' *' : ''); }
+      // Awards old guided template labels (without required * on optional fields)
+      if (table === 'Awards' && column.field === 'category') column.legacyLabel = '奖项类别（Category）';
+      if (table === 'Awards' && column.field === 'name') column.legacyLabel = '奖项名称（Award Name）';
     });
     return info;
   }
   const matchKey = value => String(value ?? '').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+  function examChoices(state) {
+    const rows = Array.isArray(state?.Catalog) ? state.Catalog : [];
+    return [...new Set(rows.filter(row => row.kind === 'Exam' && !row.archived && row.name).map(row => String(row.name)))];
+  }
+  function awardCascadeData(state) {
+    const rows = Array.isArray(state?.Catalog) ? state.Catalog : [];
+    const awards = rows.filter(row => row.kind === 'Award' && !row.archived && row.name);
+    const categories = [...new Set(awards.map(row => row.category).filter(Boolean))];
+    const byCategory = new Map();
+    awards.forEach(row => {
+      if (!byCategory.has(row.category)) byCategory.set(row.category, new Map());
+      const nameMap = byCategory.get(row.category);
+      const name = String(row.name);
+      if (!nameMap.has(name)) nameMap.set(name, new Set());
+      const level = row.level == null ? '' : String(row.level);
+      nameMap.get(name).add(level);
+    });
+    return { categories, byCategory };
+  }
+  function sanitizeRangeName(value) {
+    return String(value).replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1').slice(0, 200);
+  }
   function referenceChoices(table, state) {
+    if (table === 'ExamTypes') {
+      return examChoices(state).map(name => ({ id: name, name, label: name }));
+    }
     const rows = Array.isArray(state?.[table]) ? state[table] : [];
     return rows.filter(row => row.id && row.name && (table !== 'Activities' || !row.archived)).map(row => ({
       id: row.id, name: String(row.name), label: table === 'Activities'
@@ -132,13 +165,21 @@
       // Guided forms use a fixed instructional area; only row 13 onward is data.
       const info = templateInfo(name);
       if (info && String(sheet.A1?.v || '').trim() === info.title) {
-        const columns = info.columns;
+        let columns = info.columns;
+        // Awards: support old 9-column guided template with visible Catalog ID
+        const legacyAwardsCatalog = name === 'Awards' && range.e.c >= 8 && (() => {
+          const cell = sheet[library.utils.encode_cell({ r: 11, c: 1 })];
+          return cell && String(cell.v || '').trim() === '奖项目录编号（Catalog ID）';
+        })();
+        if (legacyAwardsCatalog) {
+          columns = [...columns.slice(0, 1), { field: 'catalogId', label: '奖项目录编号（Catalog ID）', required: false, help: '', example: '' }, ...columns.slice(1)];
+        }
         const legacyReferences = new Set();
         const validHeaders = columns.every((column, c) => {
           const cell = sheet[library.utils.encode_cell({ r: 11, c })];
           const label = String(cell?.v || '').trim();
           if (column.reference && label === column.legacyLabel) legacyReferences.add(column.field);
-          return !cell?.f && (label === column.label || (column.reference && label === column.legacyLabel));
+          return !cell?.f && (label === column.label || (column.legacyLabel && label === column.legacyLabel));
         }) && !Array.from({ length: Math.max(0, range.e.c + 1 - columns.length) }, (_, i) => sheet[library.utils.encode_cell({ r: 11, c: i + columns.length })]).some(cell => cell && (cell.f || (cell.v !== '' && cell.v != null)));
         if (!validHeaders) { errors.push({ sheet: name, row: 12, message: 'Column headers in row 12 must match the template exactly. Download a fresh template; do not rename or add columns.' }); return; }
         output[name] = [];
@@ -165,13 +206,59 @@
               try { value = resolveName(value, column.reference, options?.references, referenceIndexes); }
               catch (error) { rowErrors.push(column.label + ': ' + error.message); }
             }
+            // ExamTypes: validate against catalog but pass through (no name=>ID resolution)
+            if (column.refType === 'ExamTypes' && value !== '' && value != null && !cell?.f) {
+              const valid = examChoices(options?.references);
+              if (!valid.length) {
+                rowErrors.push(column.label + ': 当前目录没有已配置的考试类别。请先在 System Setup 添加考试类别，再导入考试记录。');
+              } else if (!valid.includes(String(value).trim())) {
+                rowErrors.push(column.label + ': 「' + String(value) + '」不在当前考试类别列表中。请从下拉选择，或先在 System Setup 配置考试类别。');
+              }
+            }
             row[column.field] = value == null ? '' : value;
           });
+          // Awards: auto-resolve catalogId from category+name+level (new 8-col format)
+          if (name === 'Awards' && !legacyAwardsCatalog && hasValue) {
+            const catalog = Array.isArray(options?.references?.Catalog) ? options.references.Catalog : [];
+            const cat = String(row.category || '').trim();
+            const awName = String(row.name || '').trim();
+            const lvl = String(row.level || '').trim();
+            if (cat || awName) {
+              const matches = catalog.filter(entry =>
+                entry.kind === 'Award' && !entry.archived &&
+                String(entry.category || '').trim() === cat &&
+                String(entry.name || '').trim() === awName &&
+                String(entry.level || '').trim() === lvl
+              );
+              if (!catalog.length) {
+                rowErrors.push('奖项目录未加载，无法核对 Category/Award Name/Level。请回到网页重新载入资料，再预览导入。');
+              } else if (!matches.length) {
+                rowErrors.push('奖项组合（' + cat + ' / ' + awName + ' / ' + (lvl || '(无等级)') + '）在当前目录中不存在或已归档。请检查选择，或先在 System Setup 配置。');
+              } else if (matches.length > 1) {
+                rowErrors.push('奖项组合（' + cat + ' / ' + awName + ' / ' + (lvl || '(无等级)') + '）有多个目录匹配，无法确定。请补充等级或检查目录。');
+              } else {
+                row.catalogId = String(matches[0].id);
+              }
+            }
+          }
+          // Awards old format: catalogId present, verify it exists
+          if (name === 'Awards' && legacyAwardsCatalog && hasValue && row.catalogId) {
+            const catalog = Array.isArray(options?.references?.Catalog) ? options.references.Catalog : [];
+            const entry = catalog.find(e => String(e.id) === String(row.catalogId) && e.kind === 'Award');
+            if (catalog.length && !entry) {
+              rowErrors.push('Catalog ID「' + row.catalogId + '」在当前目录中不存在或已归档。请检查或改用 Category/Award Name/Level 选择。');
+            }
+            if (entry && !row.category) row.category = entry.category || '';
+            if (entry && !row.name) row.name = entry.name || '';
+            if (entry && !row.level) row.level = entry.level || '';
+          }
           for (let c = columns.length; c <= range.e.c; c++) {
             const cell = sheet[library.utils.encode_cell({ r: rowIndex, c })];
             if (cell && (cell.f || (cell.v !== '' && cell.v != null))) rowErrors.push('Extra columns are not allowed. Fill only the downloaded template columns.');
           }
           if (hasValue) columns.forEach(column => {
+            // Old Awards format: category/name optional when valid Catalog ID provided
+            if (legacyAwardsCatalog && name === 'Awards' && (column.field === 'category' || column.field === 'name') && String(row.catalogId || '').trim()) return;
             if (column.required && String(row[column.field] ?? '').trim() === '') rowErrors.push(column.label + ': this field is required.');
           });
           rowErrors.forEach(message => errors.push({ sheet: name, row: rowIndex + 1, message }));
@@ -343,11 +430,36 @@
   function patchGuidedSheetXml(xml, info, state) {
     xml = xml.replace(/<sheetView([^>]*?)\/>/, '<sheetView$1 showGridLines="0"><pane ySplit="12" topLeftCell="A13" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A13" sqref="A13"/></sheetView>');
     const validations = info.columns.flatMap((column, c) => {
+      const col = requireLibrary().utils.encode_col(c);
+      const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Award cascade: category, name, level
+      if (column.refType === 'AwardCategory') {
+        if (!awardCascadeData(state).categories.length) return [];
+        return ['<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="' + col + '13:' + col + '212"><formula1>TCCD_AwardCategory</formula1></dataValidation>'];
+      }
+      if (column.refType === 'AwardName') {
+        if (!awardCascadeData(state).categories.length) return [];
+        const catCol = requireLibrary().utils.encode_col(info.columns.findIndex(cl => cl.refType === 'AwardCategory'));
+        const formula = 'INDIRECT("TCCD_AN_"&MATCH($' + catCol + '13,TCCD_AwardCategory,0))';
+        return ['<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="' + col + '13:' + col + '212"><formula1>' + esc(formula) + '</formula1></dataValidation>'];
+      }
+      if (column.refType === 'AwardLevel') {
+        if (!awardCascadeData(state).categories.length) return [];
+        const catCol = requireLibrary().utils.encode_col(info.columns.findIndex(cl => cl.refType === 'AwardCategory'));
+        const nameCol = requireLibrary().utils.encode_col(info.columns.findIndex(cl => cl.refType === 'AwardName'));
+        const formula = 'INDIRECT("TCCD_AL_"&MATCH($' + catCol + '13,TCCD_AwardCategory,0)&"_"&MATCH($' + nameCol + '13,INDIRECT("TCCD_AN_"&MATCH($' + catCol + '13,TCCD_AwardCategory,0)),0))';
+        return ['<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="' + col + '13:' + col + '212"><formula1>' + esc(formula) + '</formula1></dataValidation>'];
+      }
+      // ExamTypes dropdown
+      if (column.refType === 'ExamTypes') {
+        if (!examChoices(state).length) return [];
+        return ['<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="' + col + '13:' + col + '212"><formula1>TCCD_ExamTypes</formula1></dataValidation>'];
+      }
+      // Member/Activity name references
       if (column.reference && !referenceChoices(column.reference, state).length) return [];
       if (!column.reference && !column.options?.length) return [];
       const formula = column.reference ? 'TCCD_' + column.reference + 'Choices' : '"' + column.options.join(',') + '"';
       if (formula.length > 255) return [];
-      const col = requireLibrary().utils.encode_col(c);
       const escaped = formula.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       return ['<dataValidation type="list" allowBlank="1" showErrorMessage="' + (column.reference ? '0' : '1') + '" errorTitle="请选择列表中的值" error="请使用原有英文选项；填写说明在表格上方。" sqref="' + col + '13:' + col + '212"><formula1>' + escaped + '</formula1></dataValidation>'];
     });
@@ -374,14 +486,50 @@
     });
     const book = library.utils.book_new();
     library.utils.book_append_sheet(book, sheet, table);
+    // Build hidden choices sheet: references + exam types + award cascade
     const referenceTables = [...new Set(info.columns.map(column => column.reference).filter(Boolean))];
     const lists = referenceTables.map(name => ({ name, labels: [...new Set(referenceChoices(name, state).map(row => row.label))] })).filter(list => list.labels.length);
-    if (lists.length) {
-      const rows = Array.from({ length: Math.max(...lists.map(list => list.labels.length)) }, (_, r) => lists.map(list => list.labels[r] || ''));
+    const names = [];
+    const colData = []; // array of arrays, one per column in hidden sheet
+    // Member/Activity reference lists
+    lists.forEach(list => {
+      names.push({ Name: 'TCCD_' + list.name + 'Choices', col: colData.length, len: list.labels.length });
+      colData.push(list.labels);
+    });
+    // ExamTypes list — only if template has ExamTypes columns
+    const hasExamTypes = info.columns.some(col => col.refType === 'ExamTypes');
+    const exams = hasExamTypes ? examChoices(state) : [];
+    if (exams.length) {
+      names.push({ Name: 'TCCD_ExamTypes', col: colData.length, len: exams.length });
+      colData.push(exams);
+    }
+    // Award cascade — only if template has AwardCategory columns
+    const hasAwardCascade = info.columns.some(col => col.refType === 'AwardCategory');
+    const cascade = hasAwardCascade ? awardCascadeData(state) : { categories: [], byCategory: new Map() };
+    if (cascade.categories.length) {
+      names.push({ Name: 'TCCD_AwardCategory', col: colData.length, len: cascade.categories.length });
+      colData.push(cascade.categories);
+      cascade.categories.forEach((cat, ci) => {
+        const catNames = [...(cascade.byCategory.get(cat) || new Map()).keys()];
+        if (!catNames.length) return;
+        names.push({ Name: 'TCCD_AN_' + (ci + 1), col: colData.length, len: catNames.length });
+        colData.push(catNames);
+        catNames.forEach((nname, ni) => {
+          const levels = [...(cascade.byCategory.get(cat).get(nname) || new Set())].map(v => v == null ? '' : String(v));
+          const nonEmpty = levels.filter(l => l !== '');
+          const list = nonEmpty.length ? nonEmpty : [''];
+          names.push({ Name: 'TCCD_AL_' + (ci + 1) + '_' + (ni + 1), col: colData.length, len: list.length });
+          colData.push(list);
+        });
+      });
+    }
+    if (colData.length) {
+      const maxLen = Math.max(...colData.map(col => col.length));
+      const rows = Array.from({ length: maxLen }, (_, r) => colData.map(col => col[r] || ''));
       library.utils.book_append_sheet(book, library.utils.aoa_to_sheet(rows), '_TCCD_Choices');
       book.Workbook = {
         Sheets: [{ name: table, Hidden: 0 }, { name: '_TCCD_Choices', Hidden: 2 }],
-        Names: lists.map((list, c) => ({ Name: 'TCCD_' + list.name + 'Choices', Ref: "'_TCCD_Choices'!$" + library.utils.encode_col(c) + '$1:$' + library.utils.encode_col(c) + '$' + list.labels.length }))
+        Names: names.map(n => ({ Name: n.Name, Ref: "'_TCCD_Choices'!$" + library.utils.encode_col(n.col) + '$1:$' + library.utils.encode_col(n.col) + '$' + n.len }))
       };
     }
     return book;

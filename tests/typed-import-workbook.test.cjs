@@ -235,7 +235,7 @@ test('V2 + importRows: Chinese status maps to domain Active, blank gets Active',
 test('other typed templates still one sheet, advanced unchanged, exports unchanged', () => {
   for (const table of TYPED.filter(t => t !== 'Members')) {
     const book = Workbook.create(global.KPT.empty(), true, undefined, { table });
-    assert.deepEqual(book.SheetNames, [table]);
+    assert.deepEqual(book.SheetNames.filter((_, i) => !book.Workbook?.Sheets?.[i]?.Hidden), [table]);
     const info = Workbook.templateInfo(table);
     const headers = info.columns.map((_, c) => book.Sheets[table][global.XLSX.utils.encode_cell({ r: 11, c })].v);
     assert.deepEqual(headers, info.columns.map(column => column.label));

@@ -18,7 +18,7 @@ for (const table of Workbook.TYPED_TABLES) test(table + ': styled bytes have a s
   assert.ok(info.columns.every(c => !['id', 'version'].includes(c.field)));
   const data = Workbook.createStyledBytes(KPT.empty(), true, null, { table });
   const book = XLSX.read(data, { type: 'array' });
-  assert.deepEqual(book.SheetNames, [table]);
+  assert.deepEqual(book.Workbook.Sheets.filter(sheet => !sheet.Hidden).map(sheet => sheet.name), [table]);
   assert.equal(book.Sheets[table].A1.v, info.title);
   assert.deepEqual(info.columns.map((_, c) => book.Sheets[table][XLSX.utils.encode_cell({ r: 11, c })].v), info.columns.map(c => c.label));
   const parsed = Workbook.parse(data, { table });
@@ -32,7 +32,7 @@ for (const table of Workbook.TYPED_TABLES) test(table + ': styled bytes have a s
     assert.match(xml('xl/worksheets/sheet1.xml'), /"Active,Graduated,Withdrawn"/);
     assert.equal(info.columns.find(c => c.field === 'status').example, 'Active');
   }
-  if (table === 'Awards') assert.deepEqual(info.columns.find(c => c.field === 'category').options, KPT.categories);
+  if (table === 'Awards') { assert.equal(info.columns.length, 8); assert.ok(!info.columns.some(c => c.field === 'catalogId')); }
   if (table === 'Exams') assert.deepEqual(info.columns.find(c => c.field === 'result').options, KPT.results);
 });
 
@@ -48,7 +48,7 @@ test('all seven populated guided forms survive domain validation with English va
     Attendance: () => ({ memberId, activityId, present: false }),
     Exams: () => ({ memberId, type: exam.name, date: '2030-01-15', result: 'Fail', attended: true, certificate: '0000-CERT', archived: false }),
     Duty: () => ({ memberId, year: 2030, hours: 60.5 }),
-    Awards: () => ({ memberId, catalogId: award.id, date: '2030-01-15', certificate: '0000-AWARD', archived: false }),
+    Awards: () => ({ memberId, category: award.category, name: award.name, level: award.level, date: '2030-01-15', certificate: '0000-AWARD', archived: false }),
     Enrolments: () => ({ memberId, year: 2030, form: 'Form 1', status: 'Active' })
   };
   for (const table of Object.keys(values)) {
