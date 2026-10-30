@@ -18,7 +18,7 @@ test('import picker offers all typed tables and ALL as advanced non-default', ()
 
 test('typed import uses workbook options and surfaces ignoredSheets', () => {
   const admin = read('src/admin.js');
-  assert.match(admin, /KPTWorkbook\.parse\(await file\.arrayBuffer\(\), opts\)/);
+  assert.match(admin, /KPTWorkbook\.parse\(await file\.arrayBuffer\(\), \{ \.\.\.opts, references: state \}\)/);
   assert.match(admin, /KPTWorkbook\.download\(state, true, null, opts\)/);
   assert.match(admin, /KPTWorkbook\.download\(state, false, null, opts\)/);
   assert.match(admin, /ignoredSheets/);
@@ -33,10 +33,10 @@ test('type and file changes bump generation and clear stale preview', () => {
   assert.match(admin, /importStalePreview/);
 });
 
-test('Members help promises only name required and no name matching', () => {
+test('Members help keeps name-only creation and requires unambiguous existing references', () => {
   const i18n = read('src/i18n.js');
   assert.match(i18n, /New students need only Name/);
-  assert.match(i18n, /Names are not matched automatically/);
+  assert.match(i18n, /ambiguous|重名/);
   assert.match(i18n, /keep id and version|保留 id 和 version/);
   assert.doesNotMatch(i18n, /automatically match names|自动按姓名匹配/);
 });

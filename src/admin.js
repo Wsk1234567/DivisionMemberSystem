@@ -2249,7 +2249,7 @@
       const opts = typeAtStart === 'ALL' ? undefined : { table: typeAtStart };
       let parsed;
       try {
-        parsed = KPTWorkbook.parse(await file.arrayBuffer(), opts);
+        parsed = KPTWorkbook.parse(await file.arrayBuffer(), { ...opts, references: state });
       } catch (error) {
         if (generation !== importGeneration || typeAtStart !== importType) return;
         importFile = null;

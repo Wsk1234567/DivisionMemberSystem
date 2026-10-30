@@ -43,7 +43,7 @@ try {
     const downloaded = await downloadEvent;
     const bytes = await fs.readFile(await downloaded.path());
     const book = XLSX.read(bytes, { type: 'buffer' });
-    assert.deepEqual(book.SheetNames, [table]);
+    assert.deepEqual(book.SheetNames.filter((_, i) => !book.Workbook?.Sheets?.[i]?.Hidden), [table]);
     const sheet = book.Sheets[table];
     assert.equal(sheet.A1.v, meta.title);
     const zip = XLSX.CFB.read(bytes, { type: 'buffer' });
@@ -56,7 +56,8 @@ try {
     assert.equal(parsedEmpty.workbook[table]?.length, 0, table + ' example must not be imported.');
     const values = fixtures[table]();
     for (const [column, descriptor] of meta.columns.entries()) {
-      const value = values[descriptor.field] ?? '';
+      let value = values[descriptor.field] ?? '';
+      if (descriptor.reference && value) value = state[descriptor.reference].find(row => row.id === value)?.name || value;
       sheet[XLSX.utils.encode_cell({ r: 12, c: column })] = { t: typeof value === 'number' ? 'n' : 's', v: value };
     }
     await page.locator('#excel-file').setInputFiles({ name: table + '-fictional.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(XLSX.write(book, { type: 'array', bookType: 'xlsx' })) });

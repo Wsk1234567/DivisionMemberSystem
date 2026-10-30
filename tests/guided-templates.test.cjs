@@ -4,13 +4,14 @@ global.KPT = require('../src/domain.js');
 global.XLSX = require('../vendor/xlsx.full.min.js');
 const Workbook = require('../src/workbook.js');
 const { fixture } = require('../src/demo-data.js');
-function populate(table, values) {
+function populate(table, values, references) {
   const book = Workbook.create(KPT.empty(), true, null, { table });
   Workbook.templateInfo(table).columns.forEach((column, c) => {
-    const value = values[column.field] ?? '';
+    let value = values[column.field] ?? '';
+    if (column.reference && references && value) value = references[column.reference].find(row => row.id === value)?.name || value;
     book.Sheets[table][XLSX.utils.encode_cell({ r: 12, c })] = { t: typeof value === 'boolean' ? 'b' : typeof value === 'number' ? 'n' : 's', v: value };
   });
-  return Workbook.parse(XLSX.write(book, { type: 'array', bookType: 'xlsx' }), { table });
+  return Workbook.parse(XLSX.write(book, { type: 'array', bookType: 'xlsx' }), { table, references });
 }
 for (const table of Workbook.TYPED_TABLES) test(table + ': styled bytes have a single sheet, English enums, borders, and no importable examples', () => {
   const info = Workbook.templateInfo(table);
@@ -51,7 +52,7 @@ test('all seven populated guided forms survive domain validation with English va
     Enrolments: () => ({ memberId, year: 2030, form: 'Form 1', status: 'Active' })
   };
   for (const table of Object.keys(values)) {
-    const parsed = populate(table, values[table]());
+    const parsed = populate(table, values[table](), state);
     assert.deepEqual(parsed.errors, [], JSON.stringify(parsed.errors));
     assert.equal(parsed.workbook[table].length, 1);
     assert.equal(parsed.workbook[table][0].__excelRow, 13);

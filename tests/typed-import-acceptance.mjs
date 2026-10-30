@@ -50,7 +50,7 @@ try {
     const download = await downloadEvent;
     const bytes = await fs.readFile(await download.path());
     const book = XLSX.read(bytes, { type: 'buffer' });
-    assert.deepEqual(book.SheetNames, [table]);
+    assert.deepEqual(book.SheetNames.filter((_, i) => !book.Workbook?.Sheets?.[i]?.Hidden), [table]);
     const meta = await page.evaluate(table => KPTWorkbook.templateInfo(table), table);
     assert.ok(meta && meta.columns.length, table + ' exposes filling instructions.');
     assert.equal(book.Sheets[table].A1.v, meta.title);
