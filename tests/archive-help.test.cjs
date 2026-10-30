@@ -67,7 +67,7 @@ test('Awards cascade teaching states order, reselect rule and blank level', () =
 
 test('archived notes match actual domain behaviour per record type', () => {
   const i18n = read('src/i18n.js');
-  const domain = read('../repo-clone/src/domain.js');
+  const domain = read('src/domain.js');
   // Exams: archived is no longer participation evidence and can change the yearly result.
   assert.match(i18n, /no longer counts as yearly exam participation evidence|不再作为年度考试参与的证据/);
   assert.match(i18n, /yearly result can change|可能改变年度结果/);
