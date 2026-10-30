@@ -24,7 +24,7 @@
       if (Array.isArray(options)) return { ...base, options: options.slice() };
       return base;
     };
-    const member = () => field('memberId', '会员姓名 *', true, '从下拉名单选择，也可以输入完整姓名。系统会在预览时核对；同名请选带 SJAM ID 等识别资料的选项。找不到或有多个匹配时不会自动配对。', '示例学员甲');
+    const member = () => field('memberId', '会员姓名 *', true, '从下拉名单选择，也可以输入完整姓名。系统会在预览时核对；普通姓名可直接填写；同名请选择带会员编号的选项，选中后会保留编号。找不到或有多个匹配时不会自动配对。', '示例学员甲');
     const activity = required => field('activityId', '活动名称' + (required ? ' *' : ''), required, '从下拉选择活动名称和日期，也可输入完整活动名称。重名活动必须选含日期的选项。考试如关联活动，类别、日期和出席情况须一致。', required ? '示例活动 · 2030-01-15' : '');
     const year = () => field('year', '年份 *', true, '填四位数字，范围 1900–2200。例如 2030；不要填「2030年」。', 2030);
     const date = () => field('date', '日期 *', true, '填写实际日期，格式 YYYY-MM-DD，例如 2030-01-15。', '2030-01-15');
@@ -41,7 +41,7 @@
       Attendance: {
         title: 'TCCD 出席记录导入表 · 新记录',
         columns: [activity(true), member(), field('present', '出席（TRUE/FALSE） *', true, 'TRUE＝有出席，FALSE＝没有出席。请明确选择，不要填写 Yes、No 或中文。', 'TRUE', ['TRUE', 'FALSE'])],
-        instructions: ['先建立会员和活动，再从下拉选择名字。也可输入完整名称，上传预览时系统会核对名单。', '每行对应一位会员在一个活动的出席情况。TRUE＝出席，FALSE＝未出席。', '同一会员在同一活动只能有一条出席记录；修改原记录请用已有记录导出文件。', '同名会员请选有 SJAM ID 的选项；同名活动请按日期选择。正式资料从第 13 行开始。']
+        instructions: ['先建立会员和活动，再从下拉选择名字。也可输入完整名称，上传预览时系统会核对名单。', '每行对应一位会员在一个活动的出席情况。TRUE＝出席，FALSE＝未出席。', '同一会员在同一活动只能有一条出席记录；修改原记录请用已有记录导出文件。', '普通姓名可直接填写；同名请选择带会员编号的选项，选中后会保留编号。同名活动请按日期选择。正式资料从第 13 行开始。']
       },
       Activities: {
         title: 'TCCD 活动资料导入表 · 新记录',
@@ -108,26 +108,73 @@
       return examChoices(state).map(name => ({ id: name, name, label: name }));
     }
     const rows = Array.isArray(state?.[table]) ? state[table] : [];
-    return rows.filter(row => row.id && row.name && (table !== 'Activities' || !row.archived)).map(row => ({
+    const filtered = rows.filter(row => row.id && row.name && (table !== 'Activities' || !row.archived));
+    if (table === 'Members') {
+      // Count name occurrences by matchKey for duplicate detection
+      const nameCount = new Map();
+      filtered.forEach(row => {
+        const key = matchKey(row.name);
+        nameCount.set(key, (nameCount.get(key) || 0) + 1);
+      });
+      return filtered.map(row => {
+        const key = matchKey(row.name);
+        const isDuplicate = nameCount.get(key) > 1;
+        let label = String(row.name);
+        if (isDuplicate) {
+          if (row.sjamId) {
+            label = String(row.name) + ' · ' + String(row.sjamId);
+          } else {
+            label = String(row.name) + ' · ' + (row.form || '年级未填') + ' · ' + (row.joined || '加入日期未填');
+          }
+        }
+        return { id: row.id, name: String(row.name), label };
+      });
+    }
+    return filtered.map(row => ({
       id: row.id, name: String(row.name), label: table === 'Activities'
         ? row.name + ' · ' + (row.date || '日期未填')
-        : row.name + (row.sjamId ? ' · SJAM ' + row.sjamId : ' · ' + (row.form || '年级未填') + ' · ' + (row.joined || '加入日期未填'))
+        : row.name + ' · ' + (row.sjamId ? row.sjamId : (row.form || '年级未填') + ' · ' + (row.joined || '加入日期未填'))
     }));
   }
   function resolveName(value, table, state, indexes) {
     if (!state || !Array.isArray(state[table])) throw new Error('名单未加载，请回到网页重新载入资料，再预览导入。');
     if (!indexes.has(table)) {
       const index = new Map();
-      referenceChoices(table, state).forEach(row => [row.label, row.name].forEach(value => {
-        const key = matchKey(value);
-        if (!index.has(key)) index.set(key, new Set());
-        index.get(key).add(row.id);
-      }));
+      const addKey = (key, id) => {
+        const k = matchKey(key);
+        if (!index.has(k)) index.set(k, new Set());
+        index.get(k).add(id);
+      };
+      const rows = Array.isArray(state[table]) ? state[table] : [];
+      const filtered = rows.filter(row => row.id && row.name && (table !== 'Activities' || !row.archived));
+      filtered.forEach(row => {
+        addKey(row.name, row.id);
+        // Always index old and new label formats
+        if (table === 'Members') {
+          if (row.sjamId) {
+            addKey(row.name + ' · SJAM ' + row.sjamId, row.id); // old format
+            addKey(row.name + ' · ' + row.sjamId, row.id); // new format
+          } else {
+            addKey(row.name + ' · ' + (row.form || '年级未填') + ' · ' + (row.joined || '加入日期未填'), row.id);
+          }
+        } else if (table === 'Activities') {
+          addKey(row.name + ' · ' + (row.date || '日期未填'), row.id);
+        } else {
+          if (row.sjamId) {
+            addKey(row.name + ' · SJAM ' + row.sjamId, row.id);
+            addKey(row.name + ' · ' + row.sjamId, row.id);
+          } else {
+            addKey(row.name + ' · ' + (row.form || '年级未填') + ' · ' + (row.joined || '加入日期未填'), row.id);
+          }
+        }
+      });
+      // Also index the current referenceChoices labels (covers all formats)
+      referenceChoices(table, state).forEach(row => addKey(row.label, row.id));
       indexes.set(table, index);
     }
     const matches = indexes.get(table).get(matchKey(value));
     if (!matches?.size) throw new Error('找不到「' + String(value) + '」。请检查完整名称，或先在系统建立这条资料。');
-    if (matches.size > 1) throw new Error('「' + String(value) + '」有多个匹配。会员请选择带 SJAM ID 等识别资料的选项；活动请选择含日期的选项。如仍同名，请先补全资料。');
+    if (matches.size > 1) throw new Error('「' + String(value) + '」有多个匹配。会员请选择带会员编号的选项；活动请选择含日期的选项。如仍同名，请先补全资料。');
     return matches.values().next().value;
   }
 

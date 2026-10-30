@@ -75,3 +75,152 @@ test('previous guided ID headers and old exported machine headers remain compati
   XLSX.utils.book_append_sheet(legacy, XLSX.utils.aoa_to_sheet([KPT.fields.Attendance, ['', '', 'ACT-C', 'STU-C', 'TRUE']]), 'Attendance');
   assert.deepEqual(Workbook.parse(XLSX.write(legacy, { type: 'array', bookType: 'xlsx' }), { table: 'Attendance' }).errors, []);
 });
+
+// --- New: Members label dedup, leading zeros, normalization, old-format compatibility ---
+
+test('unique member name label is plain name (no disambiguator)', () => {
+  const state = { Members: [{ id: 'STU-C', name: 'Unique Member', sjamId: '000003' }] };
+  const choices = Workbook.create(state, true, null, { table: 'Attendance' });
+  // Check hidden sheet has plain name label
+  const sheet = choices.Sheets._TCCD_Choices;
+  const labels = global.XLSX.utils.sheet_to_json(sheet, { header: 1 }).flat().filter(Boolean);
+  assert.ok(labels.includes('Unique Member'), 'plain name label present: ' + JSON.stringify(labels));
+  assert.ok(!labels.some(l => l.includes('·')), 'unique name has no disambiguator');
+});
+
+test('duplicate member names with sjamId get name · sjamId label (no SJAM prefix, leading zeros kept)', () => {
+  const state = {
+    Members: [
+      { id: 'STU-A', name: 'Alex Lee', sjamId: '00001' },
+      { id: 'STU-B', name: 'Alex Lee', sjamId: '00002' }
+    ]
+  };
+  const choices = Workbook.create(state, true, null, { table: 'Attendance' });
+  const sheet = choices.Sheets._TCCD_Choices;
+  const labels = global.XLSX.utils.sheet_to_json(sheet, { header: 1 }).flat().filter(Boolean);
+  assert.ok(labels.includes('Alex Lee · 00001'), 'new label format with leading zeros');
+  assert.ok(labels.includes('Alex Lee · 00002'), 'new label format with leading zeros');
+  assert.ok(!labels.some(l => l.includes('SJAM')), 'no SJAM prefix in new labels');
+});
+
+test('duplicate member names without sjamId use form/joined fallback', () => {
+  const state = {
+    Members: [
+      { id: 'STU-X', name: 'Same Name', form: 'Form 1', joined: '2030-01-01' },
+      { id: 'STU-Y', name: 'Same Name', form: 'Form 2', joined: '2030-02-01' }
+    ]
+  };
+  const choices = Workbook.create(state, true, null, { table: 'Attendance' });
+  const sheet = choices.Sheets._TCCD_Choices;
+  const labels = global.XLSX.utils.sheet_to_json(sheet, { header: 1 }).flat().filter(Boolean);
+  assert.ok(labels.includes('Same Name · Form 1 · 2030-01-01'));
+  assert.ok(labels.includes('Same Name · Form 2 · 2030-02-01'));
+});
+
+test('resolveName accepts new name · sjamId format', () => {
+  const state = {
+    Members: [
+      { id: 'STU-A', name: 'Alex Lee', sjamId: '00001' },
+      { id: 'STU-B', name: 'Alex Lee', sjamId: '00002' }
+    ]
+  };
+  const result = parseRow('Single Activity', 'Alex Lee · 00001', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(result.errors, [], JSON.stringify(result.errors));
+  assert.equal(result.workbook.Attendance[0].memberId, 'STU-A');
+});
+
+test('resolveName accepts old name · SJAM sjamId format', () => {
+  const state = {
+    Members: [
+      { id: 'STU-A', name: 'Alex Lee', sjamId: '00001' },
+      { id: 'STU-B', name: 'Alex Lee', sjamId: '00002' }
+    ]
+  };
+  const result = parseRow('Single Activity', 'Alex Lee · SJAM 00001', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(result.errors, [], JSON.stringify(result.errors));
+  assert.equal(result.workbook.Attendance[0].memberId, 'STU-A');
+});
+
+test('resolveName resolves unique name even when old label format is entered', () => {
+  const state = {
+    Members: [{ id: 'STU-C', name: 'Unique Member', sjamId: '000003' }]
+  };
+  // Enter with old SJAM format even though member is unique
+  const result = parseRow('Single Activity', 'Unique Member · SJAM 000003', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(result.errors, [], JSON.stringify(result.errors));
+  assert.equal(result.workbook.Attendance[0].memberId, 'STU-C');
+});
+
+test('resolveName resolves plain name for unique member', () => {
+  const state = {
+    Members: [{ id: 'STU-C', name: 'Unique Member', sjamId: '000003' }]
+  };
+  const result = parseRow('Single Activity', 'Unique Member', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(result.errors, [], JSON.stringify(result.errors));
+  assert.equal(result.workbook.Attendance[0].memberId, 'STU-C');
+});
+
+test('pure duplicate names still ambiguous, never guess first', () => {
+  const state = {
+    Members: [
+      { id: 'STU-X', name: 'Same Name' },
+      { id: 'STU-Y', name: 'Same Name' }
+    ]
+  };
+  const result = parseRow('Single Activity', 'Same Name', { references: { ...references(), Members: state.Members } });
+  assert.ok(result.errors.some(e => /多个匹配/.test(e.message)), JSON.stringify(result.errors));
+  assert.equal(result.workbook.Attendance.length, 0);
+});
+
+test('leading zeros preserved in sjamId labels and resolution', () => {
+  const state = {
+    Members: [
+      { id: 'STU-A', name: 'Zero Test', sjamId: '00001' },
+      { id: 'STU-B', name: 'Zero Test', sjamId: '00010' }
+    ]
+  };
+  // Resolve with leading-zero label
+  const result = parseRow('Single Activity', 'Zero Test · 00001', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(result.errors, [], JSON.stringify(result.errors));
+  assert.equal(result.workbook.Attendance[0].memberId, 'STU-A');
+  // Verify '00001' and '00010' are distinct
+  const result2 = parseRow('Single Activity', 'Zero Test · 00010', { references: { ...references(), Members: state.Members } });
+  assert.equal(result2.workbook.Attendance[0].memberId, 'STU-B');
+});
+
+test('name normalization: NFC, extra spaces, case insensitive', () => {
+  const state = {
+    Members: [
+      { id: 'STU-A', name: 'Alex Lee', sjamId: '00001' },
+      { id: 'STU-B', name: 'Alex Lee', sjamId: '00002' }
+    ]
+  };
+  // Extra spaces
+  const r1 = parseRow('Single Activity', '  Alex   Lee  ·  00001  ', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(r1.errors, [], JSON.stringify(r1.errors));
+  assert.equal(r1.workbook.Attendance[0].memberId, 'STU-A');
+  // Case insensitive
+  const r2 = parseRow('Single Activity', 'alex lee · 00002', { references: { ...references(), Members: state.Members } });
+  assert.deepEqual(r2.errors, [], JSON.stringify(r2.errors));
+  assert.equal(r2.workbook.Attendance[0].memberId, 'STU-B');
+});
+
+test('referenceChoices label output shape for Members table in template', () => {
+  // Verify the label data flows through the hidden choices sheet correctly
+  const state = {
+    Members: [
+      { id: 'STU-A', name: 'John Doe', sjamId: '12345' },
+      { id: 'STU-B', name: 'John Doe', sjamId: '67890' },
+      { id: 'STU-C', name: 'Jane Solo', sjamId: '11111' }
+    ]
+  };
+  const book = Workbook.create(state, true, null, { table: 'Attendance' });
+  const labels = global.XLSX.utils.sheet_to_json(book.Sheets._TCCD_Choices, { header: 1 }).flat().filter(Boolean);
+  // Unique name is plain
+  assert.ok(labels.includes('Jane Solo'));
+  // Duplicates have sjamId suffix
+  assert.ok(labels.includes('John Doe · 12345'));
+  assert.ok(labels.includes('John Doe · 67890'));
+  // No plain 'John Doe' label
+  assert.ok(!labels.includes('John Doe'), 'duplicate name must not have plain label');
+});
