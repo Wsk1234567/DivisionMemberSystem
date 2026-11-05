@@ -92,12 +92,12 @@
       noBatches: '还没有批次。',
       batchTitle: '标题', batchYear: '年度', batchApps: '申请数',
       markSubmitted: '标为已提交',
-      checklistStripe: 'Stripe 清单', checklistStar: 'Star 清单',
-      mergeStripe: '合并 Stripe 签署表', mergeStar: '合并 Star 签署表',
+      checklistStripe: 'Stripe checklist', checklistStar: 'Star checklist',
+      mergeStripe: 'Merge signed Stripe forms', mergeStar: 'Merge signed Star forms',
       zipBatch: '打包下载 ZIP',
       newBatch: '新建批次',
       checksTitle: '批次清单核对',
-      checksHint: '按办公室清单逐项核对，选 Y、N 或留空。附函和补充文件可以是 N，不影响提交。勤务相关项请人工确认，系统不会自动填 Yes。',
+      checksHint: '按办公室清单逐项核对，选 Y、N 或留空。Covering letter 和 Supporting documents可以是 N，不影响提交。Duty 相关项请人工确认，系统不会自动填 Yes。',
       checkBlank: '（留空）',
       saveChecks: '保存清单',
       batchTitlePrompt: '批次标题：',
@@ -112,8 +112,8 @@
       backLabel: '退回',
       icMismatch: 'IC 与绑定的会员记录不一致。确认要保存吗？',
       // PDF
-      pdfStripe: 'Stripe 正式表格 PDF',
-      pdfStar: 'Star 正式表格 PDF',
+      pdfStripe: 'Stripe application form PDF',
+      pdfStar: 'Star application form PDF',
       pdfNeedMember: '先绑定会员记录并填好会员编号，才能生成正式表格。',
       pdfNeedYear: '先确认 Efficient 年数，才能生成正式表格。',
       pdfUnavailable: 'PDF 模块尚未就绪，无法生成文件。请稍后再试。',
@@ -122,7 +122,7 @@
       pdf4th: '4th 年：同一份资料分别生成两份正式表格。',
       languages: '语言',
       batchUpload: '上传批次文件',
-      dutyKind: '勤务明细 PDF'
+      dutyKind: 'Duty detail PDF'
     },
     en: {
       svcTitle: 'Service Stripe & Star application',
@@ -245,42 +245,42 @@
   }
   // Per-application attachments — never includes combined batch files.
   const ATTACH_KINDS = [
-    ['duty', 'Duty detail PDF', '勤务明细 PDF'],
-    ['signedStripe', 'Signed Stripe form', '已签 Stripe 表格'],
-    ['signedStar', 'Signed Star form', '已签 Star 表格'],
-    ['covering', 'Covering letter', '附函'],
-    ['support', 'Supporting document', '补充文件'],
-    ['reply', 'Reply', '回函']
+    ['duty', 'Duty detail PDF'],
+    ['signedStripe', 'Signed Stripe form'],
+    ['signedStar', 'Signed Star form'],
+    ['covering', 'Covering letter'],
+    ['support', 'Supporting document'],
+    ['reply', 'Reply']
   ];
   // Batch-level combined uploads — kept separate from the per-person files.
   const ATTACH_KINDS_BATCH = [
-    ['combinedDuty', 'Combined duty book', '合并勤务明细'],
-    ['combinedSignedStripe', 'Combined signed Stripe forms', '合并已签 Stripe 表格'],
-    ['combinedSignedStar', 'Combined signed Star forms', '合并已签 Star 表格'],
-    ['covering', 'Covering letter', '附函'],
-    ['support', 'Supporting document', '补充文件'],
-    ['reply', 'Reply', '回函']
+    ['combinedDuty', 'Combined duty book'],
+    ['combinedSignedStripe', 'Combined signed Stripe forms'],
+    ['combinedSignedStar', 'Combined signed Star forms'],
+    ['covering', 'Covering letter'],
+    ['support', 'Supporting document'],
+    ['reply', 'Reply']
   ];
   // Original checklist items for the batch cover sheet — Y / N / blank.
   // Covering and Support may be N without blocking; duty items are confirmed
   // by the Secretary by hand (never auto-filled to Yes).
   const BATCH_CHECK_ITEMS = [
-    ['covering', 'Covering letter', '附函'],
-    ['support', 'Supporting documents', '补充文件'],
-    ['applicationForms', 'Application forms', '申请表格'],
-    ['dutyBook', 'Duty book', '勤务本'],
-    ['dutyDetails', 'Duty details', '勤务明细'],
-    ['typeHours', 'Type & hours sheet', '类别与时数表'],
-    ['approvedSigned', 'Approved signed forms', '已批准签署表'],
-    ['totalHours', 'Total hours sheet', '总时数表']
+    ['covering', 'Covering letter'],
+    ['support', 'Supporting documents'],
+    ['applicationForms', 'Application forms'],
+    ['dutyBook', 'Duty book'],
+    ['dutyDetails', 'Duty details'],
+    ['typeHours', 'Type & hours sheet'],
+    ['approvedSigned', 'Approved signed forms'],
+    ['totalHours', 'Total hours sheet']
   ];
   function attachKindLabel(value) {
     const row = ATTACH_KINDS.concat(ATTACH_KINDS_BATCH).find(([key]) => key === value);
-    return row ? (lang === 'zh' ? row[2] : row[1]) : value;
+    return row ? row[1] : value;
   }
   function attachKindOptions(targetKind) {
     const list = targetKind === 'batch' ? ATTACH_KINDS_BATCH : ATTACH_KINDS;
-    return list.map(([value, enLabel, zhLabel]) => '<option value="' + escape(value) + '">' + escape(lang === 'zh' ? zhLabel : enLabel) + '</option>').join('');
+    return list.map(([value, label]) => '<option value="' + escape(value) + '">' + escape(label) + '</option>').join('');
   }
 
   function yearAwardText(year) {
@@ -782,8 +782,7 @@
     }
     function batchChecksBlock(batch) {
       const checks = (batch && batch.checks) || {};
-      const rows = BATCH_CHECK_ITEMS.map(([key, enLabel, zhLabel]) => {
-        const label = lang === 'zh' ? zhLabel : enLabel;
+      const rows = BATCH_CHECK_ITEMS.map(([key, label]) => {
         const value = checks[key] != null ? String(checks[key]) : '';
         return '<div class="field svc-check-row"><label for="svc-check-' + key + '">' + escape(label) + '</label>'
           + '<select id="svc-check-' + key + '" data-svc-check="' + escape(key) + '">'
