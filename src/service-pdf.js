@@ -116,11 +116,24 @@
     const { PDFDocument, rgb, StandardFonts } = PDFLib;
     const isStar = kind === 'Star';
     const key = isStar ? 'star' : 'stripe';
+    const templateBase64 = config && config.templateBase64;
     const tmpl = templates && templates[key];
-    if (!tmpl || !tmpl.base64) throw new Error('Template for ' + kind + ' not available.');
-    const bytes = b64ToBytes(tmpl.base64);
-    const doc = await PDFDocument.load(bytes);
+    if (!templateBase64 && (!tmpl || !tmpl.base64)) throw new Error('Template for ' + kind + ' not available.');
+    const doc = await PDFDocument.load(b64ToBytes(templateBase64 || tmpl.base64));
     const page = doc.getPages()[0];
+    if (templateBase64) {
+      if (doc.getPageCount() !== 1 || Math.abs(page.getHeight() - A4_H) > 2 || Math.abs(page.getWidth() - 595.44) > 2) {
+        throw new Error(kind + ' signed template must be the original single-page A4 form.');
+      }
+      const date = String(config.signingDate || '');
+      const parsed = new Date(date + 'T00:00:00Z');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) {
+        throw new Error('Enter a valid signing date.');
+      }
+      const form = doc.getForm();
+      form.getTextField('SigningDate').setText(date.split('-').reverse().join('/'));
+      form.flatten();
+    }
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const bold = await doc.embedFont(StandardFonts.HelveticaBold);
     const pos = isStar ? STAR_POS : STRIPE_POS;
@@ -260,6 +273,13 @@
     return merged.save();
   }
 
+  async function generateSigned(application, kind, config) {
+    if (!['Stripe', 'Star'].includes(kind) || !config || !config.templateBase64) {
+      throw new Error('Private signed application template is missing.');
+    }
+    return fillForm(application, kind, config);
+  }
+
   async function download(application, kind, config) {
     const bytes = await fillForm(application, kind, config);
     const formCode = kind === 'Star' ? 'SSTR-02' : 'SS-02';
@@ -316,6 +336,6 @@
     return out instanceof Uint8Array ? out : new Uint8Array(out);
   }
 
-  root.KPTServicePDF = { download, downloadChecklist, mergeDocuments, mergeAndDownload, zipFiles };
+  root.KPTServicePDF = { generateSigned, download, downloadChecklist, mergeDocuments, mergeAndDownload, zipFiles };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTServicePDF;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

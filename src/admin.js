@@ -832,10 +832,25 @@
   }
   function renderNavigation() {
     const ocMode = workspaceMode === 'oc' || isOcOnly();
-    let html = workspaceNav(workspaceMode).map(([key]) => {
+    const lang = (window.KPTI18n && window.KPTI18n.getLang()) || 'en';
+    const allowed = new Set(workspaceNav(workspaceMode).map(([key]) => key));
+    const navButton = key => {
       const text = key === 'Documents' && openDocPackageId ? t('nav.AllActivities') : navLabel(key);
       return '<button type="button" data-nav="' + key + '">' + icon + escape(text) + '</button>';
-    }).join('');
+    };
+    const groups = [
+      ['会员资料', 'Member records', ['Members', 'Activities', 'Exams', 'Duty']],
+      ['活动与奖励', 'Activities & awards', ['Documents', 'Service', 'Awards']],
+      ['财政', 'Finance', ['Finance']],
+      ['资料与设置', 'Data & settings', ['Owner', 'Data', 'Phase', 'Setup', 'Import', 'Trash', 'Settings']]
+    ];
+    let html = ['Overview', 'Portal'].filter(key => allowed.has(key)).map(navButton).join('');
+    groups.forEach(([zh, en, keys]) => {
+      const links = keys.filter(key => allowed.has(key)).map(navButton).join('');
+      if (!links) return;
+      const label = escape(lang === 'zh' ? zh : en);
+      html += '<div class="nav-group" role="group" aria-label="' + label + '"><span class="nav-group-title" aria-hidden="true">' + label + '</span>' + links + '</div>';
+    });
     if (ocMode && state && state.DocPackages) {
       const packages = ocPackages();
       if (packages.length) {
@@ -845,7 +860,6 @@
         }).join('');
       }
     }
-    const lang = (window.KPTI18n && window.KPTI18n.getLang()) || 'en';
     html += '<button type="button" data-action="telegramSettings">' + icon + 'Telegram</button>';
     html += '<button type="button" data-action="toggleLang" style="margin-top:auto">' + icon + (lang === 'zh' ? 'EN' : '中') + '</button>';
     byId('navigation').innerHTML = html;

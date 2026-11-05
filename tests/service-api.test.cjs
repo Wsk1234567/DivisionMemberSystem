@@ -242,7 +242,7 @@ test('serviceSave without a version fails and cannot silently overwrite a record
   assert.equal(snapshotState(sandbox), before, 'a rejected save must not change the snapshot');
 });
 
-test('Secretary edits applicant and reference through serviceSave and the change persists', () => {
+test('Secretary edits applicant and receives an automatic reference', () => {
   const { env, sandbox } = harness();
   sandbox.serviceAnonymousSubmit_({
     action: 'submitServiceApplication',
@@ -269,7 +269,7 @@ test('Secretary edits applicant and reference through serviceSave and the change
   });
   assert.equal(saved.ok, true, 'Secretary can save: ' + JSON.stringify(saved));
   const after = sandbox.loadState_().serviceApplications.find(a => a.id === app.id);
-  assert.equal(after.reference, 'SVC-OFFICIAL-REF-1', 'reference is editable');
+  assert.match(after.reference, /^\d{4}-G001$/, 'reference is assigned by the server');
   assert.equal(after.applicant.name, 'Edited Name', 'applicant name is editable');
   assert.equal(after.confirmedYear, 3, 'confirmedYear is editable');
   assert.equal(after.memberId, realMember.id, 'memberId binding is editable');

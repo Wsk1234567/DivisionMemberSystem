@@ -102,8 +102,8 @@
       hideCol: '收起',
       allStatuses: '全部状态',
       statusFilterLabel: '状态筛选',
-      tabApplications: '个人申请',
-      tabBatches: '一次过申请',
+      tabApplications: '① 批准申请',
+      tabBatches: '② 整合申请 + 提交',
       dirtyLeave: '有未保存的修改，确定放弃吗？',
       batchTitlePrompt: '批次标题：',
       batchYearPrompt: '批次年度：',
@@ -205,8 +205,8 @@
       hideCol: 'Hide',
       allStatuses: 'All statuses',
       statusFilterLabel: 'Status filter',
-      tabApplications: 'Individual applications',
-      tabBatches: 'Bulk applications',
+      tabApplications: '① Review applications',
+      tabBatches: '② Consolidate + submit',
       dirtyLeave: 'You have unsaved changes. Discard them?',
       batchTitlePrompt: 'Batch title:',
       batchYearPrompt: 'Batch year:',
@@ -295,8 +295,8 @@
     const row = ATTACH_KINDS.concat(ATTACH_KINDS_BATCH).find(([key]) => key === value);
     return row ? row[1] : value;
   }
-  function attachKindOptions(targetKind) {
-    const list = targetKind === 'batch' ? ATTACH_KINDS_BATCH : ATTACH_KINDS;
+  function attachKindOptions(targetKind, record) {
+    const list = targetKind === 'batch' ? ATTACH_KINDS_BATCH : ATTACH_KINDS.filter(([kind]) => ['duty', 'support'].includes(kind) || (kind === 'reply' && (record.status === 'Submitted' || (record.status === 'NeedsInfo' && record.submittedAt))));
     return list.map(([value, label]) => '<option value="' + escape(value) + '">' + escape(label) + '</option>').join('');
   }
 
@@ -316,7 +316,7 @@
     const autocomplete = o.autocomplete ? ' autocomplete="' + escape(o.autocomplete) + '"' : ' autocomplete="off"';
     const input = o.type === 'textarea'
       ? '<textarea id="svc-' + name + '" name="' + name + '" rows="' + (o.rows || 3) + '"' + autocomplete + required + ' maxlength="' + (o.maxlength || 500) + '">' + escape(value || '') + '</textarea>'
-      : '<input id="svc-' + name + '" name="' + name + '" type="' + (o.type || 'text') + '" value="' + escape(value || '') + '"' + autocomplete + required + ' maxlength="' + (o.maxlength || 200) + '"' + (o.inputmode ? ' inputmode="' + escape(o.inputmode) + '"' : '') + '>';
+      : '<input id="svc-' + name + '" name="' + name + '" type="' + (o.type || 'text') + '" value="' + escape(value || '') + '"' + autocomplete + required + (o.readonly ? ' readonly' : '') + ' maxlength="' + (o.maxlength || 200) + '"' + (o.inputmode ? ' inputmode="' + escape(o.inputmode) + '"' : '') + '>';
     return '<div class="field"><label for="svc-' + name + '">' + escape(label) + (o.required ? ' *' : '') + '</label>' + input + (o.hint ? '<p class="hint">' + escape(o.hint) + '</p>' : '') + '</div>';
   }
   function newClientRequestId() {
@@ -390,7 +390,7 @@
         return { bytes: toBytes(file.base64), filename: file.fileName || src.fileName || 'signed.pdf' };
       });
     // 1) Batch combined file takes priority.
-    const combined = (batch.attachments || []).filter(att => att.kind === combinedKind && att.id);
+    const combined = (batch.attachments || []).filter(att => att.kind === combinedKind && att.id && att.active !== false).slice(-1);
     if (combined.length) {
       return Promise.all(combined.map(att => downloadOne({ id: att.id, fileName: att.fileName })));
     }
@@ -398,23 +398,22 @@
     const sources = [];
     applications.forEach(app => {
       if (!wantsKind(app)) return;
-      (app.attachments || []).forEach(att => {
-        if (att.kind === signedKind && att.id) sources.push({ id: att.id, fileName: att.fileName });
-      });
+      const current = (app.attachments || []).filter(att => att.kind === signedKind && att.id && att.active !== false).at(-1);
+      if (current) sources.push(current);
     });
     return Promise.all(sources.map(downloadOne));
   }
   // All real attachments for the ZIP package (duty, covering, support, reply,
   // combined files) — not just the checklists and signed merges.
   function gatherExtraAttachments(call, batch, applications) {
-    const extraKinds = ['duty', 'covering', 'support', 'reply', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar'];
+    const extraKinds = ['duty', 'covering', 'support', 'reply', 'combinedDuty'];
     const sources = [];
     (batch.attachments || []).forEach(att => {
-      if (extraKinds.includes(att.kind) && att.id) sources.push({ id: att.id, fileName: att.fileName, prefix: 'batch' });
+      if (extraKinds.includes(att.kind) && att.id && att.active !== false) sources.push({ id: att.id, fileName: att.fileName, prefix: 'batch' });
     });
     applications.forEach(app => {
       (app.attachments || []).forEach(att => {
-        if (extraKinds.includes(att.kind) && att.id) {
+        if (extraKinds.includes(att.kind) && att.id && att.active !== false) {
           const name = (app.applicant && app.applicant.name) || app.id;
           sources.push({ id: att.id, fileName: att.fileName, prefix: name });
         }
@@ -598,9 +597,50 @@
     if (!container || typeof call !== 'function') return null;
     const state = { applications: [], batches: [], unreadCount: 0, selectedId: null, filter: '', statusFilter: '', tab: 'applications', dirty: false };
 
-    function notice(message, isError) {
+    const cachedTemplates = {};
+    let busy = false;
+    let toastTimer;
+    const tr = (zh, en) => lang === 'zh' ? zh : en;
+    const todayMY = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    function applyResponse(data) {
+      state.applications = (data && data.applications) || state.applications;
+      state.batches = (data && data.batches) || state.batches;
+      if (data && data.unreadCount != null) state.unreadCount = Number(data.unreadCount);
+    }
+    async function timed(label, work) {
+      const start = performance.now();
+      try { return await work(); }
+      finally { console.info('[Service awards] ' + label + ': ' + Math.round(performance.now() - start) + 'ms'); }
+    }
+    async function operate(section, message, work) {
+      if (busy) return;
+      busy = true;
+      const panel = container.querySelector('#svc-admin');
+      if (panel) panel.inert = true;
+      const progress = text => notice(text, false, section);
+      progress(message);
+      try {
+        await work(progress);
+      } catch (error) {
+        notice(error && error.message ? error.message : tr('操作失败。', 'Action failed.'), true, section);
+      } finally {
+        if (panel) panel.inert = false;
+        busy = false;
+      }
+    }
+    function notice(message, isError, section) {
       const el = container.querySelector('#svc-admin-notice');
       if (el) { el.className = 'message' + (isError ? ' error' : ''); el.textContent = message || ''; }
+      const local = section && container.querySelector('[data-svc-feedback="' + section + '"]');
+      if (local) { local.textContent = message || ''; local.classList.toggle('error', !!isError); }
+      const toast = container.querySelector('#svc-toast');
+      if (toast && message) {
+        clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.classList.toggle('error', !!isError);
+        toast.hidden = false;
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 5500);
+      }
     }
     function load() {
       return Promise.resolve(call({ action: 'serviceList' })).then(data => {
@@ -611,46 +651,89 @@
       }).catch(error => notice(error && error.message ? error.message : '加载失败。', true));
     }
     function saveApplication(app) {
-      return Promise.resolve(call({ action: 'serviceSave', application: app })).then(data => {
-        state.applications = (data && data.applications) || state.applications;
-        state.batches = (data && data.batches) || state.batches;
-        state.unreadCount = Number((data && data.unreadCount) || 0);
+      return operate('4', tr('保存中…', 'Saving…'), async () => {
+        applyResponse(await timed('save', () => call({ action: 'serviceSave', application: app })));
         state.dirty = false;
         render();
-        // Notice AFTER render — a re-render clears the notice area.
-        notice(t('saved'));
-      }).catch(error => notice(error && error.message ? error.message : '保存失败。', true));
+        notice(t('saved'), false, '4');
+      });
+    }
+    async function generateApplication(app, payload, signingDate) {
+      return operate('2', tr('保存中…', 'Saving…'), async progress => {
+        const selectedMember = memberById(members, payload.memberId);
+        const memberNumber = selectedMember && String(selectedMember.sjamId || '').trim();
+        const kinds = YEAR_MAP[payload.confirmedYear] || [];
+        if (!memberNumber) throw new Error(t('pdfNeedMember'));
+        if (!kinds.length) throw new Error(t('pdfNeedYear'));
+        if (!signingDate) throw new Error(tr('请选择实际签署日期。', 'Select the signing date.'));
+        if (!root.KPTServicePDF || typeof root.KPTServicePDF.generateSigned !== 'function') throw new Error(t('pdfUnavailable'));
+        let current = app;
+        if (state.dirty || !app.reference) {
+          applyResponse(await timed('save', () => call({ action: 'serviceSave', application: payload })));
+          current = state.applications.find(row => row.id === app.id);
+          state.dirty = false;
+          const ref = container.querySelector('#svc-reference');
+          const year = container.querySelector('#svc-year');
+          const selection = container.querySelector('#svc-member-selection');
+          if (ref) ref.value = current.reference || '';
+          if (year && current.reference) year.readOnly = true;
+          if (selection) selection.textContent = tr('已绑定：', 'Linked: ') + selectedMember.name + ' · ' + memberNumber;
+        }
+        if (!current || !current.reference) throw new Error(t('refMissing'));
+        progress(tr('读取私人模板…', 'Loading private templates…'));
+        if (kinds.some(kind => !cachedTemplates[kind])) {
+          const result = await timed('template read', () => call({ action: 'serviceGetTemplates', applicationId: current.id, version: current.version }));
+          Object.assign(cachedTemplates, (result && result.templates) || {});
+        }
+        progress(tr('生成 PDF…', 'Generating PDFs…'));
+        const files = await timed('PDF generation', () => Promise.all(kinds.map(async kind => {
+          if (!cachedTemplates[kind]) throw new Error(tr('缺少私人签名模板：', 'Missing private signed template: ') + kind);
+          const bytes = await root.KPTServicePDF.generateSigned(current, kind, {
+            division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '',
+            memberNumber, reference: current.reference, templateBase64: cachedTemplates[kind], signingDate
+          });
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(new Blob([bytes], { type: 'application/pdf' }));
+          });
+          return { kind: 'signed' + kind, fileName: (kind === 'Star' ? 'SSTR-02' : 'SS-02') + '_' + current.reference.replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf', mime: 'application/pdf', base64 };
+        })));
+        progress(tr('上传申请表…', 'Uploading application forms…'));
+        applyResponse(await timed('upload', () => call({ action: 'serviceAttachGenerated', applicationId: current.id, version: current.version, files, signingDate })));
+        render();
+        notice(tr('已生成并附上 ', 'Generated and attached ') + files.length + tr(' 份申请表。', ' application form(s).'), false, '2');
+      });
     }
     function transition(target, version, status, remarks, submittedAt) {
       const body = { version: version, status: status, remarks: remarks || '' };
       if (target.kind === 'application') body.applicationId = target.id;
       else body.batchId = target.id;
       if (submittedAt) body.submittedAt = submittedAt;
-      return Promise.resolve(call(Object.assign({ action: 'serviceTransition' }, body))).then(data => {
-        state.applications = (data && data.applications) || state.applications;
-        state.batches = (data && data.batches) || state.batches;
-        state.unreadCount = Number((data && data.unreadCount) || 0);
+      return operate('4', tr('更新状态中…', 'Updating status…'), async () => {
+        applyResponse(await call(Object.assign({ action: 'serviceTransition' }, body)));
         state.dirty = false;
         render();
-      }).catch(error => notice(error && error.message ? error.message : '状态更新失败。', true));
+        notice(tr('状态已更新。', 'Status updated.'), false, '4');
+      });
     }
-    // target: {kind:'application'|'batch', id} — kind select must be scoped to that target.
     function upload(target, kind, file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
-        reader.onerror = () => reject(new Error('Could not read the file.'));
-        reader.readAsDataURL(file);
-      }).then(base64 => {
-        const body = { action: 'serviceUpload', kind: kind, fileName: file.name, mime: file.type || 'application/octet-stream', base64: base64 };
+      return operate('3', tr('上传中…', 'Uploading…'), async () => {
+        if (state.dirty) throw new Error(tr('请先保存资料，再上传附件。', 'Save your edits before uploading an attachment.'));
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+          reader.onerror = () => reject(new Error('Could not read the file.'));
+          reader.readAsDataURL(file);
+        });
+        const body = { action: 'serviceUpload', kind, fileName: file.name, mime: file.type || 'application/octet-stream', base64 };
         if (target.kind === 'application') body.applicationId = target.id;
         else body.batchId = target.id;
-        return call(body);
-      }).then(data => {
-        state.applications = (data && data.applications) || state.applications;
-        state.batches = (data && data.batches) || state.batches;
+        applyResponse(await timed('attachment upload', () => call(body)));
         render();
-      }).catch(error => notice(error && error.message ? error.message : '上传失败。', true));
+        notice(tr('附件已上传。', 'Attachment uploaded.'), false, '3');
+      });
     }
     function download(attachmentId) {
       return Promise.resolve(call({ action: 'serviceDownload', attachmentId: attachmentId })).then(file => {
@@ -673,13 +756,12 @@
       }).catch(error => notice(error && error.message ? error.message : '登记获奖失败。', true));
     }
     function saveBatch(batch) {
-      return Promise.resolve(call({ action: 'serviceSaveBatch', batch: batch })).then(data => {
-        state.applications = (data && data.applications) || state.applications;
-        state.batches = (data && data.batches) || state.batches;
+      return operate('2', tr('保存中…', 'Saving…'), async () => {
+        applyResponse(await timed('batch save', () => call({ action: 'serviceSaveBatch', batch })));
+        state.dirty = false;
         render();
-        // Notice AFTER render — a re-render clears the notice area.
-        notice(t('saved'));
-      }).catch(error => notice(error && error.message ? error.message : '批次保存失败。', true));
+        notice(t('saved'), false, '2');
+      });
     }
 
     function appRow(app) {
@@ -707,34 +789,30 @@
       return '<' + tag + ' class="svc-step-heading"><span class="svc-step-number">' + number + '.</span> ' + escape(label) + '</' + tag + '>';
     }
     function stepBlock(number, label, body) {
-      return '<section class="svc-step">' + stepHeading(number, label) + body + '</section>';
+      return '<section class="svc-step">' + stepHeading(number, label) + body + '<p class="svc-feedback" data-svc-feedback="' + number + '" role="status"></p></section>';
     }
     function attachmentsBlock(target, app) {
       const list = (app && app.attachments) || [];
-      const rows = list.map(att => '<li><strong>' + escape(attachKindLabel(att.kind)) + '</strong> · ' + escape(att.fileName || '')
+      const rows = list.map(att => '<li><strong>' + escape(attachKindLabel(att.kind)) + '</strong> · ' + escape(att.fileName || '') + (att.active === false ? ' · ' + escape(tr('已过期', 'Superseded')) : '')
         + ' <button type="button" class="button small" data-svc-dl="' + escape(att.id) + '">' + escape(t('download')) + '</button></li>').join('');
       // Each target gets its own kind select + upload input; no shared first-match lookup.
       return '<ul class="svc-files">' + (rows || '<li class="muted">' + escape(t('noFiles')) + '</li>') + '</ul>'
         + '<div class="toolbar"><label class="field"><span>' + escape(t('kindLabel')) + '</span>'
-        + '<select data-svc-kind-for="' + escape(target.kind) + ':' + escape(target.id) + '">' + attachKindOptions(target.kind) + '</select></label>'
+        + '<select data-svc-kind-for="' + escape(target.kind) + ':' + escape(target.id) + '">' + attachKindOptions(target.kind, app) + '</select></label>'
         + '<label class="button small">' + escape(t('upload')) + '<input type="file" data-svc-upload-for="' + escape(target.kind) + ':' + escape(target.id) + '" hidden></label></div>';
     }
     function pdfButtons(app) {
-      const memberNumber = memberNumberFor(app, members);
-      const kinds = pdfKindsFor(app, memberNumber);
-      if (!app.confirmedYear) return '<p class="hint">' + escape(t('pdfNeedYear')) + '</p>';
-      if (!memberNumber) return '<p class="hint">' + escape(t('pdfNeedMember')) + '</p>';
-      const hint = Number(app.confirmedYear) === 4 ? '<p class="hint">' + escape(t('pdf4th')) + '</p>' : '';
-      return '<div class="toolbar">'
-        + kinds.map(kind => '<button type="button" class="button" data-svc-pdf="' + escape(app.id) + '" data-svc-pdf-kind="' + escape(kind) + '">'
-          + escape(kind === 'Stripe' ? t('pdfStripe') : t('pdfStar')) + '</button>').join('')
-        + '</div>' + hint;
+      if (['Submitted', 'Approved', 'Recorded'].includes(app.status)) return '<p class="hint">' + escape(tr('已提交的申请表可从附件下载。', 'Download submitted forms from the attachments.')) + '</p>';
+      return '<div class="toolbar"><label class="field"><span>' + escape(tr('实际签署日期', 'Signing date')) + '</span>'
+        + '<input id="svc-signing-date" type="date" value="' + escape(todayMY()) + '"></label>'
+        + '<button type="button" class="button primary" data-svc-generate="' + escape(app.id) + '">' + escape(tr('生成并上传申请表', 'Generate and attach application forms')) + '</button></div>'
+        + '<p class="hint">' + escape(tr('先选会员并确认 Efficient year。4th 会一次生成两份。', 'Select the member and confirm the Efficient year. The 4th year generates both forms.')) + '</p>';
     }
     function memberPicker(app) {
       // Searchable select. Value is the internal id; label shows name, and
       // duplicates carry the actual member number.
       const current = memberById(members, app.memberId);
-      const currentLabel = current ? memberOptionLabel(current, members) : (app.memberId ? t('memberUnresolved') : '');
+      const currentLabel = current ? tr('已绑定：', 'Linked: ') + current.name + (current.sjamId ? ' · ' + current.sjamId : '') : (app.memberId ? t('memberUnresolved') : '');
       const options = ['<option value="">' + escape(t('memberNone')) + '</option>']
         .concat(members.map(m => '<option value="' + escape(m.id) + '"' + (String(m.id) === String(app.memberId) ? ' selected' : '') + '>'
           + escape(memberOptionLabel(m, members)) + '</option>'));
@@ -742,7 +820,7 @@
         + '<input id="svc-member-search" type="search" placeholder="' + escape(t('memberSearch')) + '" autocomplete="off" aria-controls="svc-member-pick">'
         + '<select id="svc-member-pick" name="memberId" size="6">' + options.join('') + '</select>'
         + '<p class="hint">' + escape(t('memberHint')) + '</p>'
-        + (currentLabel ? '<p class="hint">' + escape(currentLabel) + '</p>' : '')
+        + '<p id="svc-member-selection" class="hint" aria-live="polite">' + escape(currentLabel) + '</p>'
         + '</div>';
     }
     function statusButtons(app) {
@@ -781,14 +859,14 @@
         + field(t('fPhone'), 'phone', a.phone, { type: 'tel' })
         + field(t('fEmail'), 'email', a.email, { type: 'email' })
         + field(t('fOccupation'), 'occupation', a.occupation)
-        + field(t('refLabel'), 'reference', app.reference != null ? app.reference : '', { hint: t('refHint') })
-        + '<div class="field"><label for="svc-year">' + escape(t('yearLabel')) + '</label><input id="svc-year" name="year" type="number" min="2000" max="2100" value="' + escape(app.year != null && app.year !== '' ? String(app.year) : '') + '"><p class="hint">' + escape(t('yearHint')) + '</p></div>'
+        + field(t('refLabel'), 'reference', app.reference != null ? app.reference : '', { readonly: true, hint: tr('首次保存时按申请年度自动分配。', 'Assigned from the application year on first save.') })
+        + '<div class="field"><label for="svc-year">' + escape(t('yearLabel')) + '</label><input id="svc-year" name="year" type="number" min="2000" max="2100"' + (app.reference ? ' readonly' : '') + ' value="' + escape(app.year != null && app.year !== '' ? String(app.year) : '') + '"><p class="hint">' + escape(t('yearHint')) + '</p></div>'
         + '<div class="field"><label for="svc-confYear">' + escape(t('confYear')) + '</label><select id="svc-confYear">' + yearChoices(app.confirmedYear) + '</select></div>'
         + memberPicker(app)
         + field(t('remarks'), 'remarks', app.remarks, { type: 'textarea' })
         + '</form>'
         + '</section>'
-        + stepBlock(2, lang === 'zh' ? '下载申请表' : 'Download application forms', pdfButtons(app))
+        + stepBlock(2, tr('生成申请表', 'Generate application forms'), pdfButtons(app))
         + stepBlock(3, t('files'), attachmentsBlock({ kind: 'application', id: app.id }, app))
         + (actions ? stepBlock(4, t('statusTitle'), actions) : '')
         + (canRecordAward && app.status === 'Approved' ? '<section class="svc-step">' + stepHeading(5, t('awardBtn')) + '<p class="hint">' + escape(t('awardHint')) + '</p>'
@@ -893,6 +971,7 @@
         + '<section class="svc-step"><div class="section-heading">' + stepHeading(1, t('adminTitle'), 'h2')
         + (state.unreadCount ? '<span class="hub-badge">' + state.unreadCount + ' ' + escape(t('newApps')) + '</span>' : '')
         + langToggleHtml() + '</div>'
+        + '<div id="svc-toast" class="svc-toast" role="status" hidden></div>'
         + '<div id="svc-admin-notice" class="message" role="status" aria-live="polite"></div>'
         + '<div class="svc-tabs" role="group" aria-label="' + escape(lang === 'zh' ? '申请类型' : 'Application type') + '">'
         + '<button type="button" class="svc-tab' + (isApps ? ' svc-tab-active' : '') + '" data-svc-tab="applications" aria-pressed="' + (isApps ? 'true' : 'false') + '">' + escape(t('tabApplications')) + '</button>'
@@ -957,6 +1036,11 @@
       const memberSearch = container.querySelector('#svc-member-search');
       const memberPick = container.querySelector('#svc-member-pick');
       if (memberSearch && memberPick) {
+        memberPick.addEventListener('change', () => {
+          const member = memberById(members, memberPick.value);
+          const selection = container.querySelector('#svc-member-selection');
+          selection.textContent = (member ? tr('已选：', 'Selected: ') + member.name + (member.sjamId ? ' · ' + member.sjamId : '') : t('memberNone')) + tr('（待保存）', ' (unsaved)');
+        });
         memberSearch.addEventListener('input', () => {
           const q = memberSearch.value.toLowerCase();
           Array.from(memberPick.options).forEach(opt => {
@@ -965,17 +1049,14 @@
           });
         });
       }
-      container.querySelectorAll('[data-svc-save]').forEach(saveBtn => saveBtn.addEventListener('click', () => {
-        const app = state.applications.find(row => row.id === saveBtn.getAttribute('data-svc-save'));
-        if (!app) return;
+      function collectApplication(app, documentStatus) {
         const form = container.querySelector('#svc-detail-form');
         const get = n => { const el = form.querySelector('[name="' + n + '"]'); return el ? String(el.value || '').trim() : ''; };
         const confEl = container.querySelector('#svc-confYear');
         const memberEl = container.querySelector('#svc-member-pick');
         const payload = {
           id: app.id, version: app.version,
-          documentStatus: saveBtn.dataset.svcDocumentStatus,
-          reference: get('reference'),
+          documentStatus,
           applicant: { name: get('name'), ic: get('ic'), gender: get('gender'), rank: get('rank'), joined: get('joined'), phone: get('phone'), email: get('email'), occupation: get('occupation') },
           declaredYear: app.declaredYear,
           confirmedYear: confEl && confEl.value !== '' ? Number(confEl.value) : null,
@@ -992,31 +1073,20 @@
         const icKey = (root.KPT && typeof root.KPT.icKey === 'function') ? root.KPT.icKey : (v => String(v || '').trim());
         const icMismatch = linked && linked.ic && icKey(linked.ic) !== icKey(payload.applicant.ic);
         if (icMismatch) {
-          if (!window.confirm(t('icMismatch'))) return;
+          const alreadyVerified = app.memberId === payload.memberId && icKey(app.applicant && app.applicant.ic) === icKey(payload.applicant.ic);
+          if (!alreadyVerified && !window.confirm(t('icMismatch'))) return;
           payload.confirmIcMismatch = true;
         }
-        saveApplication(payload);
-      }));
-      container.querySelectorAll('[data-svc-pdf]').forEach(btn => btn.addEventListener('click', () => {
-        const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-pdf'));
-        const kind = btn.getAttribute('data-svc-pdf-kind') || 'Stripe';
+        return payload;
+      }
+      container.querySelectorAll('[data-svc-save], [data-svc-generate]').forEach(btn => btn.addEventListener('click', () => {
+        if (busy) return;
+        const app = state.applications.find(row => row.id === (btn.dataset.svcSave || btn.dataset.svcGenerate));
         if (!app) return;
-        const memberNumber = memberNumberFor(app, members);
-        if (!memberNumber || !app.confirmedYear) { notice(t('pdfNeedMember'), true); return; }
-        // Never fall back to the internal id — the certificate must carry the
-        // Secretary-entered reference, or stay blank until it is filled in.
-        const reference = app.reference != null && String(app.reference).trim() ? String(app.reference).trim() : '';
-        if (!reference) { notice(t('refMissing'), true); return; }
-        if (!root.KPTServicePDF || typeof root.KPTServicePDF.download !== 'function') {
-          notice(t('pdfUnavailable'), true);
-          return;
-        }
-        // PDF module is async — never leave an unhandled rejection.
-        Promise.resolve(root.KPTServicePDF.download(app, kind, {
-          division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '',
-          memberNumber: memberNumber,
-          reference: reference
-        })).catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
+        const payload = collectApplication(app, btn.dataset.svcDocumentStatus);
+        if (!payload) return;
+        if (btn.dataset.svcGenerate) generateApplication(app, payload, container.querySelector('#svc-signing-date').value);
+        else saveApplication(payload);
       }));
       // Uploads are scoped per target (application vs batch) with their own kind select.
       container.querySelectorAll('[data-svc-upload-for]').forEach(input => input.addEventListener('change', () => {
@@ -1025,6 +1095,7 @@
         const token = input.getAttribute('data-svc-upload-for');
         const [targetKind, targetId] = token.split(':');
         const kindEl = container.querySelector('[data-svc-kind-for="' + token + '"]');
+        input.value = '';
         upload({ kind: targetKind, id: targetId }, kindEl ? kindEl.value : 'support', file);
       }));
       container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'))));
@@ -1176,7 +1247,7 @@
       refreshList: () => {
         // Re-read the list without touching the open editor's values:
         // only re-render when nothing is being edited.
-        if (state.dirty) return;
+        if (state.dirty || busy) return;
         load();
       },
       clearDirty: () => { state.dirty = false; }

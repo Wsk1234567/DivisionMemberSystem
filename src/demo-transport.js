@@ -32,6 +32,7 @@
     if (state) {
       state.serviceApplications = stored.serviceApplications || [];
       state.serviceBatches = stored.serviceBatches || [];
+      state.serviceReferenceCounters = stored.serviceReferenceCounters || {};
     }
     if (stored.counter > counter) counter = stored.counter;
   }
@@ -41,6 +42,7 @@
       saveServiceState({
         serviceApplications: state.serviceApplications || [],
         serviceBatches: state.serviceBatches || [],
+        serviceReferenceCounters: state.serviceReferenceCounters || {},
         counter: counter
       });
     }
@@ -569,6 +571,64 @@
         if (!id.owner && !id.admin) throw new Error('Only the Owner or Secretary can record awards.');
         syncServiceFromStore();
         KPT.serviceAward(state, request, context());
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
+      if (request.action === 'serviceGetTemplates') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        const app = (state.serviceApplications || []).find(row => row.id === request.applicationId);
+        if (!app || app.version !== Number(request.version)) throw new Error('Application changed. Reload first.');
+        const templates = {};
+        for (const kind of KPT.serviceRequiredSignedKinds(app.confirmedYear)) {
+          const key = kind === 'signedStar' ? 'star' : 'stripe';
+          const source = window.SERVICE_PDF_TEMPLATES && window.SERVICE_PDF_TEMPLATES[key];
+          if (!source || !window.PDFLib) throw new Error('Demo form unavailable.');
+          const doc = await window.PDFLib.PDFDocument.load(source.base64);
+          const page = doc.getPage(0);
+          const font = await doc.embedFont(window.PDFLib.StandardFonts.Helvetica);
+          page.drawText('PREVIEW ONLY - FICTIONAL SIGNATURE', { x: 60, y: 155, size: 10, font });
+          doc.getForm().createTextField('SigningDate').addToPage(page, { x: 139, y: 72, width: 80, height: 13 });
+          templates[key === 'star' ? 'Star' : 'Stripe'] = await doc.saveAsBase64();
+        }
+        return { templates };
+      }
+      if (request.action === 'serviceAttachGenerated') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        // Demo: validate PDF magic bytes
+        const files = request.files;
+        if (!Array.isArray(files) || !files.length) throw new Error('Files array is required.');
+        for (const f of files) {
+          const b64 = String(f.base64 || '');
+          if (!b64) throw new Error('File content is required for ' + (f.fileName || 'unknown'));
+          try {
+            const raw = atob(b64);
+            if (raw.length < 5 || raw.charCodeAt(0) !== 0x25 || raw.charCodeAt(1) !== 0x50) {
+              throw new Error('not PDF');
+            }
+          } catch (e) {
+            throw new Error('File「' + (f.fileName || 'unknown') + '」is not a valid PDF.');
+          }
+        }
+        // Store bytes in demoFiles for download
+        const enrichedFiles = files.map(f => ({
+          kind: f.kind,
+          fileName: f.fileName,
+          bytes: atob(String(f.base64 || '')).length,
+          base64: f.base64
+        }));
+        const previous = (state.serviceApplications || []).find(a => a.id === request.applicationId)?.version;
+        const result = KPT.serviceAttachGenerated(state, Object.assign({}, request, { files: enrichedFiles }), context());
+        // Store in demoFiles keyed by generated attachment IDs
+        const app = (state.serviceApplications || []).find(a => a.id === result);
+        if (app && app.version !== previous) {
+          const generated = (app.attachments || []).filter(a => a.generated && a.active);
+          for (const att of generated) {
+            const src = enrichedFiles.find(f => f.kind === att.kind);
+            if (src && src.base64) demoFiles.set(att.id, { fileName: att.fileName, mime: 'application/pdf', base64: src.base64 });
+          }
+        }
         syncServiceToStore();
         return KPT.serviceListProjection(state);
       }

@@ -283,3 +283,27 @@ body[data-mode="oc"] .nav .doc-package-link.active{background:var(--soft);color:
   .admin-shell .button { min-height: 44px; }
   .admin-shell input, .admin-shell select, .admin-shell textarea { font-size: 16px; }
 }
+
+.nav .nav-group { display: grid; gap: .2rem; margin: .45rem 0; }
+.nav .nav-group-title { padding: .2rem .85rem; color: var(--muted); font-size: 12px; font-weight: 650; }
+.nav .nav-group > button { padding-inline-start: 1.05rem; }
+@media (max-width: 760px) {
+  .nav .nav-group { display: contents; }
+  .nav .nav-group-title { display: none; }
+  .nav .nav-group > button { padding-inline-start: 13px; }
+}
+
+.svc-feedback:empty { display: none; }
+.svc-feedback { margin: .7rem 0 0; font-size: 14px; color: var(--good); }
+.svc-feedback.error { color: #8a2339; }
+.svc-toast {
+  position: fixed; z-index: 30; inset: auto 1rem 1rem auto; max-width: min(28rem, calc(100vw - 2rem));
+  padding: .8rem 1rem; border-radius: 8px; background: #233c32; color: #fff;
+  box-shadow: 0 4px 18px #20262e28; overflow-wrap: anywhere;
+}
+.svc-toast.error { background: #852b3d; }
+
+@media (min-width: 761px) {
+  .admin-shell .sidebar > .nav { min-height: 0; overflow-y: auto; }
+  .admin-shell .sidebar > .sidebar-bottom { flex-shrink: 0; }
+}

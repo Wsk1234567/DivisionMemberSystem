@@ -31,8 +31,6 @@ async function makePdfBytes(title) {
   const errors = [];
   try {
     const dutyPdf = await makePdfBytes('Combined duty QA');
-    const stripePdf = await makePdfBytes('Signed stripe QA');
-    const starPdf = await makePdfBytes('Signed star QA');
 
     // ---- Controller page owns the shared demo transport ----
     const controller = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -121,8 +119,8 @@ async function makePdfBytes(title) {
     await memberPick.selectOption({ index: 1 }); // first real member
     await secretary.locator('#svc-confYear').selectOption('4');
     await secretary.locator('#svc-year').fill('2026');
-    // The official form needs the Secretary-entered reference.
-    await secretary.locator('#svc-reference').fill('QA-2026-001');
+    assert.match(await secretary.locator('#svc-member-selection').innerText(), /待保存|unsaved/);
+    assert.equal(await secretary.locator('#svc-reference').getAttribute('readonly'), '');
     // First-time binding may raise an IC mismatch confirm — answer it explicitly.
     secretary.once('dialog', d => d.accept());
     await secretary.locator('[data-svc-save]').first().click();
@@ -130,35 +128,38 @@ async function makePdfBytes(title) {
     assert.match(await secretary.locator('#svc-admin-notice').innerText(), /保存|Saved/i, 'the save is acknowledged');
     assert.match(await secretary.locator('.svc-detail .svc-status-Preparing').innerText(), /待定-文件缺失|documents missing/);
 
-    // ---- 5) 4th year shows BOTH PDF buttons and both downloads fire ----
-    const stripeBtn = secretary.locator('[data-svc-pdf][data-svc-pdf-kind="Stripe"]');
-    const starBtn = secretary.locator('[data-svc-pdf][data-svc-pdf-kind="Star"]');
-    assert.ok(await stripeBtn.count(), 'Stripe PDF button present for 4th year');
-    assert.ok(await starBtn.count(), 'Star PDF button present for 4th year');
-    const downloads = [];
-    secretary.on('download', d => downloads.push(d.suggestedFilename()));
-    await stripeBtn.first().click();
-    await secretary.waitForTimeout(1000);
-    await starBtn.first().click();
-    await secretary.waitForTimeout(1000);
-    assert.ok(downloads.length >= 2, 'both PDFs downloaded: ' + JSON.stringify(downloads));
+    assert.equal(await secretary.locator('#svc-reference').inputValue(), '2026-G001');
+    assert.match(await secretary.locator('#svc-member-selection').innerText(), /已绑定|Linked/);
 
-    // ---- 6) Upload the three required 4th-year PDFs (duty + both signed) ----
-    const uploadPair = async (kindValue, fileName, bytes) => {
-      await secretary.locator('[data-svc-kind-for^="application:"]').first().selectOption(kindValue);
-      const input = secretary.locator('input[data-svc-upload-for^="application:"]').first();
-      await input.setInputFiles({ name: fileName, mimeType: 'application/pdf', buffer: bytes });
-      await secretary.waitForTimeout(700);
-    };
-    await uploadPair('duty', 'duty-detail.pdf', dutyPdf);
-    await uploadPair('signedStripe', 'signed-stripe.pdf', stripePdf);
-    await uploadPair('signedStar', 'signed-star.pdf', starPdf);
-    const filesText = await secretary.locator('#content').innerText();
-    assert.match(filesText, /duty-detail\.pdf/, 'duty PDF listed');
-    assert.match(filesText, /signed-stripe\.pdf/, 'signed stripe PDF listed');
-    assert.match(filesText, /signed-star\.pdf/, 'signed star PDF listed');
+    // 4th-year forms are generated and attached together, without downloading first.
+    secretary.on('console', msg => { if (msg.text().startsWith('[Service awards]')) console.log(msg.text()); });
+    await secretary.evaluate(() => {
+      const original = KPTTransport.call.bind(KPTTransport);
+      KPTTransport.call = request => {
+        if (request.action === 'serviceGetTemplates') {
+          KPTTransport.call = original;
+          return Promise.reject(new Error('QA: template temporarily unavailable'));
+        }
+        return original(request);
+      };
+    });
+    await secretary.locator('#svc-signing-date').fill('2026-11-06');
+    await secretary.locator('[data-svc-generate]').click();
+    await secretary.getByText('QA: template temporarily unavailable', { exact: true }).first().waitFor();
+    assert.equal(await secretary.locator('#svc-signing-date').inputValue(), '2026-11-06');
+    assert.equal(await secretary.locator('#svc-reference').inputValue(), '2026-G001');
+    await secretary.locator('[data-svc-generate]').click();
+    await secretary.waitForFunction(() => !document.querySelector('#svc-admin')?.inert);
+    const generationMessage = await secretary.locator('[data-svc-feedback="2"]').innerText();
+    assert.match(generationMessage, /2/, generationMessage);
+    await secretary.getByText('SS-02_2026-G001.pdf', { exact: false }).first().waitFor();
+    await secretary.getByText('SSTR-02_2026-G001.pdf', { exact: false }).first().waitFor();
+    assert.match(await secretary.locator('[data-svc-feedback="2"]').innerText(), /2/);
 
-    secretary.once('dialog', d => d.accept());
+    const input = secretary.locator('input[data-svc-upload-for^="application:"]').first();
+    await input.setInputFiles({ name: 'duty-detail.pdf', mimeType: 'application/pdf', buffer: dutyPdf });
+    await secretary.getByText('duty-detail.pdf', { exact: false }).first().waitFor();
+
     await secretary.locator('[data-svc-document-status="AwaitingOwner"]').click();
     await secretary.locator('.svc-detail .svc-status-AwaitingOwner').waitFor();
     assert.match(await secretary.locator('.svc-detail .svc-status-AwaitingOwner').innerText(), /待定-文件齐全|documents complete/);
@@ -210,7 +211,7 @@ async function makePdfBytes(title) {
     assert.match(await secretary.locator('#content').innerText(), /已符合资格|Eligible/);
 
     assert.deepEqual(errors, [], 'no page errors during the main flow');
-    console.log('PASS: strict submit → list → badge → member/ref/year → dual PDFs → 3 uploads → batch → ZIP contents → Secretary Ready');
+    console.log('PASS: strict submit → list → badge → member/ref/year → generate and attach dual PDFs → Duty upload → batch → ZIP contents → Secretary Ready');
 
     // ---- 10) Tab switching: applications / batches (reuses secretary) ----
     await secretary.locator('[data-svc-tab="applications"]').click();

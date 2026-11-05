@@ -59,17 +59,28 @@ test('serviceSave: IC mismatch requires confirmIcMismatch', () => {
   assert.equal(s.serviceApplications[0].memberId, 'STU-1');
 });
 
-test('serviceSave: content change on Ready/Submitted invalidates Owner approval', () => {
+test('serviceSave: content change (applicant) on Ready/Submitted invalidates Owner approval', () => {
   const s = makeState();
   KPT.serviceSubmit(s, { applicant: { name: 'John', ic: 'IC1' }, clientRequestId: 'r1' }, ctx());
   const app = s.serviceApplications[0];
-  // Move to Ready with owner approval
   app.status = 'Ready'; app.ownerApproved = true; app.memberId = 'STU-1'; app.confirmedYear = 1;
   const v = app.version;
-  KPT.serviceSave(s, { application: { id: app.id, version: v, remarks: 'changed' } }, ctx());
+  KPT.serviceSave(s, { application: { id: app.id, version: v, applicant: { name: 'John Changed', ic: 'IC1' } } }, ctx());
   const updated = s.serviceApplications[0];
-  assert.equal(updated.status, 'Preparing', 'content change demotes Ready to Preparing');
+  assert.equal(updated.status, 'Preparing', 'applicant change demotes Ready to Preparing');
   assert.equal(updated.ownerApproved, false, 'owner approval invalidated');
+});
+
+test('serviceSave: remarks change does NOT invalidate Owner approval or demote status', () => {
+  const s = makeState();
+  KPT.serviceSubmit(s, { applicant: { name: 'John', ic: 'IC1' }, clientRequestId: 'r1' }, ctx());
+  const app = s.serviceApplications[0];
+  app.status = 'Ready'; app.ownerApproved = true; app.memberId = 'STU-1'; app.confirmedYear = 1;
+  const v = app.version;
+  KPT.serviceSave(s, { application: { id: app.id, version: v, remarks: 'just a note' } }, ctx());
+  const updated = s.serviceApplications[0];
+  assert.equal(updated.status, 'Ready', 'remarks change does NOT demote');
+  assert.equal(updated.ownerApproved, true, 'remarks change does NOT invalidate approval');
 });
 
 test('serviceTransition: state graph enforced, cannot jump to Recorded/Approved', () => {
@@ -118,7 +129,7 @@ test('serviceTransition: Ready requires memberId, confirmedYear, duty attachment
   assert.throws(() => KPT.serviceTransition(s, { applicationId: app.id, version: s.serviceApplications[0].version, status: 'Ready' }, { ...ctx(), isOwner: true }), /Duty/);
 });
 
-test('serviceAward: creates real Awards record with SERVICE_YEAR mapping, requires Approved and preparation confirmation', () => {
+test('serviceAward: creates real Awards record with SERVICE_YEAR mapping, requires Approved+ownerApproved', () => {
   const s = makeState();
   KPT.serviceSubmit(s, { applicant: { name: 'J', ic: '123456-78-9012' }, clientRequestId: 'r1' }, ctx());
   const app = s.serviceApplications[0];
@@ -141,7 +152,7 @@ test('serviceAward: not Approved fails, no ownerApproved fails, no catalog entry
   assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /Approved/);
   // Approved but no ownerApproved
   app.status = 'Approved';
-  assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /Preparation confirmation/);
+  assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /Preparation confirmation|Owner approval/);
   // Year 2 has no catalog entry in our fixture
   app.ownerApproved = true;
   assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /SERVICE_YEAR_2/);
@@ -358,4 +369,197 @@ test('E2E BATCH FLOW: batch combined attachments restricted to batch only', () =
   // Cannot upload per-app duty to batch
   KPT.serviceSaveBatch(s, { batch: { year: 2026, title: 'T', applicationIds: [app.id] } }, c);
   assert.throws(() => KPT.serviceUploadMeta(s, { batchId: s.serviceBatches[0].id, kind: 'duty', fileName: 'x.pdf', mime: 'application/pdf', bytes: 100 }, c), /must be uploaded to individual/);
+});
+
+// --- Annual Reference numbering ---
+test('serviceGenerateReference: format YYYY-G001, scans existing, increments', () => {
+  const s = makeState();
+  const c = ctx();
+  const ref1 = KPT.serviceGenerateReference(s, 2026, c);
+  assert.equal(ref1, '2026-G001');
+  // Scan existing custom references
+  s.serviceApplications = [
+    { id: 'a1', reference: '2026-G005' },
+    { id: 'a2', reference: '2026-G012' },
+    { id: 'a3', reference: '2025-G003' }
+  ];
+  const ref2 = KPT.serviceGenerateReference(s, 2026, c);
+  assert.equal(ref2, '2026-G013', 'scans max G number for year');
+  const ref3 = KPT.serviceGenerateReference(s, 2025, c);
+  assert.equal(ref3, '2025-G004', 'separate year counter');
+});
+
+test('serviceGenerateReference: padStart 3 digits', () => {
+  const s = makeState();
+  const c = ctx();
+  const ref = KPT.serviceGenerateReference(s, 2026, c);
+  assert.match(ref, /^2026-G\d{3,}$/, 'format YYYY-G + 3+ digits');
+});
+
+// --- serviceAttachGenerated: status gate ---
+test('serviceAttachGenerated: allows all pre-submit states, rejects Submitted/Approved/Recorded', () => {
+  const allowed = ['PendingSecretary', 'Preparing', 'NeedsInfo', 'AwaitingSignature', 'AwaitingOwner'];
+  for (const status of allowed) {
+    const s = makeState();
+    s.serviceApplications = [{ id: 'a1', version: 1, status, confirmedYear: 1, attachments: [] }];
+    const r = KPT.serviceAttachGenerated(s, { applicationId: 'a1', version: 1, files: [{ kind: 'signedStripe', fileName: 'x.pdf' }], signingDate: '2026-01-15' }, ctx());
+    assert.equal(r, 'a1', status + ' should be allowed');
+  }
+  const rejected = ['Submitted', 'Approved', 'Recorded'];
+  for (const status of rejected) {
+    const s = makeState();
+    s.serviceApplications = [{ id: 'a1', version: 1, status, confirmedYear: 1, attachments: [] }];
+    assert.throws(() => KPT.serviceAttachGenerated(s, { applicationId: 'a1', version: 1, files: [{ kind: 'signedStripe', fileName: 'x.pdf' }], signingDate: '2026-01-15' }, ctx()), /Cannot attach/, status + ' should be rejected');
+  }
+});
+
+// --- serviceAttachGenerated: idempotency ---
+test('serviceAttachGenerated: same requestKey is idempotent, different date creates new', () => {
+  const s = makeState();
+  const c = ctx();
+  s.serviceApplications = [{ id: 'a1', version: 1, status: 'Preparing', confirmedYear: 1, attachments: [] }];
+  // First call
+  KPT.serviceAttachGenerated(s, { applicationId: 'a1', version: 1, files: [{ kind: 'signedStripe', fileName: 'gen.pdf' }], signingDate: '2026-01-15' }, c);
+  assert.equal(s.serviceApplications[0].attachments.length, 1);
+  // Idempotent: same applicationId + version + signingDate
+  KPT.serviceAttachGenerated(s, { applicationId: 'a1', version: 1, files: [{ kind: 'signedStripe', fileName: 'gen.pdf' }], signingDate: '2026-01-15' }, c);
+  assert.equal(s.serviceApplications[0].attachments.length, 1, 'no duplicate on same key');
+  // New date: new attachment
+  s.serviceApplications[0].version = 2;
+  KPT.serviceAttachGenerated(s, { applicationId: 'a1', version: 2, files: [{ kind: 'signedStripe', fileName: 'gen2.pdf' }], signingDate: '2026-01-16' }, c);
+  assert.equal(s.serviceApplications[0].attachments.length, 2);
+});
+
+// --- serviceAttachGenerated: strict kind validation ---
+test('serviceAttachGenerated: rejects duplicate/extra kinds, unconfirmed year, invalid dates', () => {
+  const s = makeState();
+  const c = ctx();
+  // Duplicate kind
+  s.serviceApplications = [{ id: 'a1', version: 1, status: 'Preparing', confirmedYear: 4, attachments: [] }];
+  assert.throws(() => KPT.serviceAttachGenerated(s, {
+    applicationId: 'a1', version: 1,
+    files: [{ kind: 'signedStripe', fileName: 'a.pdf' }, { kind: 'signedStripe', fileName: 'b.pdf' }],
+    signingDate: '2026-01-15'
+  }, c), /Duplicate/);
+  // Extra kind for year 1
+  s.serviceApplications[0].confirmedYear = 1;
+  s.serviceApplications[0].status = 'Preparing';
+  assert.throws(() => KPT.serviceAttachGenerated(s, {
+    applicationId: 'a1', version: 1,
+    files: [{ kind: 'signedStripe', fileName: 'a.pdf' }, { kind: 'signedStar', fileName: 'b.pdf' }],
+    signingDate: '2026-01-15'
+  }, c), /Unexpected generated file kind/);
+  // Unconfirmed year
+  s.serviceApplications[0].confirmedYear = null;
+  s.serviceApplications[0].status = 'Preparing';
+  assert.throws(() => KPT.serviceAttachGenerated(s, {
+    applicationId: 'a1', version: 1,
+    files: [{ kind: 'signedStripe', fileName: 'a.pdf' }],
+    signingDate: '2026-01-15'
+  }, c), /Confirm the efficient year/);
+  // Invalid calendar date (Feb 30)
+  s.serviceApplications[0].confirmedYear = 1;
+  s.serviceApplications[0].status = 'Preparing';
+  assert.throws(() => KPT.serviceAttachGenerated(s, {
+    applicationId: 'a1', version: 1,
+    files: [{ kind: 'signedStripe', fileName: 'a.pdf' }],
+    signingDate: '2026-02-30'
+  }, c), /not a valid calendar date/);
+});
+
+// --- serviceAttachGenerated: old generated deactivated, manual preserved ---
+test('serviceAttachGenerated: old generated deactivated, manual attachments preserved', () => {
+  const s = makeState();
+  const c = ctx();
+  s.serviceApplications = [{ id: 'a1', version: 1, status: 'Preparing', confirmedYear: 1, attachments: [
+    { id: 'm1', kind: 'duty', fileName: 'manual.pdf', generated: false, active: true },
+    { id: 'g1', kind: 'signedStripe', fileName: 'old_gen.pdf', generated: true, active: true }
+  ]}];
+  KPT.serviceAttachGenerated(s, {
+    applicationId: 'a1', version: 1,
+    files: [{ kind: 'signedStripe', fileName: 'new_gen.pdf' }],
+    signingDate: '2026-01-15'
+  }, c);
+  const atts = s.serviceApplications[0].attachments;
+  const manual = atts.find(a => a.id === 'm1');
+  const oldGen = atts.find(a => a.id === 'g1');
+  const newGen = atts.find(a => a.fileName === 'new_gen.pdf');
+  assert.equal(manual.active, true, 'manual preserved');
+  assert.equal(oldGen.active, false, 'old generated deactivated');
+  assert.equal(newGen.generated, true);
+  assert.equal(newGen.active, true, 'new generated active');
+  assert.equal(newGen.signingDate, '2026-01-15');
+  assert.ok(newGen.requestKey, 'requestKey set');
+});
+
+// --- Generated attachment expiry on form data change ---
+test('serviceSave: applicant/memberId/confirmedYear change expires generated attachments, preserves manual', () => {
+  const s = makeState();
+  const c = ctx();
+  KPT.serviceSubmit(s, { applicant: { name: 'J', ic: '123456-78-9012' }, clientRequestId: 'r1' }, c);
+  s.serviceApplications[0].confirmedYear = 1;
+  s.serviceApplications[0].memberId = 'STU-1';
+  s.serviceApplications[0].version = 2;
+  // Add manual + generated attachments
+  s.serviceApplications[0].attachments = [
+    { id: 'm1', kind: 'duty', fileName: 'manual.pdf', generated: false, active: true },
+    { id: 'g1', kind: 'signedStripe', fileName: 'gen.pdf', generated: true, active: true }
+  ];
+  // Change applicant → generated should expire
+  KPT.serviceSave(s, { application: { id: s.serviceApplications[0].id, version: 2, applicant: { name: 'Changed', ic: '123456-78-9012' } } }, c);
+  const atts = s.serviceApplications[0].attachments;
+  assert.equal(atts.find(a => a.id === 'm1').active, true, 'manual preserved');
+  assert.equal(atts.find(a => a.id === 'g1').active, false, 'generated expired on applicant change');
+});
+
+test('serviceSave: remarks change does NOT expire generated attachments', () => {
+  const s = makeState();
+  const c = ctx();
+  KPT.serviceSubmit(s, { applicant: { name: 'J', ic: '123456-78-9012' }, clientRequestId: 'r1' }, c);
+  s.serviceApplications[0].attachments = [
+    { id: 'g1', kind: 'signedStripe', fileName: 'gen.pdf', generated: true, active: true }
+  ];
+  KPT.serviceSave(s, { application: { id: s.serviceApplications[0].id, version: s.serviceApplications[0].version, remarks: 'just a note' } }, c);
+  assert.equal(s.serviceApplications[0].attachments.find(a => a.id === 'g1').active, true, 'remarks do NOT expire generated');
+});
+
+test('serviceSave: AwaitingOwner demotes to Preparing on content change', () => {
+  const s = makeState();
+  const c = ctx();
+  KPT.serviceSubmit(s, { applicant: { name: 'J', ic: '123456-78-9012' }, clientRequestId: 'r1' }, c);
+  s.serviceApplications[0].status = 'AwaitingOwner';
+  s.serviceApplications[0].version = 2;
+  KPT.serviceSave(s, { application: { id: s.serviceApplications[0].id, version: 2, applicant: { name: 'Changed', ic: '123456-78-9012' } } }, c);
+  assert.equal(s.serviceApplications[0].status, 'Preparing', 'AwaitingOwner demoted on content change');
+  assert.equal(s.serviceApplications[0].ownerApproved, false);
+});
+
+test('serviceAttachGenerated: replacement demotes Ready and invalidates batch', () => {
+  const s = makeState();
+  const c = ctx();
+  KPT.serviceSubmit(s, { applicant: { name: 'J', ic: '123456-78-9012' }, declaredYear: 1, clientRequestId: 'r1' }, c);
+  s.serviceApplications[0].confirmedYear = 1;
+  s.serviceApplications[0].memberId = 'STU-1';
+  s.serviceApplications[0].status = 'Ready';
+  s.serviceApplications[0].ownerApproved = true;
+  s.serviceApplications[0].version = 2;
+  // Add batch
+  s.serviceBatches = [{ id: 'b1', version: 1, year: 2026, title: 'B', applicationIds: [s.serviceApplications[0].id], status: 'Ready', ownerApproved: true }];
+  // Attach new generated files (replacement)
+  KPT.serviceAttachGenerated(s, { applicationId: s.serviceApplications[0].id, version: 2, files: [{ kind: 'signedStripe', fileName: 'gen.pdf' }], signingDate: '2026-01-15' }, c);
+  assert.equal(s.serviceApplications[0].status, 'Preparing', 'Ready demoted on generated replacement');
+  assert.equal(s.serviceApplications[0].ownerApproved, false);
+  assert.equal(s.serviceBatches[0].ownerApproved, false, 'batch approval invalidated');
+});
+
+
+test('annual reference stays reserved after deletion or restore', () => {
+  const current = makeState();
+  current.serviceApplications = [{ reference: '2026-G009' }];
+  assert.equal(KPT.serviceGenerateReference(current, 2026), '2026-G010');
+  current.serviceApplications = [];
+  const restored = makeState();
+  KPT.servicePreserveReferenceCounters(restored, current);
+  assert.equal(KPT.serviceGenerateReference(restored, 2026), '2026-G011');
+  assert.equal(KPT.serviceGenerateReference(restored, 2025), '2025-G001');
 });

@@ -1464,7 +1464,7 @@
       declaredYear,
       confirmedYear: null,
       memberId: '',
-      year: new Date(context.now).getFullYear(),
+      year: new Date(Date.parse(context.now) + 8 * 60 * 60 * 1000).getUTCFullYear(),
       status: 'PendingSecretary',
       remarks: '',
       attachments: [],
@@ -1495,11 +1495,6 @@
       if (JSON.stringify(corrected) !== JSON.stringify(app.applicant)) contentChanged = true;
       draft.applicant = corrected;
     }
-    if (input.reference !== undefined) {
-      const ref = str(input.reference).slice(0, 100);
-      if (ref !== (app.reference || '')) contentChanged = true;
-      draft.reference = ref;
-    }
     if (input.memberId !== undefined) {
       const mid = str(input.memberId).slice(0, 50);
       if (mid) {
@@ -1521,6 +1516,7 @@
     if (input.year !== undefined) {
       const y = Number(input.year);
       if (!Number.isInteger(y) || y < 2000 || y > 2100) fail('Year must be 2000-2100.');
+      if (str(app.reference) && y !== Number(app.year)) fail('Application year cannot change after the Reference is assigned.');
       if (y !== app.year) contentChanged = true;
       draft.year = y;
     }
@@ -1532,12 +1528,25 @@
     }
     if (input.remarks !== undefined) {
       const r = str(input.remarks).slice(0, 2000);
-      if (r !== app.remarks) contentChanged = true;
       draft.remarks = r;
     }
+    // Content change (not remarks) invalidates owner approval and demotes status
     if (contentChanged && ['Ready', 'Submitted'].includes(app.status)) {
       draft.ownerApproved = false;
       draft.status = 'Preparing';
+    }
+    // Content change on AwaitingOwner also demotes to Preparing (needs re-check)
+    if (contentChanged && app.status === 'AwaitingOwner') {
+      draft.ownerApproved = false;
+      draft.status = 'Preparing';
+    }
+    // Expire generated attachments when form data changes (before documentStatus validation)
+    // Manual/historical attachments remain active; remarks do NOT cause expiry
+    if (contentChanged) {
+      draft.attachments = (draft.attachments || []).map(a => {
+        if (a.generated && a.active) return Object.assign({}, a, { active: false });
+        return a;
+      });
     }
     if (input.documentStatus !== undefined) {
       if (!['PendingSecretary', 'Preparing', 'AwaitingSignature', 'AwaitingOwner', 'NeedsInfo'].includes(app.status)) {
@@ -1551,6 +1560,13 @@
       }
       draft.status = input.documentStatus;
       draft.ownerApproved = false;
+    }
+    // Auto-generate reference AFTER all validation, using FINAL draft.year
+    // First save does not require confirmedYear or memberId — generates on any save if empty
+    if (!str(draft.reference)) {
+      const finalYear = Number(draft.year) || new Date(Date.parse(context.now) + 8 * 60 * 60 * 1000).getUTCFullYear();
+      draft.year = finalYear;
+      draft.reference = serviceGenerateReference(state, finalYear);
     }
     draft.version = app.version + 1;
     // Phase 2: commit all changes at once
@@ -1876,11 +1892,118 @@
     const batches = state.serviceBatches || [];
     const unreadCount = apps.filter(a => ['PendingSecretary', 'NeedsInfo'].includes(a.status)).length;
     const ownerReviewCount = apps.filter(a => a.status === 'Ready' && a.ownerApproved).length + batches.filter(b => b.status === 'Ready' && b.ownerApproved).length;
-    // changeKey: stable hash of last modification for cheap polling
     const lastMod = apps.reduce((m, a) => Math.max(m, Date.parse(a.createdAt) || 0), 0) + apps.length * 1000 + batches.length * 100;
     return { unreadCount, ownerReviewCount, changeKey: String(lastMod) };
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceAward, serviceRequiredSignedKinds, serviceSummary };
+  function serviceReferenceHighWater(state) {
+    const counters = {};
+    for (const [year, sequence] of Object.entries(state.serviceReferenceCounters || {})) {
+      if (/^\d{4}$/.test(year) && Number.isSafeInteger(sequence) && sequence > 0) counters[year] = sequence;
+    }
+    for (const app of state.serviceApplications || []) {
+      const match = /^(\d{4})-G(\d+)$/i.exec(str(app.reference));
+      if (match && Number.isSafeInteger(Number(match[2]))) counters[match[1]] = Math.max(counters[match[1]] || 0, Number(match[2]));
+    }
+    return counters;
+  }
+  function servicePreserveReferenceCounters(restored, current) {
+    const counters = serviceReferenceHighWater(restored);
+    for (const [year, sequence] of Object.entries(serviceReferenceHighWater(current))) {
+      counters[year] = Math.max(counters[year] || 0, sequence);
+    }
+    restored.serviceReferenceCounters = counters;
+  }
+  function serviceGenerateReference(state, year) {
+    const y = Number(year);
+    if (!Number.isInteger(y) || y < 2000 || y > 2100) fail('Year must be 2000-2100.');
+    const counters = serviceReferenceHighWater(state);
+    const sequence = (counters[y] || 0) + 1;
+    if (!Number.isSafeInteger(sequence)) fail('Reference sequence exceeds the supported range.');
+    counters[y] = sequence;
+    state.serviceReferenceCounters = counters;
+    return y + '-G' + String(sequence).padStart(3, '0');
+  }
+  // --- Generated document attachment (atomic dual upload) ---
+  function serviceAttachGenerated(state, request, context) {
+    const app = (state.serviceApplications || []).find(row => row.id === str(request.applicationId));
+    if (!app) fail('Application not found.');
+    if (request.version == null) fail('Version is required.');
+    // Idempotency: requestKey = applicationId + input version + signingDate
+    // Check BEFORE version conflict — same input already processed is a success no-op
+    const signingDate = str(request.signingDate);
+    const requestKey = str(request.applicationId) + ':' + str(request.version) + ':' + signingDate;
+    const existingGenerated = (app.attachments || []).filter(a => a.generated && a.active && a.requestKey === requestKey);
+    if (existingGenerated.length) return app.id; // idempotent: already done
+    if (Number(request.version) !== app.version) fail('Conflict: application changed. Reload first.');
+    // Status gate: pre-submit states + Ready (for replacement) can generate; Submitted/Approved/Recorded rejected
+    if (!['PendingSecretary', 'Preparing', 'NeedsInfo', 'AwaitingSignature', 'AwaitingOwner', 'Ready'].includes(app.status)) {
+      fail('Cannot attach generated documents to application in status ' + app.status + '. Only pre-submit and Ready states allowed.');
+    }
+    // Must have confirmed year
+    if (app.confirmedYear == null) fail('Confirm the efficient year before attaching generated documents.');
+    const files = request.files;
+    if (!Array.isArray(files) || !files.length) fail('Files array is required.');
+    const validKinds = ['signedStripe', 'signedStar'];
+    const provided = [];
+    for (const f of files) {
+      const kind = str(f.kind);
+      if (!validKinds.includes(kind)) fail('Invalid generated file kind: ' + f.kind + '. Use signedStripe or signedStar.');
+      if (provided.includes(kind)) fail('Duplicate generated file kind: ' + kind + '. Each kind at most once.');
+      provided.push(kind);
+      if (!str(f.fileName)) fail('File name is required for generated documents.');
+    }
+    // Must have exactly the needed kinds (no extra, no duplicate)
+    const needed = serviceRequiredSignedKinds(app.confirmedYear);
+    for (const k of needed) {
+      if (!provided.includes(k)) fail('Generated documents must include ' + k + ' for year ' + app.confirmedYear + '.');
+    }
+    for (const k of provided) {
+      if (!needed.includes(k)) fail('Unexpected generated file kind: ' + k + '. Year ' + app.confirmedYear + ' requires: ' + needed.join(', ') + '.');
+    }
+    // Real calendar date validation (signingDate already extracted above)
+    if (!signingDate) fail('Signing date is required.');
+    const dateMatch = signingDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!dateMatch) fail('Signing date must be YYYY-MM-DD format.');
+    const yearNum = parseInt(dateMatch[1], 10);
+    const monthNum = parseInt(dateMatch[2], 10);
+    const dayNum = parseInt(dateMatch[3], 10);
+    const testDate = new Date(yearNum, monthNum - 1, dayNum);
+    if (testDate.getFullYear() !== yearNum || testDate.getMonth() !== monthNum - 1 || testDate.getDate() !== dayNum) {
+      fail('Signing date ' + signingDate + ' is not a valid calendar date.');
+    }
+    // Deactivate old generated files (manual uploads remain active)
+    app.attachments = (app.attachments || []).map(a => {
+      if (a.generated && a.active) return Object.assign({}, a, { active: false });
+      return a;
+    });
+    // Add new generated files
+    for (const f of files) {
+      app.attachments.push({
+        id: 'SVCA-' + context.uuid(),
+        kind: str(f.kind),
+        fileName: str(f.fileName).slice(0, 200),
+        mime: 'application/pdf',
+        bytes: Number(f.bytes) || 0,
+        uploadedBy: str(context.actor),
+        uploadedAt: context.now,
+        signingDate: signingDate,
+        requestKey: requestKey,
+        generated: true,
+        active: true
+      });
+    }
+    app.version++;
+    // Replacement invalidates Ready/Submitted and parent batch approval
+    if (['Ready', 'Submitted'].includes(app.status)) {
+      app.ownerApproved = false;
+      app.status = 'Preparing';
+    }
+    (state.serviceBatches || []).forEach(b => {
+      if ((b.applicationIds || []).includes(app.id)) b.ownerApproved = false;
+    });
+    return app.id;
+  }
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

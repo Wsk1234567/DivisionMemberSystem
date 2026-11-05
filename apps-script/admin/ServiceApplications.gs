@@ -101,3 +101,30 @@ function serviceDownloadFile_(state, attachmentId) {
   }
   throw new Error('Attachment not found.');
 }
+
+function serviceGetTemplates_(neededKinds) {
+  const props = properties_();
+  const templates = {};
+  // Only fetch templates for needed kinds
+  const kinds = Array.isArray(neededKinds) && neededKinds.length ? neededKinds : ['signedStripe', 'signedStar'];
+  if (kinds.includes('signedStripe')) {
+    const stripeId = props.getProperty('SERVICE_STRIPE_TEMPLATE_ID');
+    if (stripeId) {
+      try {
+        const file = DriveApp.getFileById(stripeId);
+        templates.Stripe = Utilities.base64Encode(file.getBlob().getBytes());
+      } catch (e) { templates.Stripe = null; }
+    }
+  }
+  if (kinds.includes('signedStar')) {
+    const starId = props.getProperty('SERVICE_STAR_TEMPLATE_ID');
+    if (starId) {
+      try {
+        const file = DriveApp.getFileById(starId);
+        templates.Star = Utilities.base64Encode(file.getBlob().getBytes());
+      } catch (e) { templates.Star = null; }
+    }
+  }
+  // Never return Drive IDs — only base64 content
+  return { templates };
+}

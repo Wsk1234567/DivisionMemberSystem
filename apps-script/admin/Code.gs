@@ -913,6 +913,7 @@ function rpcInternal_(request, apiEmail) {
         KPT.validateState(restored);
         restored.revision = state.revision;
         restored.sequence = Math.max(restored.sequence, state.sequence);
+        KPT.servicePreserveReferenceCounters(restored, state);
         KPT.tables.forEach(table => restored[table].forEach(row => { row.version = Math.max(row.version, (state[table].find(item => item.id === row.id) || {}).version || 0) + 1; }));
         KPT.finish(restored, actor.email, 'Restore backup ' + file.getName(), context.now);
         backup_(state, 'Before restore');
@@ -1037,6 +1038,68 @@ function rpcInternal_(request, apiEmail) {
         KPT.serviceAward(next, request, context);
         commit_(next);
         return { ok: true, data: serviceListResponse_(next) };
+      }
+      if (request.action === 'serviceGetTemplates') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        // Only return templates for the kinds the app actually needs
+        const app = (state.serviceApplications || []).find(a => a.id === request.applicationId);
+        if (!app) throw new Error('Application not found.');
+        if (request.version == null || Number(request.version) !== app.version) throw new Error('Conflict: application changed. Reload first.');
+        const needed = KPT.serviceRequiredSignedKinds(app.confirmedYear);
+        return { ok: true, data: serviceGetTemplates_(needed) };
+      }
+      if (request.action === 'serviceAttachGenerated') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        const files = request.files;
+        if (!Array.isArray(files) || !files.length || files.length > 2) throw new Error('Files array is required.');
+        // Step 1: Validate all files with serviceValidateUpload_ (size, magic, etc.)
+        const validated = [];
+        for (const f of files) {
+          const v = serviceValidateUpload_({ kind: f.kind, fileName: f.fileName, mime: f.mime, base64: f.base64 });
+          validated.push({ kind: v.kind, fileName: v.fileName, mime: v.mime, bytes: v.bytes, base64: f.base64 });
+        }
+        // Step 2: Run domain validation FIRST (idempotency check, no fileId yet)
+        // This detects duplicates/invalid state BEFORE any Drive writes
+        const next = KPT.copy(state);
+        const enrichedMeta = validated.map(f => ({ kind: f.kind, fileName: f.fileName, bytes: f.bytes }));
+        KPT.serviceAttachGenerated(next, Object.assign({}, request, { files: enrichedMeta }), context);
+        // Step 3: Check if idempotent (no new attachments were added)
+        const appAfter = (next.serviceApplications || []).find(a => a.id === request.applicationId);
+        const newGenerated = (appAfter.attachments || []).filter(a => a.generated && a.active && !a.fileId);
+        if (!newGenerated.length) {
+          // Idempotent hit — no new files needed, return existing data
+          return { ok: true, data: serviceListResponse_(next) };
+        }
+        // Step 4: All validations passed, now write to Drive
+        const storedIds = [];
+        try {
+          for (let i = 0; i < newGenerated.length; i++) {
+            const att = newGenerated[i];
+            const src = validated.find(f => f.kind === att.kind);
+            if (!src) throw new Error('Missing source file for ' + att.kind);
+            const fileId = serviceStoreFile_(att.fileName, src.base64);
+            storedIds.push(fileId);
+            att.fileId = fileId;
+          }
+          // Verify fileId correspondence
+          for (const att of newGenerated) {
+            if (!att.fileId || !storedIds.includes(att.fileId)) {
+              throw new Error('FileId mismatch for attachment ' + att.id);
+            }
+          }
+          commit_(next);
+          return { ok: true, data: serviceListResponse_(next) };
+        } catch (error) {
+          // A late failure after the slot flips must not delete committed files.
+          if (storedIds.length) {
+            try {
+              const saved = (loadState_().serviceApplications || []).find(a => a.id === request.applicationId);
+              const retained = new Set((saved && saved.attachments || []).map(a => a.fileId));
+              storedIds.filter(id => !retained.has(id)).forEach(serviceDeleteFile_);
+            } catch (cleanupError) { /* Preserve files if the active slot cannot be checked. */ }
+          }
+          throw error;
+        }
       }
       throw new Error('Unsupported request.');
     });
