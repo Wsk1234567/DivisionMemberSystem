@@ -1455,7 +1455,6 @@
   }
   function render() {
     if (!state) return;
-    document.body.classList.toggle('service-workbench', view === 'Service');
     const useHub = workspaceMode === 'oc' || isOcOnly() || (user && !user.owner && !user.admin && !user.treasurer && ocPackages().length > 0);
     if (useHub) {
       hubSidebar();
