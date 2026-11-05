@@ -845,6 +845,9 @@
         + '<div id="svc-admin-notice" class="message" role="status" aria-live="polite"></div>'
         + '<div class="toolbar"><label class="field"><span>' + escape(t('filterLabel')) + '</span><input type="search" id="svc-filter" value="' + escape(state.filter) + '" placeholder="' + escape(t('filterHint')) + '"></label>'
         + '<button type="button" class="button" data-svc-reload="1">' + escape(t('reload')) + '</button></div>'
+        + '<details class="svc-status-guide"><summary>' + escape(lang === 'zh' ? '查看全部状态' : 'View all statuses') + '</summary>'
+        + '<ul>' + Object.keys(TRANSITIONS).map(status => '<li><span class="pill svc-status svc-status-' + status + '">' + escape(statusLabel(status)) + '</span>'
+          + (status === 'AwaitingOwner' ? '<small>' + escape(lang === 'zh' ? '旧流程记录，无需 Owner 批准' : 'Legacy records · no Owner approval required') + '</small>' : '') + '</li>').join('') + '</ul></details>'
         + '<div class="svc-admin-layout">'
         + '<div class="svc-admin-list"><div class="table-wrap"><table><thead><tr><th>' + escape(t('thApplicant')) + '</th><th>' + escape(t('thYear')) + '</th><th>' + escape(t('thYears')) + '</th><th>' + escape(t('thMember')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('thFiles')) + '</th></tr></thead><tbody>'
         + (list.map(appRow).join('') || '<tr><td colspan="6" class="empty">' + escape(t('noMatch')) + '</td></tr>')
