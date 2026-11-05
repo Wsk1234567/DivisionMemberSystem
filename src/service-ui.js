@@ -98,6 +98,13 @@
       checksHint: '按办公室清单逐项核对，选 Y、N 或留空。Covering letter 和 Supporting documents可以是 N，不影响提交。Duty 相关项请人工确认，系统不会自动填 Yes。',
       checkBlank: '（留空）',
       saveChecks: '保存清单',
+      viewCol: '查看',
+      hideCol: '收起',
+      allStatuses: '全部状态',
+      statusFilterLabel: '状态筛选',
+      tabApplications: '个人申请',
+      tabBatches: '一次过申请',
+      dirtyLeave: '有未保存的修改，确定放弃吗？',
       batchTitlePrompt: '批次标题：',
       batchYearPrompt: '批次年度：',
       batchYearLabel: '批次年度',
@@ -194,6 +201,13 @@
       checksHint: 'Confirm each office checklist item as Y, N, or leave it blank. Covering letter and supporting documents may be N without blocking submission. Duty items are confirmed by hand — nothing is auto-filled to Yes.',
       checkBlank: '(blank)',
       saveChecks: 'Save checklist',
+      viewCol: 'View',
+      hideCol: 'Hide',
+      allStatuses: 'All statuses',
+      statusFilterLabel: 'Status filter',
+      tabApplications: 'Individual applications',
+      tabBatches: 'Bulk applications',
+      dirtyLeave: 'You have unsaved changes. Discard them?',
       batchTitlePrompt: 'Batch title:',
       batchYearPrompt: 'Batch year:',
       batchYearLabel: 'Batch year',
@@ -582,7 +596,7 @@
     const canRecordAward = !!(options && (options.owner || options.admin));
     const members = (options && options.members) || [];
     if (!container || typeof call !== 'function') return null;
-    const state = { applications: [], batches: [], unreadCount: 0, selectedId: null, filter: '', dirty: false };
+    const state = { applications: [], batches: [], unreadCount: 0, selectedId: null, filter: '', statusFilter: '', tab: 'applications', dirty: false };
 
     function notice(message, isError) {
       const el = container.querySelector('#svc-admin-notice');
@@ -670,16 +684,23 @@
 
     function appRow(app) {
       const label = app.applicant && app.applicant.name ? app.applicant.name : (lang === 'zh' ? '(没有姓名)' : '(no name)');
-      const years = app.confirmedYear != null ? app.confirmedYear : (app.declaredYear != null ? '≈' + app.declaredYear : '—');
-      const member = memberById(members, app.memberId);
-      const memberLabel = member ? (member.name + (member.sjamId ? ' · ' + member.sjamId : '')) : (app.memberId || '—');
-      return '<tr class="' + (state.selectedId === app.id ? 'svc-row-selected' : '') + '">'
-        + '<td><button type="button" class="button small" data-svc-open="' + escape(app.id) + '">' + escape(label) + '</button></td>'
-        + '<td>' + escape(String(app.year || '')) + '</td>'
-        + '<td>' + escape(String(years)) + '</td>'
-        + '<td>' + escape(memberLabel) + '</td>'
-        + '<td>' + statusPill(app.status) + '</td>'
-        + '<td>' + escape(String((app.attachments || []).length)) + '</td>'
+      const expanded = state.selectedId === app.id;
+      return '<tr class="svc-row' + (expanded ? ' svc-row-selected' : '') + '">'
+        + '<td data-label="' + escape(t('thApplicant')) + '">' + escape(label) + '</td>'
+        + '<td data-label="' + escape(t('thYear')) + '" class="svc-num">' + escape(String(app.year || '—')) + '</td>'
+        + '<td data-label="' + escape(t('thStatus')) + '">' + statusPill(app.status) + '</td>'
+        + '<td data-label="' + escape(t('thFiles')) + '" class="svc-num">' + escape(String((app.attachments || []).length)) + '</td>'
+        + '<td data-label="' + escape(t('viewCol')) + '"><button type="button" class="button small" data-svc-open="' + escape(app.id) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' + escape(expanded ? t('hideCol') : t('viewCol')) + '</button></td>'
+        + '</tr>';
+    }
+    function batchRow(b) {
+      const expanded = selectedBatchId === b.id;
+      return '<tr class="svc-row' + (expanded ? ' svc-row-selected' : '') + '">'
+        + '<td data-label="' + escape(t('batchTitle')) + '">' + escape(b.title || '') + '</td>'
+        + '<td data-label="' + escape(t('batchYear')) + '" class="svc-num">' + escape(String(b.year || '—')) + '</td>'
+        + '<td data-label="' + escape(t('batchApps')) + '" class="svc-num">' + escape(String((b.applicationIds || []).length)) + '</td>'
+        + '<td data-label="' + escape(t('thStatus')) + '">' + statusPill(b.status) + '</td>'
+        + '<td data-label="' + escape(t('viewCol')) + '"><button type="button" class="button small" data-svc-batch-open="' + escape(b.id) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' + escape(expanded ? t('hideCol') : t('viewCol')) + '</button></td>'
         + '</tr>';
     }
     function stepHeading(number, label, tag = 'h3') {
@@ -775,30 +796,23 @@
           + '<button type="button" class="button primary" data-svc-award="' + escape(app.id) + '">' + escape(t('awardBtn')) + '</button></div></section>' : '')
         + '</div>';
     }
-    function batchBlock() {
-      const rows = state.batches.map(b => {
-        const names = (b.applicationIds || []).length;
-        return '<tr><td><button type="button" class="button small" data-svc-batch-open="' + escape(b.id) + '">' + escape(b.title || '') + '</button></td>'
-          + '<td>' + escape(String(b.year || '')) + '</td><td>' + escape(String(names)) + '</td>'
-          + '<td>' + statusPill(b.status) + '</td>'
-          + '<td><div class="row-tools">'
-          + (['Preparing', 'AwaitingSignature', 'AwaitingOwner'].includes(b.status) || (b.status === 'Ready' && !b.ownerApproved)
-            ? '<button type="button" class="button small btn-check" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Ready">' + escape(t('ownerOk')) + '</button>' : '')
-          + (b.status === 'Ready' && b.ownerApproved
-            ? '<button type="button" class="button small" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Submitted">' + escape(t('markSubmitted')) + '</button>' : '')
-          + (b.status === 'Submitted'
-            ? '<button type="button" class="button small" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Approved">' + escape(statusLabel('Approved')) + '</button>' : '')
-          + '<button type="button" class="button small" data-svc-batch-pdf="' + escape(b.id) + '" data-svc-kind="Stripe">' + escape(t('checklistStripe')) + '</button>'
-          + '<button type="button" class="button small" data-svc-batch-pdf="' + escape(b.id) + '" data-svc-kind="Star">' + escape(t('checklistStar')) + '</button>'
-          + '<button type="button" class="button small" data-svc-batch-merge="' + escape(b.id) + '" data-svc-kind="Stripe">' + escape(t('mergeStripe')) + '</button>'
-          + '<button type="button" class="button small" data-svc-batch-merge="' + escape(b.id) + '" data-svc-kind="Star">' + escape(t('mergeStar')) + '</button>'
-          + '<button type="button" class="button small btn-download" data-svc-batch-zip="' + escape(b.id) + '">' + escape(t('zipBatch')) + '</button>'
-          + '</div></td></tr>';
-      }).join('');
-      return '<section class="svc-step">' + stepHeading(2, t('batches'), 'h2') + (rows
-        ? '<div class="table-wrap"><table><thead><tr><th>' + escape(t('batchTitle')) + '</th><th>' + escape(t('batchYear')) + '</th><th>' + escape(t('batchApps')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('thFiles')) + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-        : '<p class="muted">' + escape(t('noBatches')) + '</p>')
-        + '<div class="toolbar"><button type="button" class="button" data-svc-new-batch="1">' + escape(t('newBatch')) + '</button></div></section>';
+    function batchActions(batch) {
+      const id = escape(batch.id);
+      const status = batch.status;
+      const action = (next, label) => '<button type="button" class="button primary" data-svc-batch-status="' + id + '" data-svc-to="' + next + '">' + escape(label) + '</button>';
+      if (['Preparing', 'AwaitingSignature', 'AwaitingOwner'].includes(status) || (status === 'Ready' && !batch.ownerApproved)) return action('Ready', t('ownerOk'));
+      if (status === 'Ready') return action('Submitted', t('markSubmitted'));
+      if (status === 'Submitted') return action('Approved', statusLabel('Approved'));
+      return statusPill(status);
+    }
+    function batchDownloads(batch) {
+      const id = escape(batch.id);
+      const buttons = ['Stripe', 'Star'].map(kind =>
+        '<button type="button" class="button small" data-svc-batch-pdf="' + id + '" data-svc-kind="' + kind + '">' + escape(t('checklist' + kind)) + '</button>'
+        + '<button type="button" class="button small" data-svc-batch-merge="' + id + '" data-svc-kind="' + kind + '">' + escape(t('merge' + kind)) + '</button>'
+      ).join('');
+      return '<div class="svc-downloads"><button type="button" class="button primary" data-svc-batch-zip="' + id + '">' + escape(t('zipBatch')) + '</button>'
+        + '<details><summary>' + (lang === 'zh' ? '单独下载' : 'Individual downloads') + '</summary><div class="toolbar">' + buttons + '</div></details></div>';
     }
     function batchChecksBlock(batch) {
       const checks = (batch && batch.checks) || {};
@@ -831,52 +845,114 @@
           + ' <button type="button" class="button small" data-svc-batch-add="' + escape(batch.id) + '" data-svc-app="' + escape(app.id) + '">' + escape(t('addToBatch')) + '</button></li>').join('') || '<li class="muted">—</li>') + '</ul>'
         + '</div></section>'
         + stepBlock(2, t('checksTitle'), batchChecksBlock(batch))
-        + stepBlock(3, t('files'), attachmentsBlock({ kind: 'batch', id: batch.id }, batch))
+        + stepBlock(3, t('files'), attachmentsBlock({ kind: 'batch', id: batch.id }, batch) + batchDownloads(batch))
+        + stepBlock(4, t('statusTitle'), batchActions(batch))
         + '</section>';
     }
 
     let selectedBatchId = null;
+    // Canonical status filter values (matches the five-colour legend).
+    const STATUS_FILTERS = ['PendingSecretary', 'Preparing', 'AwaitingOwner', 'Ready', 'Submitted'];
+    function filterMatchesStatus(app) {
+      const f = state.statusFilter;
+      if (!f) return true;
+      // Submitted is the umbrella for Submitted / Approved / Recorded (same colour).
+      if (f === 'Submitted') return ['Submitted', 'Approved', 'Recorded'].includes(app.status);
+      if (f === 'Preparing') return ['Preparing', 'AwaitingSignature', 'NeedsInfo'].includes(app.status);
+      return app.status === f;
+    }
     function render() {
       const filter = (state.filter || '').toLowerCase();
       const list = state.applications.filter(app => {
+        if (!filterMatchesStatus(app)) return false;
         if (!filter) return true;
         const a = app.applicant || {};
         return String(a.name || '').toLowerCase().includes(filter) || String(app.id).toLowerCase().includes(filter)
           || String(app.reference || '').toLowerCase().includes(filter) || String(app.memberId || '').toLowerCase().includes(filter);
       });
-      const selected = state.applications.find(app => app.id === state.selectedId) || null;
-      const selectedBatch = state.batches.find(b => b.id === selectedBatchId) || null;
+      const isApps = state.tab !== 'batches';
+      const statusOpts = ['<option value="">' + escape(t('allStatuses')) + '</option>']
+        .concat(STATUS_FILTERS.map(s => '<option value="' + escape(s) + '"' + (state.statusFilter === s ? ' selected' : '') + '>' + escape(statusLabel(s)) + '</option>')).join('');
+      const listBlock = isApps ? (() => {
+        const rows = list.map(app => appRow(app) + (state.selectedId === app.id
+          ? '<tr class="svc-expand-row"><td colspan="5">' + detailBlock(app) + '</td></tr>' : '')).join('')
+          || '<tr><td colspan="5" class="empty">' + escape(t('noMatch')) + '</td></tr>';
+        return '<div class="table-wrap"><table class="svc-table"><thead><tr>'
+          + '<th>' + escape(t('thApplicant')) + '</th><th>' + escape(t('thYear')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('thFiles')) + '</th><th>' + escape(t('viewCol')) + '</th>'
+          + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      })() : (() => {
+        const rows = state.batches.map(batch => batchRow(batch) + (selectedBatchId === batch.id
+          ? '<tr class="svc-expand-row"><td colspan="5">' + batchDetailBlock(batch) + '</td></tr>' : '')).join('')
+          || '<tr><td colspan="5" class="empty">' + escape(t('noBatches')) + '</td></tr>';
+        return '<div class="table-wrap"><table class="svc-table"><thead><tr>'
+          + '<th>' + escape(t('batchTitle')) + '</th><th>' + escape(t('batchYear')) + '</th><th>' + escape(t('batchApps')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('viewCol')) + '</th>'
+          + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      })();
       container.innerHTML =
         '<div class="svc-admin" id="svc-admin">'
         + '<section class="svc-step"><div class="section-heading">' + stepHeading(1, t('adminTitle'), 'h2')
         + (state.unreadCount ? '<span class="hub-badge">' + state.unreadCount + ' ' + escape(t('newApps')) + '</span>' : '')
         + langToggleHtml() + '</div>'
         + '<div id="svc-admin-notice" class="message" role="status" aria-live="polite"></div>'
-        + '<div class="toolbar"><label class="field"><span>' + escape(t('filterLabel')) + '</span><input type="search" id="svc-filter" value="' + escape(state.filter) + '" placeholder="' + escape(t('filterHint')) + '"></label>'
-        + '<button type="button" class="button" data-svc-reload="1">' + escape(t('reload')) + '</button></div>'
-        + '<details class="svc-status-guide"><summary>' + escape(lang === 'zh' ? '查看全部状态' : 'View all statuses') + '</summary>'
-        + '<ul>' + ['PendingSecretary', 'Preparing', 'AwaitingOwner', 'Ready', 'Submitted'].map(status => '<li>' + statusPill(status) + '</li>').join('') + '</ul></details>'
-        + '<div class="svc-admin-layout">'
-        + '<div class="svc-admin-list"><div class="table-wrap"><table><thead><tr><th>' + escape(t('thApplicant')) + '</th><th>' + escape(t('thYear')) + '</th><th>' + escape(t('thYears')) + '</th><th>' + escape(t('thMember')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('thFiles')) + '</th></tr></thead><tbody>'
-        + (list.map(appRow).join('') || '<tr><td colspan="6" class="empty">' + escape(t('noMatch')) + '</td></tr>')
-        + '</tbody></table></div></div>'
-        + '<div class="svc-admin-detail">' + detailBlock(selected) + '</div>'
+        + '<div class="svc-tabs" role="group" aria-label="' + escape(lang === 'zh' ? '申请类型' : 'Application type') + '">'
+        + '<button type="button" class="svc-tab' + (isApps ? ' svc-tab-active' : '') + '" data-svc-tab="applications" aria-pressed="' + (isApps ? 'true' : 'false') + '">' + escape(t('tabApplications')) + '</button>'
+        + '<button type="button" class="svc-tab' + (!isApps ? ' svc-tab-active' : '') + '" data-svc-tab="batches" aria-pressed="' + (isApps ? 'false' : 'true') + '">' + escape(t('tabBatches')) + '</button>'
+        + (!isApps ? ' <button type="button" class="button primary svc-new-batch" data-svc-new-batch="1">' + escape(t('newBatch')) + '</button>' : '')
         + '</div>'
+        + '<div class="svc-toolbar-row">'
+        + (isApps ? '<label class="field svc-grow"><span class="svc-sr">' + escape(t('filterLabel')) + '</span><input type="search" id="svc-filter" value="' + escape(state.filter) + '" placeholder="' + escape(t('filterHint')) + '"></label>'
+        + '<label class="field"><span class="svc-sr">' + escape(t('statusFilterLabel')) + '</span><select id="svc-status-filter" aria-label="' + escape(t('statusFilterLabel')) + '">' + statusOpts + '</select></label>' : '')
+        + '<button type="button" class="button" data-svc-reload="1">' + escape(t('reload')) + '</button>'
+        + '</div>'
+        + '<details class="svc-status-guide"><summary>' + escape(lang === 'zh' ? '查看全部状态' : 'View all statuses') + '</summary>'
+        + '<ul>' + STATUS_FILTERS.map(status => '<li>' + statusPill(status) + '</li>').join('') + '</ul></details>'
+        + listBlock
         + '</section>'
-        + batchBlock()
-        + batchDetailBlock(selectedBatch)
         + '</div>';
 
-      container.querySelectorAll('[data-svc-open]').forEach(btn => btn.addEventListener('click', () => { state.selectedId = btn.getAttribute('data-svc-open'); render(); }));
+      container.querySelectorAll('[data-svc-open]').forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-svc-open');
+        if (state.dirty && !window.confirm(t('dirtyLeave'))) return;
+        // Only one record open at a time; clicking again collapses.
+        state.selectedId = state.selectedId === id ? null : id;
+        state.dirty = false;
+        render();
+      }));
+      container.querySelectorAll('[data-svc-batch-open]').forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-svc-batch-open');
+        if (state.dirty && !window.confirm(t('dirtyLeave'))) return;
+        selectedBatchId = selectedBatchId === id ? null : id;
+        state.dirty = false;
+        render();
+      }));
+      container.querySelectorAll('[data-svc-tab]').forEach(btn => btn.addEventListener('click', () => {
+        if (state.dirty && !window.confirm(t('dirtyLeave'))) return;
+        state.tab = btn.getAttribute('data-svc-tab') === 'batches' ? 'batches' : 'applications';
+        state.dirty = false;
+        render();
+      }));
+      const statusFilterEl = container.querySelector('#svc-status-filter');
+      if (statusFilterEl) statusFilterEl.addEventListener('change', () => {
+        if (state.dirty && !window.confirm(t('dirtyLeave'))) { statusFilterEl.value = state.statusFilter; return; }
+        state.statusFilter = String(statusFilterEl.value || '');
+        state.dirty = false;
+        render();
+      });
       const filterEl = container.querySelector('#svc-filter');
       if (filterEl) filterEl.addEventListener('input', () => {
+        if (state.dirty && !window.confirm(t('dirtyLeave'))) { filterEl.value = state.filter; return; }
         state.filter = filterEl.value;
+        state.dirty = false;
         render();
         const f2 = container.querySelector('#svc-filter');
         if (f2) { f2.focus(); f2.setSelectionRange(f2.value.length, f2.value.length); }
       });
       const reload = container.querySelector('[data-svc-reload]');
-      if (reload) reload.addEventListener('click', load);
+      if (reload) reload.addEventListener('click', () => {
+        if (state.dirty && !window.confirm(t('dirtyLeave'))) return;
+        state.dirty = false;
+        load();
+      });
       // Member picker: filter the select live.
       const memberSearch = container.querySelector('#svc-member-search');
       const memberPick = container.querySelector('#svc-member-pick');
@@ -972,10 +1048,6 @@
         const certEl = container.querySelector('#svc-award-cert');
         if (app && dateEl && dateEl.value) award(app, dateEl.value, certEl ? String(certEl.value || '').trim() : '');
       });
-      container.querySelectorAll('[data-svc-batch-open]').forEach(btn => btn.addEventListener('click', () => {
-        selectedBatchId = btn.getAttribute('data-svc-batch-open');
-        render();
-      }));
       container.querySelectorAll('[data-svc-batch-status]').forEach(btn => btn.addEventListener('click', () => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-status'));
         const to = btn.getAttribute('data-svc-to');

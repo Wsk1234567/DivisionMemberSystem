@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
@@ -163,6 +164,9 @@ async function makePdfBytes(title) {
     assert.match(await secretary.locator('.svc-detail .svc-status-AwaitingOwner').innerText(), /待定-文件齐全|documents complete/);
 
     // ---- 7) Create batch and add the application ----
+    // Must switch to batches tab first
+    await secretary.locator('[data-svc-tab="batches"]').click();
+    await secretary.waitForTimeout(300);
     const beforeBatches = await secretary.locator('[data-svc-batch-open]').count();
     // newBatch asks two prompts in order: title, then year (language-independent).
     let promptCount = 0;
@@ -174,13 +178,17 @@ async function makePdfBytes(title) {
     await secretary.waitForTimeout(800);
     const afterBatches = await secretary.locator('[data-svc-batch-open]').count();
     assert.ok(afterBatches > beforeBatches, 'a batch was created');
-    await secretary.locator('[data-svc-batch-open]').last().click();
+    if (!(await secretary.locator('.svc-batch-detail').count())) await secretary.locator('[data-svc-batch-open]').last().click();
     await secretary.waitForTimeout(300);
     const addBtn = secretary.locator('[data-svc-batch-add]').first();
     assert.ok(await addBtn.count(), 'applications can be added to the batch');
     await addBtn.click();
     await secretary.waitForTimeout(500);
     assert.match(await secretary.locator('#svc-admin-notice').innerText(), /保存|Saved/i, 'batch change acknowledged');
+
+    await secretary.locator('#svc-check-covering').selectOption('N');
+    await secretary.locator('[data-svc-save-checks]').click();
+    assert.equal(await secretary.locator('#svc-check-covering').inputValue(), 'N');
 
     // ---- 8) ZIP package must contain Duty + checklists + signed forms ----
     const zipDownloads = [];
@@ -203,6 +211,85 @@ async function makePdfBytes(title) {
 
     assert.deepEqual(errors, [], 'no page errors during the main flow');
     console.log('PASS: strict submit → list → badge → member/ref/year → dual PDFs → 3 uploads → batch → ZIP contents → Secretary Ready');
+
+    // ---- 10) Tab switching: applications / batches (reuses secretary) ----
+    await secretary.locator('[data-svc-tab="applications"]').click();
+    await secretary.waitForTimeout(300);
+    const appTab = secretary.locator('[data-svc-tab="applications"]');
+    const batchTab = secretary.locator('[data-svc-tab="batches"]');
+    assert.ok(await appTab.count(), 'applications tab exists');
+    assert.ok(await batchTab.count(), 'batches tab exists');
+    await batchTab.click();
+    await secretary.waitForTimeout(300);
+    assert.match(await secretary.locator('#content').innerText(), /QA Batch|批次/, 'batch list visible after tab switch');
+    await appTab.click();
+    await secretary.waitForTimeout(300);
+    assert.match(await secretary.locator('#content').innerText(), /Strict QA Cadet/, 'applications list visible after tab switch');
+    console.log('PASS: tab switching applications ↔ batches');
+
+    // ---- 11) Status filter (reuses secretary page) ----
+    const SCREENSHOT_DIR = process.env.SERVICE_SCREENSHOT_DIR || path.join(os.tmpdir(), 'tccd-service-qa');
+    await secretary.locator('[data-svc-tab="applications"]').click();
+    await secretary.waitForTimeout(300);
+    const statusFilter = secretary.locator('#svc-status-filter');
+    assert.ok(await statusFilter.count(), 'status filter exists');
+    // Filter Ready: the QA Batch is Ready, but apps inside it are also Ready via cascade
+    await statusFilter.selectOption('Ready');
+    await secretary.waitForTimeout(300);
+    let filterText = await secretary.locator('#content').innerText();
+    assert.match(filterText, /Strict QA Cadet|QA Batch/, 'Ready filter shows ready items');
+    // Filter PendingSecretary: the Ready application should NOT appear
+    await statusFilter.selectOption('PendingSecretary');
+    await secretary.waitForTimeout(300);
+    filterText = await secretary.locator('#content').innerText();
+    assert.equal(filterText.includes('Strict QA Cadet'), false, 'PendingSecretary excludes Ready application');
+    // Empty = show all
+    await statusFilter.selectOption('');
+    await secretary.waitForTimeout(300);
+    filterText = await secretary.locator('#content').innerText();
+    assert.match(filterText, /Strict QA Cadet/, 'empty filter shows all');
+    console.log('PASS: status filter Ready shown, PendingSecretary excludes Ready app');
+
+    // ---- 12) Desktop screenshots (reuses secretary page) ----
+    if (await secretary.locator('.svc-detail').count()) await secretary.locator('[data-svc-open]').first().click();
+    await secretary.screenshot({ path: SCREENSHOT_DIR + '/desktop-applications.png', fullPage: true });
+    await secretary.locator('[data-svc-tab="batches"]').click();
+    await secretary.waitForTimeout(300);
+    if (await secretary.locator('.svc-batch-detail').count()) await secretary.locator('[data-svc-batch-open]').first().click();
+    await secretary.screenshot({ path: SCREENSHOT_DIR + '/desktop-batches.png', fullPage: true });
+    const batchOpen = secretary.locator('[data-svc-batch-open]').first();
+    if (await batchOpen.count()) {
+      if (!(await secretary.locator('.svc-batch-detail').count())) await batchOpen.click();
+      await secretary.waitForTimeout(300);
+      assert.equal(await secretary.locator('.svc-table').evaluate(table => table.scrollWidth <= table.parentElement.clientWidth + 1), true, 'batch detail fits its table');
+      await secretary.screenshot({ path: SCREENSHOT_DIR + '/desktop-batch-detail.png', fullPage: true });
+    }
+    console.log('PASS: desktop screenshots captured to ' + SCREENSHOT_DIR);
+
+    // ---- 13) Mobile screenshots (375px, separate page for mobile viewport) ----
+    const mobileShot = await browser.newPage({ viewport: { width: 375, height: 812 } });
+    mobileShot.on('pageerror', e => errors.push('mobile: ' + e.message));
+    await armProxy(mobileShot, 'admin');
+    await mobileShot.goto(BASE + '/admin.html?mode=admin', { waitUntil: 'domcontentloaded' });
+    await mobileShot.waitForFunction(() => window.KPTTransport && document.querySelector('#account'));
+    await enterAdminWork(mobileShot);
+    await mobileShot.waitForTimeout(200);
+    await mobileShot.locator('#navigation [data-nav="Service"]').click();
+    await mobileShot.waitForTimeout(500);
+    await mobileShot.screenshot({ path: SCREENSHOT_DIR + '/mobile-applications.png', fullPage: true });
+    await mobileShot.locator('[data-svc-tab="batches"]').click();
+    await mobileShot.waitForTimeout(300);
+    await mobileShot.screenshot({ path: SCREENSHOT_DIR + '/mobile-batches.png', fullPage: true });
+    await mobileShot.locator('[data-svc-batch-open]').first().click();
+    assert.equal(await mobileShot.locator('.svc-table').evaluate(table => table.scrollWidth <= table.parentElement.clientWidth + 1), true, 'mobile batch detail fits its table');
+    // Check no horizontal overflow on mobile
+    const hasHScroll = await mobileShot.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    assert.equal(hasHScroll, false, 'no horizontal overflow on mobile');
+    await mobileShot.close();
+    console.log('PASS: mobile screenshots captured to ' + SCREENSHOT_DIR + ', no horizontal overflow');
+
+    assert.deepEqual(errors, [], 'no page errors during acceptance tests');
+    console.log('PASS: all acceptance additions — tabs, filter, screenshots, checklist, save, ZIP');
 
     // ---- Separate test: failure keeps every input (network fault injection) ----
     const faultPage = await browser.newPage({ viewport: { width: 375, height: 800 } });
