@@ -467,9 +467,9 @@ function sync_(state) {
 // Run once from the Admin Apps Script editor using the deployment account.
 function installPublicDirectorySync() {
   const handler = 'syncPendingPublicDirectory_';
-  if (!ScriptApp.getProjectTriggers().some(trigger => trigger.getHandlerFunction() === handler)) {
-    ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
-  }
+  const previous = ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === handler);
+  ScriptApp.newTrigger(handler).timeBased().everyMinutes(1).create();
+  previous.forEach(trigger => ScriptApp.deleteTrigger(trigger));
   syncPendingPublicDirectory_();
 }
 function syncPendingPublicDirectory_() {
