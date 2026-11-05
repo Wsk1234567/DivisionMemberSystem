@@ -213,18 +213,16 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 .svc-admin .svc-substep + .svc-substep { border-color: var(--svc-border); }
 .svc-admin .svc-step-heading { line-height: 1.4; }
 .svc-admin .svc-step-number { margin-inline-end: .2em; }
-.svc-admin .svc-status-guide { margin: .7rem 0 1rem; }
-.svc-admin .svc-status-guide summary { cursor: pointer; font-weight: 650; }
-.svc-admin .svc-status-guide ul { display: flex; flex-wrap: wrap; gap: .55rem; padding: 0; list-style: none; }
-.svc-admin .svc-status-guide li { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.svc-admin .pill.svc-status-guide { margin: .7rem 0 1rem; }
+.svc-admin .pill.svc-status-guide summary { cursor: pointer; font-weight: 650; }
+.svc-admin .pill.svc-status-guide ul { display: flex; flex-wrap: wrap; gap: .55rem; padding: 0; list-style: none; }
+.svc-admin .pill.svc-status-guide li { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
 .svc-admin .svc-status { display: inline-block; padding: .25em .65em; border-radius: 999px; background: #e9e3f5; color: #453468; }
-.svc-admin .svc-status-PendingSecretary,
-.svc-admin .svc-status-AwaitingSignature,
-.svc-admin .svc-status-AwaitingOwner { background: #ffe3a0; color: #654200; }
-.svc-admin .svc-status-Preparing,
-.svc-admin .svc-status-Submitted { background: #dcebf9; color: #194871; }
-.svc-admin .svc-status-Ready,
-.svc-admin .svc-status-Approved,
-.svc-admin .svc-status-Recorded { background: #d9efdf; color: #1a542d; }
-.svc-admin .svc-status-NeedsInfo { background: #f9dce1; color: #781f38; }
+.svc-admin .pill.svc-status-PendingSecretary { background: #e7e9ed; color: #38414f; }
+.svc-admin .pill.svc-status-Preparing,
+.svc-admin .pill.svc-status-AwaitingSignature,
+.svc-admin .pill.svc-status-NeedsInfo { background: #f9dce1; color: #781f38; }
+.svc-admin .pill.svc-status-AwaitingOwner { background: #dcebf9; color: #194871; }
+.svc-admin .pill.svc-status-Ready { background: #d9efdf; color: #1a542d; }
+.svc-admin .pill.svc-status-Submitted { background: #20623c; color: #fff; }
 body[data-mode="owner"] .svc-admin { --svc-cream: #302612; --svc-inset: #231d12; --svc-border: #67532b; }

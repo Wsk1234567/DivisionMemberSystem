@@ -127,6 +127,7 @@ async function makePdfBytes(title) {
     await secretary.locator('[data-svc-save]').first().click();
     await secretary.waitForTimeout(700);
     assert.match(await secretary.locator('#svc-admin-notice').innerText(), /保存|Saved/i, 'the save is acknowledged');
+    assert.match(await secretary.locator('.svc-detail .svc-status-Preparing').innerText(), /待定-文件缺失|documents missing/);
 
     // ---- 5) 4th year shows BOTH PDF buttons and both downloads fire ----
     const stripeBtn = secretary.locator('[data-svc-pdf][data-svc-pdf-kind="Stripe"]');
@@ -155,6 +156,11 @@ async function makePdfBytes(title) {
     assert.match(filesText, /duty-detail\.pdf/, 'duty PDF listed');
     assert.match(filesText, /signed-stripe\.pdf/, 'signed stripe PDF listed');
     assert.match(filesText, /signed-star\.pdf/, 'signed star PDF listed');
+
+    secretary.once('dialog', d => d.accept());
+    await secretary.locator('[data-svc-document-status="AwaitingOwner"]').click();
+    await secretary.locator('.svc-detail .svc-status-AwaitingOwner').waitFor();
+    assert.match(await secretary.locator('.svc-detail .svc-status-AwaitingOwner').innerText(), /待定-文件齐全|documents complete/);
 
     // ---- 7) Create batch and add the application ----
     const beforeBatches = await secretary.locator('[data-svc-batch-open]').count();
@@ -193,7 +199,7 @@ async function makePdfBytes(title) {
     // ---- 9) Secretary marks the batch ready, without switching to Owner ----
     await secretary.locator('[data-svc-batch-status][data-svc-to="Ready"]').click();
     await secretary.locator('[data-svc-batch-status][data-svc-to="Submitted"]').waitFor();
-    assert.match(await secretary.locator('#content').innerText(), /可提交|Ready to submit/);
+    assert.match(await secretary.locator('#content').innerText(), /已符合资格|Eligible/);
 
     assert.deepEqual(errors, [], 'no page errors during the main flow');
     console.log('PASS: strict submit → list → badge → member/ref/year → dual PDFs → 3 uploads → batch → ZIP contents → Secretary Ready');

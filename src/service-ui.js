@@ -231,15 +231,20 @@
   }
   function statusLabel(status) {
     const zh = {
-      PendingSecretary: '等秘书处理', Preparing: '准备文件中', AwaitingSignature: '等签名', AwaitingOwner: '待标记准备完成',
-      Ready: '可提交', Submitted: '已提交', NeedsInfo: '需要补资料', Approved: '已批准', Recorded: '已登记获奖'
+      PendingSecretary: '待秘书处理', Preparing: '待定-文件缺失', AwaitingSignature: '待定-文件缺失', AwaitingOwner: '待定-文件齐全',
+      Ready: '已符合资格', Submitted: '已提交', NeedsInfo: '待定-文件缺失', Approved: '已批准', Recorded: '已登记获奖'
     };
     const en = {
-      PendingSecretary: 'Waiting for Secretary', Preparing: 'Preparing files', AwaitingSignature: 'Waiting for signature',
-      AwaitingOwner: 'Waiting to mark ready', Ready: 'Ready to submit', Submitted: 'Submitted',
-      NeedsInfo: 'Needs more information', Approved: 'Approved', Recorded: 'Award recorded'
+      PendingSecretary: 'Waiting for Secretary', Preparing: 'Pending - documents missing', AwaitingSignature: 'Pending - documents missing',
+      AwaitingOwner: 'Pending - documents complete', Ready: 'Eligible', Submitted: 'Submitted',
+      NeedsInfo: 'Pending - documents missing', Approved: 'Approved', Recorded: 'Award recorded'
     };
     return (lang === 'zh' ? zh : en)[status] || status;
+  }
+  function statusPill(status) {
+    const display = ['Approved', 'Recorded'].includes(status) ? 'Submitted' : status;
+    return '<span class="pill svc-status svc-status-' + escape(display) + '"' +
+      (display !== status ? ' title="' + escape(statusLabel(status)) + '"' : '') + '>' + escape(statusLabel(display)) + '</span>';
   }
   // Per-application attachments — never includes combined batch files.
   const ATTACH_KINDS = [
@@ -673,7 +678,7 @@
         + '<td>' + escape(String(app.year || '')) + '</td>'
         + '<td>' + escape(String(years)) + '</td>'
         + '<td>' + escape(memberLabel) + '</td>'
-        + '<td><span class="pill svc-status svc-status-' + escape(app.status) + '">' + escape(statusLabel(app.status)) + '</span></td>'
+        + '<td>' + statusPill(app.status) + '</td>'
         + '<td>' + escape(String((app.attachments || []).length)) + '</td>'
         + '</tr>';
     }
@@ -721,15 +726,20 @@
     }
     function statusButtons(app) {
       const flow = TRANSITIONS[app.status] || { next: [], back: [] };
-      const next = flow.next;
-      const back = flow.back;
-      if (!next.length && !back.length && app.status !== 'Approved') return '';
+      const canSave = ['PendingSecretary', 'Preparing', 'AwaitingSignature', 'AwaitingOwner', 'NeedsInfo'].includes(app.status);
+      const next = canSave ? flow.next.filter(status => status === 'Ready' && app.status === 'AwaitingOwner') : flow.next;
+      const back = canSave ? [] : flow.back;
+      if (!canSave && !next.length && !back.length && app.status !== 'Approved') return '';
       let html = '<div class="toolbar">';
+      if (canSave) {
+        html += '<button type="button" class="button btn-return" data-svc-save="' + escape(app.id) + '" data-svc-document-status="Preparing">' + escape(lang === 'zh' ? '保存-待定（文件缺失）' : 'Save - documents missing') + '</button>'
+          + '<button type="button" class="button primary" data-svc-save="' + escape(app.id) + '" data-svc-document-status="AwaitingOwner">' + escape(lang === 'zh' ? '保存-已完成' : 'Save - documents complete') + '</button>';
+      }
       html += next.map(s => {
-        if (s === 'Ready') return '<button type="button" class="button btn-check" data-svc-status="' + escape(app.id) + '" data-svc-to="Ready">' + escape(t('ownerOk')) + '</button>';
+        if (s === 'Ready') return '<button type="button" class="button btn-check" data-svc-status="' + escape(app.id) + '" data-svc-to="Ready">' + escape(statusLabel('Ready')) + '</button>';
         return '<button type="button" class="button btn-submit" data-svc-status="' + escape(app.id) + '" data-svc-to="' + escape(s) + '">' + escape(statusLabel(s)) + '</button>';
       }).join('');
-      html += back.map(s => '<button type="button" class="button btn-return" data-svc-status="' + escape(app.id) + '" data-svc-to="' + escape(s) + '">' + escape(t('backLabel')) + ' · ' + escape(statusLabel(s)) + '</button>').join('');
+      html += back.map(s => '<button type="button" class="button btn-return" data-svc-status="' + escape(app.id) + '" data-svc-to="' + escape(s) + '">' + escape(t('backLabel')) + ' · ' + escape(s === 'NeedsInfo' ? (lang === 'zh' ? '需要补资料' : 'Needs more information') : statusLabel(s)) + '</button>').join('');
       html += '</div>';
       return html;
     }
@@ -738,7 +748,7 @@
       const a = app.applicant || {};
       const actions = statusButtons(app);
       return '<div class="svc-detail">'
-        + '<h2>' + escape(a.name || (lang === 'zh' ? '(没有姓名)' : '(no name)')) + ' <span class="pill svc-status svc-status-' + escape(app.status) + '">' + escape(statusLabel(app.status)) + '</span></h2>'
+        + '<h2>' + escape(a.name || (lang === 'zh' ? '(没有姓名)' : '(no name)')) + ' ' + statusPill(app.status) + '</h2>'
         + '<p class="muted">' + escape(String(app.createdAt || '').slice(0, 10)) + '</p>'
         + '<section class="svc-step">' + stepHeading(1, lang === 'zh' ? '核对申请资料' : 'Verify application details')
         + '<form id="svc-detail-form" class="form-grid">'
@@ -756,7 +766,6 @@
         + memberPicker(app)
         + field(t('remarks'), 'remarks', app.remarks, { type: 'textarea' })
         + '</form>'
-        + '<div class="toolbar"><button type="button" class="button primary" data-svc-save="' + escape(app.id) + '">' + escape(t('save')) + '</button></div>'
         + '</section>'
         + stepBlock(2, lang === 'zh' ? '下载申请表' : 'Download application forms', pdfButtons(app))
         + stepBlock(3, t('files'), attachmentsBlock({ kind: 'application', id: app.id }, app))
@@ -771,7 +780,7 @@
         const names = (b.applicationIds || []).length;
         return '<tr><td><button type="button" class="button small" data-svc-batch-open="' + escape(b.id) + '">' + escape(b.title || '') + '</button></td>'
           + '<td>' + escape(String(b.year || '')) + '</td><td>' + escape(String(names)) + '</td>'
-          + '<td><span class="pill svc-status svc-status-' + escape(b.status) + '">' + escape(statusLabel(b.status)) + '</span></td>'
+          + '<td>' + statusPill(b.status) + '</td>'
           + '<td><div class="row-tools">'
           + (['Preparing', 'AwaitingSignature', 'AwaitingOwner'].includes(b.status) || (b.status === 'Ready' && !b.ownerApproved)
             ? '<button type="button" class="button small btn-check" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Ready">' + escape(t('ownerOk')) + '</button>' : '')
@@ -812,7 +821,7 @@
       const inBatch = state.applications.filter(app => inIds.has(app.id));
       const outBatch = state.applications.filter(app => !inIds.has(app.id));
       return '<section class="card svc-batch-detail"><h2>' + escape(batch.title || '') + ' · ' + escape(String(batch.year || '')) + '</h2>'
-        + '<p class="muted">' + escape(statusLabel(batch.status)) + '</p>'
+        + '<p>' + statusPill(batch.status) + '</p>'
         + '<section class="svc-step">' + stepHeading(1, lang === 'zh' ? '核对申请者' : 'Review applicants')
         + '<div class="svc-substep"><h4>① ' + escape(t('batchAppsTitle')) + '</h4>'
         + '<ul class="svc-files">' + (inBatch.map(app => '<li>' + escape(app.applicant && app.applicant.name || app.id)
@@ -846,8 +855,7 @@
         + '<div class="toolbar"><label class="field"><span>' + escape(t('filterLabel')) + '</span><input type="search" id="svc-filter" value="' + escape(state.filter) + '" placeholder="' + escape(t('filterHint')) + '"></label>'
         + '<button type="button" class="button" data-svc-reload="1">' + escape(t('reload')) + '</button></div>'
         + '<details class="svc-status-guide"><summary>' + escape(lang === 'zh' ? '查看全部状态' : 'View all statuses') + '</summary>'
-        + '<ul>' + Object.keys(TRANSITIONS).map(status => '<li><span class="pill svc-status svc-status-' + status + '">' + escape(statusLabel(status)) + '</span>'
-          + (status === 'AwaitingOwner' ? '<small>' + escape(lang === 'zh' ? '旧流程记录，无需 Owner 批准' : 'Legacy records · no Owner approval required') + '</small>' : '') + '</li>').join('') + '</ul></details>'
+        + '<ul>' + ['PendingSecretary', 'Preparing', 'AwaitingOwner', 'Ready', 'Submitted'].map(status => '<li>' + statusPill(status) + '</li>').join('') + '</ul></details>'
         + '<div class="svc-admin-layout">'
         + '<div class="svc-admin-list"><div class="table-wrap"><table><thead><tr><th>' + escape(t('thApplicant')) + '</th><th>' + escape(t('thYear')) + '</th><th>' + escape(t('thYears')) + '</th><th>' + escape(t('thMember')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('thFiles')) + '</th></tr></thead><tbody>'
         + (list.map(appRow).join('') || '<tr><td colspan="6" class="empty">' + escape(t('noMatch')) + '</td></tr>')
@@ -881,8 +889,7 @@
           });
         });
       }
-      const saveBtn = container.querySelector('[data-svc-save]');
-      if (saveBtn) saveBtn.addEventListener('click', () => {
+      container.querySelectorAll('[data-svc-save]').forEach(saveBtn => saveBtn.addEventListener('click', () => {
         const app = state.applications.find(row => row.id === saveBtn.getAttribute('data-svc-save'));
         if (!app) return;
         const form = container.querySelector('#svc-detail-form');
@@ -891,6 +898,7 @@
         const memberEl = container.querySelector('#svc-member-pick');
         const payload = {
           id: app.id, version: app.version,
+          documentStatus: saveBtn.dataset.svcDocumentStatus,
           reference: get('reference'),
           applicant: { name: get('name'), ic: get('ic'), gender: get('gender'), rank: get('rank'), joined: get('joined'), phone: get('phone'), email: get('email'), occupation: get('occupation') },
           declaredYear: app.declaredYear,
@@ -912,7 +920,7 @@
           payload.confirmIcMismatch = true;
         }
         saveApplication(payload);
-      });
+      }));
       container.querySelectorAll('[data-svc-pdf]').forEach(btn => btn.addEventListener('click', () => {
         const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-pdf'));
         const kind = btn.getAttribute('data-svc-pdf-kind') || 'Stripe';

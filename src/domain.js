@@ -1539,6 +1539,19 @@
       draft.ownerApproved = false;
       draft.status = 'Preparing';
     }
+    if (input.documentStatus !== undefined) {
+      if (!['PendingSecretary', 'Preparing', 'AwaitingSignature', 'AwaitingOwner', 'NeedsInfo'].includes(app.status)) {
+        fail('Return the application to preparation before changing its document status.');
+      }
+      if (!['Preparing', 'AwaitingOwner'].includes(input.documentStatus)) fail('Invalid document status.');
+      if (input.documentStatus === 'AwaitingOwner') {
+        if (!draft.memberId || draft.confirmedYear == null) fail('Bind a member and confirm the Efficient year first.');
+        if (!(draft.attachments || []).some(a => a.active && a.kind === 'duty')) fail('Upload Duty Records first.');
+        serviceValidateSigned(draft, true);
+      }
+      draft.status = input.documentStatus;
+      draft.ownerApproved = false;
+    }
     draft.version = app.version + 1;
     // Phase 2: commit all changes at once
     Object.assign(app, draft);
