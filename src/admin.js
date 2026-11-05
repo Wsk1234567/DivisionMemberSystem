@@ -8,8 +8,8 @@
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
-    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Trash', 'Trash'], ['Settings', 'Settings']],
-    owner: [['Owner', 'Owner'], ['Settings', 'Settings']],
+    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Service', 'Service'], ['Trash', 'Trash'], ['Settings', 'Settings']],
+    owner: [['Owner', 'Owner'], ['Service', 'Service'], ['Settings', 'Settings']],
     portal: [['Portal', 'Portal']],
     oc: []
   };
@@ -138,6 +138,9 @@
   let hubTab = 'studio';
   let hubSelectedId = null;
   let hubNotifications = { notifications: [], unreadCount: 0, activityUnread: {}, studioUnread: {} };
+  // Service awards (Stripe & Star) — sidebar badge + panel controller.
+  let serviceSummary = { unreadCount: 0, ownerReviewCount: 0, changeKey: null };
+  let servicePanel = null;
   let hubNotifyLoading = false;
   let hubNotifyTimer = null;
   let hubDirty = false;
@@ -468,6 +471,66 @@
     return '<p class="muted">' + escape(pkg.activityType + ' ' + pkg.year) + ' · ' + hubRoleChip() + '</p>'
       + activityAboutCard(pkg) + body;
   }
+  function serviceRefreshBadge() {
+    // Partial update only — never re-render the page (would clobber dirty inputs).
+    const serviceBtn = byId('navigation') ? byId('navigation').querySelector('[data-nav="Service"]') : null;
+    if (!serviceBtn) return;
+    const total = Number(serviceSummary.unreadCount || 0) + Number(serviceSummary.ownerReviewCount || 0);
+    let badge = serviceBtn.querySelector('.hub-badge');
+    if (!total) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'hub-badge';
+      badge.id = 'service-nav-badge';
+      serviceBtn.appendChild(badge);
+    }
+    badge.textContent = String(total);
+  }
+  function serviceView() {
+    const host = '<div id="service-host"></div>';
+    setTimeout(() => {
+      const el = byId('service-host');
+      if (!el || !window.KPTServiceUI || !window.KPTServiceUI.renderAdminPanel) return;
+      servicePanel = window.KPTServiceUI.renderAdminPanel(el, {
+        call: request => window.KPTTransport.call(request)
+      }, { owner: !!user.owner, admin: !!user.admin, members: state.Members || [] });
+    }, 0);
+    return host;
+  }
+  function serviceStartPolling() {
+    if (!window.KPTServiceUI || !window.KPTServiceUI.startSummaryPolling) return;
+    window.KPTServiceUI.startSummaryPolling({
+      call: request => window.KPTTransport.call(request),
+      onBadge: counts => {
+        serviceSummary.unreadCount = counts.unreadCount;
+        serviceSummary.ownerReviewCount = counts.ownerReviewCount;
+        serviceRefreshBadge();
+      },
+      onCounts: counts => {
+        serviceSummary.unreadCount = counts.unreadCount;
+        serviceSummary.ownerReviewCount = counts.ownerReviewCount;
+      },
+      isListViewOpen: () => view === 'Service' && !!servicePanel,
+      isDirty: () => !!(servicePanel && servicePanel.isDirty && servicePanel.isDirty()),
+      refreshList: () => {
+        if (servicePanel && servicePanel.refreshList) servicePanel.refreshList();
+      },
+      onStale: () => {
+        // Do not touch the open editor — just say there is news.
+        notice(t('service.staleHint'));
+      },
+      onPollError: () => {
+        // Keep the editor and the last known counts.
+      }
+    });
+  }
+  function serviceStopPolling() {
+    if (window.KPTServiceUI && window.KPTServiceUI.stopSummaryPolling) window.KPTServiceUI.stopSummaryPolling();
+    servicePanel = null;
+  }
   function hubRefreshBadges() {
     // Partial badge update only — never re-render the page (would clobber dirty inputs).
     const unread = hubNotifications.unreadCount || 0;
@@ -786,6 +849,18 @@
     html += '<button type="button" data-action="telegramSettings">' + icon + 'Telegram</button>';
     html += '<button type="button" data-action="toggleLang" style="margin-top:auto">' + icon + (lang === 'zh' ? 'EN' : '中') + '</button>';
     byId('navigation').innerHTML = html;
+    // Service badge: updated in place by the 5s summary poll, never by re-render.
+    const serviceBtn = byId('navigation').querySelector('[data-nav="Service"]');
+    if (serviceBtn && serviceSummary) {
+      const total = Number(serviceSummary.unreadCount || 0) + Number(serviceSummary.ownerReviewCount || 0);
+      if (total > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'hub-badge';
+        badge.id = 'service-nav-badge';
+        badge.textContent = String(total);
+        serviceBtn.appendChild(badge);
+      }
+    }
     document.querySelectorAll('[data-package]').forEach(element => {
       element.classList.toggle('active', !!openDocPackageId && element.dataset.package === openDocPackageId);
     });
@@ -1401,6 +1476,8 @@
     }
     hubStopPolling();
     renderNavigation();
+    // Admin / Owner sidebar badge polls every 5s while any admin page is visible.
+    if (user && (user.admin || user.owner)) serviceStartPolling();
     applyWorkspaceTheme();
     const ocShell = isOcOnly() || workspaceMode === 'oc';
     const modeTitles = workspaceTitles(workspaceMode);
@@ -1422,6 +1499,7 @@
       Data: dataList,
       Setup: setupView,
       Import: importView,
+      Service: serviceView,
       Trash: trashView,
       Owner: ownerAccessView,
       Settings: settingsView,
@@ -2183,6 +2261,7 @@
       return;
     }
     if (name === 'logoutPortal') {
+      serviceStopPolling();
       if (window.KPTTransport && window.KPTTransport.logout) await window.KPTTransport.logout();
       clearSessionHash();
       try { sessionStorage.removeItem('tccd-portal'); } catch (error) { /* ignore */ }

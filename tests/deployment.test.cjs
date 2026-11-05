@@ -21,18 +21,24 @@ test('built admin page embeds literal scripts without unresolved placeholders', 
   const html = read('build/apps-script/admin/Admin.html');
   assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|FINANCETPL|FINANCEWB|FINANCEPDF|TRANSPORT|ADMIN|CONFIG)__/.test(html), false);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-  assert.equal(scripts.length, 11);
+  assert.equal(scripts.length, 15);
   for (const script of scripts) assert.doesNotThrow(() => new vm.Script(script));
   assert.match(scripts[0], /KPT_CONFIG/);
   assert.equal(scripts[1], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
   assert.ok(scripts.some(script => script.includes('tccd-lang') && script.includes('KPTI18n')));
   assert.ok(scripts.some(script => script.includes('KPTActivityIntro')));
   assert.ok(scripts.some(script => script.includes('KPTTransport')));
+  assert.ok(scripts.some(script => script.includes('KPTServicePDF')));
+  assert.ok(scripts.some(script => script.includes('KPTServiceUI')));
+  assert.ok(scripts.some(script => script.startsWith('window.SERVICE_PDF_TEMPLATES = ')));
   const githubAdmin = read('dist/admin.html');
   assert.match(githubAdmin, /src="config\.js\?v=[a-f0-9]{12}"/);
   assert.match(githubAdmin, /src="transport\.js\?v=[a-f0-9]{12}"/);
   assert.match(githubAdmin, /src="admin\.js\?v=[a-f0-9]{12}"/);
   assert.equal(read('src/transport.js').includes('portalLogin'), true);
+  assert.doesNotMatch(read('dist/index.html'), /__SERVICE_SCRIPTS__/);
+  assert.match(read('dist/index.html'), /service-ui\.js/);
+  assert.doesNotMatch(read('dist/index.html'), /pdf-lib\.min\.js/);
 });
 test('public and admin Apps Script deployments have separate scope and execution identity', () => {
   const admin = JSON.parse(read('apps-script/admin/appsscript.json'));

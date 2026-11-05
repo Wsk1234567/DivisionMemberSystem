@@ -181,3 +181,5 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 }
 
 .legend-title{background:#852b3d}.legend-guide{background:#dce8f8}.legend-example{background:#fff3b0}.legend-entry{background:#fff;border:1px solid #852b3d}
+
+.svc-checks{margin:8px 0}.svc-check-row{min-width:160px}.svc-check-row select{min-height:44px}

@@ -953,6 +953,74 @@ function rpcInternal_(request, apiEmail) {
         return { ok: true, data: { currentPhase: phase } };
       }
       if (request.action === 'installBackup') { installDailyBackup_(); return { ok: true, data: { message: 'Daily backup scheduled in Asia/Kuala_Lumpur.' } }; }
+      // --- Service Stripe & Star actions (Owner/Admin only) ---
+      if (request.action === 'serviceList') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        return { ok: true, data: serviceListResponse_(state) };
+      }
+      if (request.action === 'serviceSummary') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        return { ok: true, data: KPT.serviceSummary(state) };
+      }
+      if (request.action === 'serviceSave') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        const next = KPT.copy(state);
+        KPT.serviceSave(next, request, context);
+        commit_(next);
+        return { ok: true, data: serviceListResponse_(next) };
+      }
+      if (request.action === 'serviceSaveBatch') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        const next = KPT.copy(state);
+        KPT.serviceSaveBatch(next, request, context);
+        commit_(next);
+        return { ok: true, data: serviceListResponse_(next) };
+      }
+      if (request.action === 'serviceTransition') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        const svcContext = Object.assign({}, context, { isOwner: actor.owner });
+        const next = KPT.copy(state);
+        KPT.serviceTransition(next, request, svcContext);
+        commit_(next);
+        return { ok: true, data: serviceListResponse_(next) };
+      }
+      if (request.action === 'serviceUpload') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        const validated = serviceValidateUpload_(request);
+        // Validate target exists before creating Drive file
+        const target = request.applicationId
+          ? (state.serviceApplications || []).find(a => a.id === request.applicationId)
+          : (state.serviceBatches || []).find(b => b.id === request.batchId);
+        if (!target) throw new Error('Application or batch not found.');
+        if (['Approved', 'Recorded'].includes(target.status)) throw new Error('Target is ' + target.status + '. Reopen before adding attachments.');
+        // Store file; cleanup on failure
+        let fileId = null;
+        try {
+          fileId = serviceStoreFile_(validated.fileName, request.base64);
+          const next = KPT.copy(state);
+          KPT.serviceUploadMeta(next, Object.assign({}, request, { bytes: validated.bytes, mime: validated.mime }), context);
+          const nextTarget = request.applicationId
+            ? next.serviceApplications.find(a => a.id === request.applicationId)
+            : next.serviceBatches.find(b => b.id === request.batchId);
+          if (nextTarget && nextTarget.attachments.length) nextTarget.attachments[nextTarget.attachments.length - 1].fileId = fileId;
+          commit_(next);
+          return { ok: true, data: serviceListResponse_(next) };
+        } catch (error) {
+          if (fileId) serviceDeleteFile_(fileId);
+          throw error;
+        }
+      }
+      if (request.action === 'serviceDownload') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        return { ok: true, data: serviceDownloadFile_(state, request.attachmentId) };
+      }
+      if (request.action === 'serviceAward') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied. Only the Owner or Secretary can record awards.');
+        const next = KPT.copy(state);
+        KPT.serviceAward(next, request, context);
+        commit_(next);
+        return { ok: true, data: serviceListResponse_(next) };
+      }
       throw new Error('Unsupported request.');
     });
   } catch (error) {
@@ -1064,6 +1132,10 @@ function doPost(e) {
       }
       return apiJson_({ ok: true, data: { loggedOut: true } });
     }
+    // Anonymous service application: precise branch BEFORE any auth/Session fallback
+    if (request.action === 'submitServiceApplication') {
+      return apiJson_(serviceAnonymousSubmit_(request));
+    }
     const email = portalRequestEmail_(request);
     const result = rpcForEmail_(request, email);
     return apiJson_(result);
@@ -1089,6 +1161,10 @@ function apiRpc(request) {
         portalSessionSave_(map);
       }
       return { ok: true, data: { loggedOut: true } };
+    }
+    // Anonymous service application: precise branch BEFORE any auth/Session fallback
+    if (request.action === 'submitServiceApplication') {
+      return serviceAnonymousSubmit_(request);
     }
     let email = '';
     try {

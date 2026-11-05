@@ -13,6 +13,38 @@
   let docFolders = { templates: 'demo-templates', submissions: 'demo-submissions' };
   const demoFiles = new Map();
   const hubReadMaps = new Map();
+  // Cross-page service state sharing via localStorage (demo only, clear prefix)
+  const SVC_STORE_KEY = 'DEMO_SERVICE_STATE_V1';
+  function loadServiceState() {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(SVC_STORE_KEY) : null;
+      return raw ? JSON.parse(raw) : { serviceApplications: [], serviceBatches: [], counter: 0 };
+    } catch (e) { return { serviceApplications: [], serviceBatches: [], counter: 0 }; }
+  }
+  function saveServiceState(data) {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(SVC_STORE_KEY, JSON.stringify(data));
+    } catch (e) { /* best-effort */ }
+  }
+  // Sync service data from localStorage into in-memory state before each operation
+  function syncServiceFromStore() {
+    const stored = loadServiceState();
+    if (state) {
+      state.serviceApplications = stored.serviceApplications || [];
+      state.serviceBatches = stored.serviceBatches || [];
+    }
+    if (stored.counter > counter) counter = stored.counter;
+  }
+  // Persist service data from in-memory state after each operation
+  function syncServiceToStore() {
+    if (state) {
+      saveServiceState({
+        serviceApplications: state.serviceApplications || [],
+        serviceBatches: state.serviceBatches || [],
+        counter: counter
+      });
+    }
+  }
   const emails = {
     owner: 'preview-owner@example.test',
     admin: 'preview-secretary@example.test',
@@ -469,7 +501,82 @@
         return { currentPhase };
       }
       if (request.action === 'installBackup') return { message: 'Preview only. Daily backup is scheduled when deployed to Google.' };
+      // --- Service Stripe & Star ---
+      if (request.action === 'submitServiceApplication') {
+        syncServiceFromStore();
+        const result = KPT.serviceSubmit(state, request, context({ email: 'anonymous' }));
+        syncServiceToStore();
+        return { received: true, reference: result.reference };
+      }
+      if (request.action === 'serviceList') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        return KPT.serviceListProjection(state);
+      }
+      if (request.action === 'serviceSummary') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        return KPT.serviceSummary(state);
+      }
+      if (request.action === 'serviceSave') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        KPT.serviceSave(state, request, context());
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
+      if (request.action === 'serviceSaveBatch') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        KPT.serviceSaveBatch(state, request, context());
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
+      if (request.action === 'serviceTransition') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        KPT.serviceTransition(state, request, Object.assign(context(), { isOwner: identity().owner }));
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
+      if (request.action === 'serviceUpload') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        const rawBytes = request.base64 ? atob(request.base64).length : 0;
+        KPT.serviceUploadMeta(state, Object.assign({}, request, { bytes: rawBytes }), context());
+        // Store actual bytes in demoFiles keyed by attachment id (same-page cross-call only)
+        const target = request.applicationId
+          ? (state.serviceApplications || []).find(a => a.id === request.applicationId)
+          : (state.serviceBatches || []).find(b => b.id === request.batchId);
+        if (target && target.attachments && target.attachments.length) {
+          const lastAtt = target.attachments[target.attachments.length - 1];
+          if (request.base64) demoFiles.set(lastAtt.id, { fileName: lastAtt.fileName, mime: lastAtt.mime, base64: request.base64 });
+        }
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
+      if (request.action === 'serviceDownload') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        // Retrieve from demoFiles (same-page memory)
+        const stored = demoFiles.get(request.attachmentId);
+        if (stored) return { fileName: stored.fileName, mime: stored.mime, base64: stored.base64 };
+        // After refresh or cross-page: file content unavailable
+        throw new Error('File content unavailable after page refresh. Please re-upload the attachment.');
+      }
+      if (request.action === 'serviceAward') {
+        const id = identity();
+        if (!id.owner && !id.admin) throw new Error('Only the Owner or Secretary can record awards.');
+        syncServiceFromStore();
+        KPT.serviceAward(state, request, context());
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
       throw new Error('Unsupported preview action.');
+  }
+  function requireOwnerOrAdmin() {
+    const id = identity();
+    if (!id.owner && !id.admin) throw new Error('Access denied.');
   }
   window.KPTTransport = {
     demo: true,

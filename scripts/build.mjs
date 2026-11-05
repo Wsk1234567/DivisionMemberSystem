@@ -25,6 +25,13 @@ const financePdf = await read('src/finance-pdf.js');
 const financeTemplates = await read('src/finance-templates.js');
 const admin = await read('src/admin.js');
 const telegramBackend = await read('apps-script/admin/Telegram.gs');
+const serviceBackend = await read('apps-script/admin/ServiceApplications.gs');
+const serviceUi = await read('src/service-ui.js');
+const servicePdf = await read('src/service-pdf.js');
+const serviceTemplates = await read('src/service-pdf-templates.json');
+const pdfLibrary = await read('vendor/pdf-lib.min.js');
+const pdfHash = crypto.createHash('sha256').update(pdfLibrary).digest('hex');
+if (pdfHash !== (await read('vendor/PDF-SHA256.txt')).trim().split(/\s+/)[0]) throw new Error('PDF vendor checksum mismatch.');
 const i18n = await read('src/i18n.js');
 const activityIntro = await read('src/activity-intro.js');
 const library = await read('vendor/xlsx.full.min.js');
@@ -35,19 +42,25 @@ const adminTemplate = await read('src/admin.html');
 const inline = code => '<script>' + code.replace(/<\/script/gi, '<\\/script') + '</script>';
 const transport = (await read('src/transport.js')).replace("'__PUBLIC_URL__'", JSON.stringify(config.publicSiteUrl || ''));
 const assetVersion = crypto.createHash('sha256')
-  .update([style, domainCode, workbook, financeTemplates, financeWorkbook, financePdf, admin, transport, JSON.stringify(config)].join('\n'))
+  .update([style, domainCode, workbook, financeTemplates, financeWorkbook, financePdf, admin, transport, serviceUi, servicePdf, serviceTemplates, pdfHash, JSON.stringify(config)].join('\n'))
   .digest('hex')
   .slice(0, 12);
 const versionedScript = name => '<script src="' + name + '?v=' + assetVersion + '"></script>';
 const configScript = '<script>window.KPT_CONFIG = ' + JSON.stringify(config).replace(/</g, '\\u003c') + ';</script>';
-const productionAdmin = adminTemplate.replace('__STYLE__', () => '<style>' + style + '</style>').replace('__CONFIG__', () => configScript).replace('__LIBRARY__', () => inline(library)).replace('__DOMAIN__', () => inline(domainCode)).replace('__WORKBOOK__', () => inline(workbook)).replace('__FINANCETPL__', () => inline(financeTemplates)).replace('__FINANCEWB__', () => inline(financeWorkbook)).replace('__FINANCEPDF__', () => inline(financePdf)).replace('__TRANSPORT__', () => inline(i18n) + inline(activityIntro) + inline(transport)).replace('__ADMIN__', () => inline(admin));
-const previewAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__CONFIG__', '<script src="config.js"></script>').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__FINANCETPL__', '<script src="finance-templates.js"></script>').replace('__FINANCEWB__', '<script src="finance-workbook.js"></script>').replace('__FINANCEPDF__', '<script src="finance-pdf.js"></script>').replace('__TRANSPORT__', '<script src="i18n.js"></script><script src="activity-intro.js"></script><script src="demo-transport.js"></script>').replace('__ADMIN__', '<script src="admin.js"></script>');
-const githubAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css?v=' + assetVersion + '">').replace('__CONFIG__', versionedScript('config.js')).replace('__LIBRARY__', versionedScript('xlsx.full.min.js')).replace('__DOMAIN__', versionedScript('domain.js')).replace('__WORKBOOK__', versionedScript('workbook.js')).replace('__FINANCETPL__', versionedScript('finance-templates.js')).replace('__FINANCEWB__', versionedScript('finance-workbook.js')).replace('__FINANCEPDF__', versionedScript('finance-pdf.js')).replace('__TRANSPORT__', versionedScript('i18n.js') + versionedScript('activity-intro.js') + versionedScript('transport.js')).replace('__ADMIN__', versionedScript('admin.js'));
+const productionAdmin = adminTemplate.replace('__STYLE__', () => '<style>' + style + '</style>').replace('__CONFIG__', () => configScript).replace('__LIBRARY__', () => inline(library)).replace('__DOMAIN__', () => inline(domainCode)).replace('__WORKBOOK__', () => inline(workbook)).replace('__FINANCETPL__', () => inline(financeTemplates)).replace('__FINANCEWB__', () => inline(financeWorkbook)).replace('__FINANCEPDF__', () => inline(financePdf)).replace('__TRANSPORT__', () => inline(i18n) + inline(activityIntro) + inline(transport)).replace('__ADMIN__', () => inline(pdfLibrary) + inline('window.SERVICE_PDF_TEMPLATES = ' + serviceTemplates.replace(/</g, '\\u003c') + ';') + inline(servicePdf) + inline(serviceUi) + inline(admin));
+const previewAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css">').replace('__CONFIG__', '<script src="config.js"></script>').replace('__LIBRARY__', '<script src="xlsx.full.min.js"></script>').replace('__DOMAIN__', '<script src="domain.js"></script>').replace('__WORKBOOK__', '<script src="workbook.js"></script>').replace('__FINANCETPL__', '<script src="finance-templates.js"></script>').replace('__FINANCEWB__', '<script src="finance-workbook.js"></script>').replace('__FINANCEPDF__', '<script src="finance-pdf.js"></script>').replace('__TRANSPORT__', '<script src="i18n.js"></script><script src="activity-intro.js"></script><script src="demo-transport.js"></script>').replace('__ADMIN__', '<script src="pdf-lib.min.js"></script><script src="service-pdf-templates.js"></script><script src="service-pdf.js"></script><script src="service-ui.js"></script><script src="admin.js"></script>');
+const githubAdmin = adminTemplate.replace('__STYLE__', '<link rel="stylesheet" href="styles.css?v=' + assetVersion + '">').replace('__CONFIG__', versionedScript('config.js')).replace('__LIBRARY__', versionedScript('xlsx.full.min.js')).replace('__DOMAIN__', versionedScript('domain.js')).replace('__WORKBOOK__', versionedScript('workbook.js')).replace('__FINANCETPL__', versionedScript('finance-templates.js')).replace('__FINANCEWB__', versionedScript('finance-workbook.js')).replace('__FINANCEPDF__', versionedScript('finance-pdf.js')).replace('__TRANSPORT__', versionedScript('i18n.js') + versionedScript('activity-intro.js') + versionedScript('transport.js')).replace('__ADMIN__', versionedScript('pdf-lib.min.js') + versionedScript('service-pdf-templates.js') + versionedScript('service-pdf.js') + versionedScript('service-ui.js') + versionedScript('admin.js'));
 for (const dir of ['dist', 'preview']) {
-  await write(dir + '/index.html', await read('src/public.html'));
+  const serviceScripts = (dir === 'preview' ? '<script src="domain.js"></script><script src="demo-transport.js"></script>' : versionedScript('transport.js')) + versionedScript('service-ui.js');
+  await write(dir + '/index.html', (await read('src/public.html')).replace('__SERVICE_SCRIPTS__', serviceScripts));
   await write(dir + '/public.js', await read('src/public.js'));
   await write(dir + '/styles.css', style);
   await write(dir + '/config.js', 'window.KPT_CONFIG = ' + JSON.stringify(dir === 'preview' ? { ...config, demo: true } : config).replace(/</g, '\\u003c') + ';\n');
+  await write(dir + '/pdf-lib.min.js', pdfLibrary);
+  await write(dir + '/service-ui.js', serviceUi);
+  await write(dir + '/service-pdf.js', servicePdf);
+  await write(dir + '/service-pdf-templates.json', serviceTemplates);
+  await write(dir + '/service-pdf-templates.js', 'window.SERVICE_PDF_TEMPLATES = ' + serviceTemplates.replace(/</g, '\\u003c') + ';\n');
 }
 await write('dist/.nojekyll', '');
 await write('dist/admin.html', githubAdmin);
@@ -63,8 +76,8 @@ await write('preview/demo-public.json', JSON.stringify(domain.projectPublic(fixt
 await write('build/apps-script/admin/Admin.html', productionAdmin);
 await write('build/apps-script/admin/Domain.gs', domainCode);
 for (const project of ['admin', 'public']) for (const file of ['Code.gs', 'appsscript.json']) await write('build/apps-script/' + project + '/' + file, await read('apps-script/' + project + '/' + file));
-await write('build/apps-script/admin/Code.gs', (await read('apps-script/admin/Code.gs')) + '\n' + telegramBackend);
-const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css', 'admin.html', 'domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js', 'activity-intro.js', 'xlsx.full.min.js'];
+await write('build/apps-script/admin/Code.gs', (await read('apps-script/admin/Code.gs')) + '\n' + serviceBackend + '\n' + telegramBackend);
+const approvedFiles = ['.nojekyll', 'config.js', 'index.html', 'public.js', 'styles.css', 'admin.html', 'domain.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'admin.js', 'transport.js', 'i18n.js', 'activity-intro.js', 'xlsx.full.min.js', 'pdf-lib.min.js', 'service-ui.js', 'service-pdf.js', 'service-pdf-templates.json', 'service-pdf-templates.js'];
 const publicFiles = await fs.readdir(path.join(root, 'dist'));
 if (publicFiles.some(name => !approvedFiles.includes(name))) throw new Error('Unexpected file in public dist. Review before publishing.');
 console.log('Built TCCD public+admin site, preview, and Apps Script packages.');

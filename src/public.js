@@ -98,12 +98,13 @@
   }
   function renderNavbar(session) {
     const find = '<a href="#member-search">Find Member</a>';
+    const service = '<a href="#service-apply" id="nav-service">Service award</a>';
     if (!session) {
-      nav.innerHTML = find + '<a id="login-link" class="button primary portal-login" target="_top" href="' + escape(loginHref()) + '">Login</a>';
+      nav.innerHTML = find + service + '<a id="login-link" class="button primary portal-login" target="_top" href="' + escape(loginHref()) + '">Login</a>';
       bindTopLinks();
       return;
     }
-    const parts = [find];
+    const parts = [find, service];
     if (session.treasurer) parts.push('<a class="portal-link treasurer" href="' + escape(workspaceHref('treasurer')) + '">Treasurer Work</a>');
     if (session.admin || session.owner) parts.push('<a class="portal-link admin" href="' + escape(workspaceHref('admin')) + '">Admin Work</a>');
     (session.packages || []).forEach(pkg => {
@@ -161,4 +162,42 @@
       byId('results').innerHTML = '<div class="card empty" style="grid-column:1/-1"><strong>Search unavailable</strong>Please retry when the connection is available.</div>';
     } finally { button.disabled = false; button.textContent = 'Search members'; }
   });
+
+  // ---- Service Stripe & Star application (public, anonymous) ----
+  // The transport + service modules arrive via __SERVICE_SCRIPTS__ (build injects
+  // domain + transport + service-applications + service-pdf + service-ui).
+  const serviceHost = byId('service-apply');
+  const serviceOpen = byId('service-open');
+  const serviceTeaser = byId('service-teaser');
+  let serviceMounted = false;
+  function mountServiceForm() {
+    if (serviceMounted) return true;
+    if (!window.KPTServiceUI || !window.KPTServiceUI.renderPublicForm) return false;
+    if (!window.KPTTransport || typeof window.KPTTransport.call !== 'function') return false;
+    window.KPTServiceUI.renderPublicForm(serviceHost, {
+      call: request => window.KPTTransport.call(request)
+    });
+    serviceMounted = true;
+    return true;
+  }
+  function openServiceForm() {
+    if (serviceTeaser) serviceTeaser.hidden = true;
+    if (serviceHost) serviceHost.hidden = false;
+    if (mountServiceForm()) {
+      const heading = serviceHost.querySelector('h2');
+      if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus(); }
+      return;
+    }
+    if (serviceHost) {
+      serviceHost.hidden = false;
+      serviceHost.innerHTML = '<div class="card empty"><strong>The application form is not ready yet.</strong>Please refresh the page in a moment.</div>';
+    }
+  }
+  if (serviceOpen) serviceOpen.addEventListener('click', openServiceForm);
+  // Deep link: #service-apply opens the form directly.
+  function openServiceFromHash() {
+    if (String(location.hash || '').replace(/^#/, '') === 'service-apply') openServiceForm();
+  }
+  window.addEventListener('hashchange', openServiceFromHash);
+  openServiceFromHash();
 })();

@@ -60,7 +60,7 @@
   const yearOf = value => Number(str(value).slice(0, 4));
   const tables = Object.keys(fields);
   function empty() {
-    const state = { schema: 1, revision: 0, sequence: 0, updatedAt: '', publishedRevision: -1, audit: [], trash: [], notificationEvents: [], finAttachments: [] };
+    const state = { schema: 1, revision: 0, sequence: 0, updatedAt: '', publishedRevision: -1, audit: [], trash: [], notificationEvents: [], finAttachments: [], serviceApplications: [], serviceBatches: [] };
     tables.forEach(table => { state[table] = []; });
     ['EFA', 'BFA', 'Home Nursing', 'AFA'].forEach((name, index) => state.Catalog.push({ id: 'CAT-' + (index + 1), version: 1, code: '', sortOrder: index + 1, kind: 'Exam', category: '', name, level: '', eligibilityMetric: '', eligibilityThreshold: null, archived: false }));
     return state;
@@ -70,6 +70,8 @@
     state.trash = Array.isArray(state.trash) ? state.trash : [];
     state.notificationEvents = Array.isArray(state.notificationEvents) ? state.notificationEvents : [];
     state.finAttachments = Array.isArray(state.finAttachments) ? state.finAttachments : [];
+    state.serviceApplications = Array.isArray(state.serviceApplications) ? state.serviceApplications : [];
+    state.serviceBatches = Array.isArray(state.serviceBatches) ? state.serviceBatches : [];
     tables.forEach(table => { if (!Array.isArray(state[table])) state[table] = []; });
     state.Catalog = (state.Catalog || []).map((row, index) => Object.assign({ code: '', sortOrder: index + 1, eligibilityMetric: '', eligibilityThreshold: null }, row));
     state.Awards = (state.Awards || []).map(row => {
@@ -1413,7 +1415,463 @@
       studioUnread: Object.freeze(studioUnread)
     });
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment };
+  // --- Service Stripe & Star applications (pure helpers) ---
+  const SERVICE_STATUSES = ['PendingSecretary', 'Preparing', 'AwaitingSignature', 'AwaitingOwner', 'Ready', 'Submitted', 'NeedsInfo', 'Approved', 'Recorded'];
+  const SERVICE_TRANSITIONS = {
+    PendingSecretary: ['Preparing', 'NeedsInfo'],
+    Preparing: ['AwaitingSignature', 'AwaitingOwner', 'Ready', 'NeedsInfo', 'PendingSecretary'],
+    AwaitingSignature: ['Preparing', 'AwaitingOwner', 'Ready', 'NeedsInfo'],
+    AwaitingOwner: ['Preparing', 'Ready', 'NeedsInfo'],
+    Ready: ['Submitted', 'Preparing', 'NeedsInfo'],
+    Submitted: ['Approved', 'NeedsInfo'],
+    NeedsInfo: ['PendingSecretary', 'Preparing'],
+    Approved: ['Recorded'],
+    Recorded: []
+  };
+  function serviceValidateApplicant(applicant) {
+    if (!applicant || typeof applicant !== 'object') fail('Applicant data is required.');
+    const name = str(applicant.name);
+    const ic = str(applicant.ic);
+    if (!name) fail('Applicant name is required.');
+    if (!ic) fail('Applicant IC is required.');
+    if (name.length > 200) fail('Applicant name is too long.');
+    if (ic.length > 50) fail('Applicant IC is too long.');
+    return {
+      name, ic,
+      gender: str(applicant.gender).slice(0, 20),
+      rank: str(applicant.rank).slice(0, 50),
+      joined: str(applicant.joined).slice(0, 10),
+      phone: str(applicant.phone).slice(0, 30),
+      email: str(applicant.email).slice(0, 100),
+      occupation: str(applicant.occupation).slice(0, 100)
+    };
+  }
+  function serviceSubmit(state, request, context) {
+    const applicant = serviceValidateApplicant(request.applicant);
+    let declaredYear = request.declaredYear == null ? null : Number(request.declaredYear);
+    if (declaredYear != null && ![1, 2, 3, 4, 5].includes(declaredYear)) fail('Declared year must be 1-5 or blank.');
+    const clientRequestId = str(request.clientRequestId).slice(0, 100);
+    if (!clientRequestId) fail('Request ID is required.');
+    state.serviceApplications = Array.isArray(state.serviceApplications) ? state.serviceApplications : [];
+    const existing = state.serviceApplications.find(row => row.clientRequestId === clientRequestId);
+    if (existing) return { reference: existing.id, deduplicated: true };
+    const app = {
+      id: 'SVC-' + context.uuid(),
+      version: 1,
+      createdAt: context.now,
+      clientRequestId,
+      applicant,
+      declaredYear,
+      confirmedYear: null,
+      memberId: '',
+      year: new Date(context.now).getFullYear(),
+      status: 'PendingSecretary',
+      remarks: '',
+      attachments: [],
+      ownerApproved: false
+    };
+    state.serviceApplications.push(app);
+    return { reference: app.id, deduplicated: false };
+  }
+  function serviceListProjection(state) {
+    return { applications: copy(state.serviceApplications || []), batches: copy(state.serviceBatches || []) };
+  }
+  function serviceSave(state, request, context) {
+    const input = request.application;
+    if (!input || typeof input !== 'object') fail('Application data is required.');
+    const id = str(input.id);
+    const app = (state.serviceApplications || []).find(row => row.id === id);
+    if (!app) fail('Application not found.');
+    if (input.version == null) fail('Version is required for editing.');
+    if (Number(input.version) !== app.version) fail('Conflict: application changed. Reload first.');
+    if (['Approved', 'Recorded'].includes(app.status)) {
+      fail('Application is ' + app.status + '. Use reopen (NeedsInfo) before editing.');
+    }
+    // Phase 1: validate ALL changes on a temp copy before mutating
+    const draft = copy(app);
+    let contentChanged = false;
+    if (input.applicant && typeof input.applicant === 'object') {
+      const corrected = serviceValidateApplicant(input.applicant);
+      if (JSON.stringify(corrected) !== JSON.stringify(app.applicant)) contentChanged = true;
+      draft.applicant = corrected;
+    }
+    if (input.reference !== undefined) {
+      const ref = str(input.reference).slice(0, 100);
+      if (ref !== (app.reference || '')) contentChanged = true;
+      draft.reference = ref;
+    }
+    if (input.memberId !== undefined) {
+      const mid = str(input.memberId).slice(0, 50);
+      if (mid) {
+        const member = (state.Members || []).find(row => row.id === mid);
+        if (!member) fail('Member ID「' + mid + '」does not exist in the system.');
+        if (member.ic && draft.applicant.ic && icKey(member.ic) !== icKey(draft.applicant.ic) && !input.confirmIcMismatch) {
+          fail('Member IC does not match applicant IC. Set confirmIcMismatch after manual verification.');
+        }
+      }
+      if (mid !== app.memberId) contentChanged = true;
+      draft.memberId = mid;
+    }
+    if (input.confirmedYear !== undefined) {
+      const cy = input.confirmedYear == null ? null : Number(input.confirmedYear);
+      if (cy != null && ![1, 2, 3, 4, 5].includes(cy)) fail('Confirmed year must be 1-5 or blank.');
+      if (cy !== app.confirmedYear) contentChanged = true;
+      draft.confirmedYear = cy;
+    }
+    if (input.year !== undefined) {
+      const y = Number(input.year);
+      if (!Number.isInteger(y) || y < 2000 || y > 2100) fail('Year must be 2000-2100.');
+      if (y !== app.year) contentChanged = true;
+      draft.year = y;
+    }
+    if (input.declaredYear !== undefined) {
+      const dy = input.declaredYear == null ? null : Number(input.declaredYear);
+      if (dy != null && ![1, 2, 3, 4, 5].includes(dy)) fail('Declared year must be 1-5 or blank.');
+      if (dy !== app.declaredYear) contentChanged = true;
+      draft.declaredYear = dy;
+    }
+    if (input.remarks !== undefined) {
+      const r = str(input.remarks).slice(0, 2000);
+      if (r !== app.remarks) contentChanged = true;
+      draft.remarks = r;
+    }
+    if (contentChanged && ['Ready', 'Submitted'].includes(app.status)) {
+      draft.ownerApproved = false;
+      draft.status = 'Preparing';
+    }
+    draft.version = app.version + 1;
+    // Phase 2: commit all changes at once
+    Object.assign(app, draft);
+    (state.serviceBatches || []).forEach(b => {
+      if ((b.applicationIds || []).includes(app.id)) b.ownerApproved = false;
+    });
+    return app.id;
+  }
+  function serviceSaveBatch(state, request, context) {
+    const input = request.batch;
+    if (!input || typeof input !== 'object') fail('Batch data is required.');
+    state.serviceBatches = Array.isArray(state.serviceBatches) ? state.serviceBatches : [];
+    state.serviceApplications = Array.isArray(state.serviceApplications) ? state.serviceApplications : [];
+    const id = str(input.id);
+    let batch = id ? state.serviceBatches.find(row => row.id === id) : null;
+    if (id && !batch) fail('Batch not found.');
+    if (batch) {
+      if (input.version == null) fail('Version is required for editing.');
+      if (Number(input.version) !== batch.version) fail('Conflict: batch changed. Reload first.');
+    }
+    const year = Number(input.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) fail('Batch year must be 2000-2100.');
+    const title = str(input.title);
+    if (!title) fail('Batch title is required.');
+    const applicationIds = Array.isArray(input.applicationIds) ? input.applicationIds.map(str).filter(Boolean).slice(0, 500) : [];
+    // Empty applicationIds allowed for Preparing draft; formal nodes enforce non-empty in serviceTransition
+    // Validate all application IDs exist and share the same year (if any provided)
+    for (const aid of applicationIds) {
+      const app = state.serviceApplications.find(row => row.id === aid);
+      if (!app) fail('Application ' + aid + ' not found.');
+      if (Number(app.year) !== year) fail('Application ' + aid + ' has year ' + app.year + ', batch expects ' + year + '.');
+    }
+    // Same app cannot join multiple unfinished batches
+    const finishedStatuses = ['Approved', 'Recorded', 'NeedsInfo'];
+    for (const aid of applicationIds) {
+      const otherBatch = state.serviceBatches.find(b =>
+        b.id !== id && (b.applicationIds || []).includes(aid) && !finishedStatuses.includes(b.status)
+      );
+      if (otherBatch) fail('Application ' + aid + ' is already in unfinished batch「' + otherBatch.title + '」. Finish or remove it first.');
+    }
+    if (!batch) {
+      batch = { id: 'SVCB-' + context.uuid(), version: 1, year, title, applicationIds, status: 'Preparing', remarks: '', attachments: [], ownerApproved: false };
+      state.serviceBatches.push(batch);
+    } else {
+      if (batch.year !== year || batch.title !== title || JSON.stringify(batch.applicationIds) !== JSON.stringify(applicationIds)) batch.ownerApproved = false;
+      batch.year = year;
+      batch.title = title;
+      batch.applicationIds = applicationIds;
+      if (input.remarks !== undefined) batch.remarks = str(input.remarks).slice(0, 2000);
+      // Save batch.checks (8 whitelist items, Y/N/blank)
+      if (input.checks !== undefined) {
+        const validKeys = ['covering', 'support', 'applicationForms', 'dutyBook', 'dutyDetails', 'typeHours', 'approvedSigned', 'totalHours'];
+        const validVals = ['', 'Y', 'N'];
+        const checks = {};
+        for (const k of validKeys) {
+          const v = str(input.checks && input.checks[k]).toUpperCase();
+          checks[k] = validVals.includes(v) ? v : '';
+        }
+        if (JSON.stringify(checks) !== JSON.stringify(batch.checks || {})) {
+          batch.ownerApproved = false; // content change invalidates approval
+          batch.checks = checks;
+        }
+      }
+      batch.version++;
+    }
+    // New batch: also accept checks
+    if (!batch.checks && input.checks !== undefined) {
+      const validKeys = ['covering', 'support', 'applicationForms', 'dutyBook', 'dutyDetails', 'typeHours', 'approvedSigned', 'totalHours'];
+      const validVals = ['', 'Y', 'N'];
+      const checks = {};
+      for (const k of validKeys) {
+        const v = str(input.checks && input.checks[k]).toUpperCase();
+        checks[k] = validVals.includes(v) ? v : '';
+      }
+      batch.checks = checks;
+    }
+    return batch.id;
+  }
+  function serviceRequiredSignedKinds(year) {
+    const y = Number(year);
+    if (y === 1 || y === 2) return ['signedStripe'];
+    if (y === 3 || y === 5) return ['signedStar'];
+    if (y === 4) return ['signedStripe', 'signedStar'];
+    return [];
+  }
+  function serviceValidateSigned(app, forReady) {
+    const kinds = (app.attachments || []).filter(a => a.active).map(a => a.kind);
+    const needed = serviceRequiredSignedKinds(app.confirmedYear);
+    for (const k of needed) {
+      if (!kinds.includes(k)) fail('Year ' + app.confirmedYear + ' requires ' + k + ' attachment' + (forReady ? ' before approval' : ' before owner review') + '.');
+    }
+  }
+  function serviceTransition(state, request, context) {
+    const status = str(request.status);
+    if (!SERVICE_STATUSES.includes(status)) fail('Invalid status: ' + status);
+    const remarks = str(request.remarks || '').slice(0, 2000);
+    const isOwner = !!(context && context.isOwner);
+    // submittedAt server-side date validation
+    if (request.submittedAt) {
+      const d = str(request.submittedAt);
+      if (!/^\d{4}-\d{2}-\d{2}/.test(d)) fail('submittedAt must be YYYY-MM-DD format.');
+    }
+    if (request.applicationId) {
+      const app = (state.serviceApplications || []).find(row => row.id === str(request.applicationId));
+      if (!app) fail('Application not found.');
+      if (request.version == null) fail('Version is required.');
+      if (Number(request.version) !== app.version) fail('Conflict: application changed. Reload first.');
+      // Approved/Recorded locked from casual transitions (except explicit reopen path)
+      if (['Approved', 'Recorded'].includes(app.status) && !['NeedsInfo'].includes(status)) {
+        fail('Application is ' + app.status + '. Use reopen (NeedsInfo) before further changes.');
+      }
+      const allowed = SERVICE_TRANSITIONS[app.status] || [];
+      if (!allowed.includes(status)) fail('Cannot change status from ' + app.status + ' to ' + status + '.');
+      // Direct transition to Recorded is forbidden (must go through serviceAward)
+      if (status === 'Recorded') fail('Use serviceAward to record the award; direct Recorded transition is not allowed.');
+      // Owner exclusive: only Owner can set Ready
+      if (status === 'Ready' && !isOwner) fail('Only the Owner can approve for submission (Ready).');
+      // Signed forms required by year before AwaitingOwner
+      if (status === 'AwaitingOwner') {
+        serviceValidateSigned(app, false);
+      }
+      // Ready requires: memberId, confirmedYear, duty, signed forms, ownerApproved
+      if (status === 'Ready') {
+        if (!app.memberId) fail('Bind a member before owner approval.');
+        if (app.confirmedYear == null) fail('Confirm the efficient year before owner approval.');
+        const kinds = (app.attachments || []).filter(a => a.active).map(a => a.kind);
+        if (!kinds.includes('duty')) fail('Duty records must be uploaded before owner approval.');
+        serviceValidateSigned(app, true);
+        app.ownerApproved = true;
+      }
+      // Submitted requires ownerApproved still true
+      if (status === 'Submitted' && !app.ownerApproved) {
+        fail('Owner approval was invalidated. Re-approve before submitting.');
+      }
+      app.status = status;
+      if (remarks) app.remarks = remarks;
+      if (request.submittedAt) app.submittedAt = str(request.submittedAt).slice(0, 30);
+      app.version++;
+      // Any app change invalidates parent batch approval
+      (state.serviceBatches || []).forEach(b => {
+        if ((b.applicationIds || []).includes(app.id)) b.ownerApproved = false;
+      });
+      return { type: 'application', id: app.id };
+    }
+    if (request.batchId) {
+      const batch = (state.serviceBatches || []).find(row => row.id === str(request.batchId));
+      if (!batch) fail('Batch not found.');
+      if (request.version == null) fail('Version is required.');
+      if (Number(request.version) !== batch.version) fail('Conflict: batch changed. Reload first.');
+      if (['Approved', 'Recorded'].includes(batch.status) && !['NeedsInfo'].includes(status)) {
+        fail('Batch is ' + batch.status + '. Use reopen (NeedsInfo) before further changes.');
+      }
+      const allowed = SERVICE_TRANSITIONS[batch.status] || [];
+      if (!allowed.includes(status)) fail('Cannot change status from ' + batch.status + ' to ' + status + '.');
+      if (status === 'Recorded') fail('Batch cannot go directly to Recorded.');
+      // Collect child apps
+      const childApps = (state.serviceApplications || []).filter(a => (batch.applicationIds || []).includes(a.id));
+      // Batch-level attachment kinds (combinedDuty/signedStripe/signedStar)
+      const batchKinds = (batch.attachments || []).filter(a => a.active).map(a => a.kind);
+      if (status === 'Ready') {
+        if (!isOwner) fail('Only the Owner can approve batch for submission (Ready).');
+        if (!childApps.length) fail('Batch must contain at least one application.');
+        // Validate ALL children before setting any
+        for (const a of childApps) {
+          if (!a.memberId) fail('Application ' + a.id + ' has no member bound.');
+          if (a.confirmedYear == null) fail('Application ' + a.id + ' has no confirmed year.');
+          // Duty: app-level or batch-level combinedDuty
+          const appKinds = (a.attachments || []).filter(x => x.active).map(x => x.kind);
+          const hasDuty = appKinds.includes('duty') || batchKinds.includes('combinedDuty');
+          if (!hasDuty) fail('Application ' + a.id + ' missing duty records (upload per-app or batch combinedDuty).');
+          // Signed: app-level or batch-level combined signed forms
+          const needed = serviceRequiredSignedKinds(a.confirmedYear);
+          for (const k of needed) {
+            const batchK = k === 'signedStripe' ? 'combinedSignedStripe' : k === 'signedStar' ? 'combinedSignedStar' : '';
+            const hasSigned = appKinds.includes(k) || (batchK && batchKinds.includes(batchK));
+            if (!hasSigned) fail('Application ' + a.id + ' missing ' + k + ' (upload per-app or batch combined form).');
+          }
+        }
+        // All valid: set batch AND all children to Ready + ownerApproved atomically
+        batch.ownerApproved = true;
+        batch.status = 'Ready';
+        childApps.forEach(a => {
+          a.ownerApproved = true;
+          a.status = 'Ready';
+          a.version++;
+        });
+      } else if (status === 'Submitted') {
+        if (!batch.ownerApproved) fail('Batch owner approval was invalidated. Re-approve before submitting.');
+        // Verify all children still valid and approved
+        for (const a of childApps) {
+          if (!a.ownerApproved) fail('Application ' + a.id + ' approval was invalidated. Re-approve before submitting.');
+          if (!['Ready', 'Preparing'].includes(a.status) && a.status !== 'Submitted') {
+            // Child must be Ready (from batch approval) to submit
+          }
+        }
+        batch.status = 'Submitted';
+        childApps.forEach(a => {
+          if (['Ready', 'Preparing'].includes(a.status)) {
+            a.status = 'Submitted';
+            if (request.submittedAt) a.submittedAt = str(request.submittedAt).slice(0, 30);
+            a.version++;
+          }
+        });
+      } else if (status === 'Approved') {
+        batch.status = 'Approved';
+        childApps.forEach(a => {
+          if (['Submitted', 'Ready'].includes(a.status)) {
+            a.status = 'Approved';
+            a.version++;
+          }
+        });
+      } else if (status === 'NeedsInfo') {
+        batch.ownerApproved = false;
+        batch.status = 'NeedsInfo';
+        childApps.forEach(a => {
+          if (!['Recorded', 'Approved'].includes(a.status)) {
+            a.ownerApproved = false;
+            a.status = 'NeedsInfo';
+            a.version++;
+          }
+        });
+      } else {
+        batch.status = status;
+      }
+      if (remarks) batch.remarks = remarks;
+      if (request.submittedAt) batch.submittedAt = str(request.submittedAt).slice(0, 30);
+      batch.version++;
+      return { type: 'batch', id: batch.id, childCount: childApps.length };
+    }
+    fail('Application or batch ID is required.');
+  }
+  function serviceUploadMeta(state, request, context) {
+    const kind = str(request.kind);
+    const validKinds = ['duty', 'signedStripe', 'signedStar', 'covering', 'support', 'reply', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar'];
+    if (!validKinds.includes(kind)) fail('Invalid attachment kind: ' + kind);
+    // Combined kinds only allowed on batch
+    if (kind.startsWith('combined') && !request.batchId) fail('Combined forms can only be uploaded to a batch.');
+    if (!kind.startsWith('combined') && request.batchId && !['covering', 'support', 'reply'].includes(kind)) {
+      fail('Per-application forms (duty/signed) must be uploaded to individual applications, not batch. Use combinedDuty/combinedSignedStripe/combinedSignedStar for batch-level.');
+    }
+    const fileName = str(request.fileName).slice(0, 200);
+    const mime = str(request.mime).slice(0, 100);
+    if (!fileName) fail('File name is required.');
+    const attachment = { id: 'SVCA-' + context.uuid(), kind, fileName, mime, bytes: Number(request.bytes) || 0, uploadedBy: str(context.actor), uploadedAt: context.now, active: true };
+    if (request.applicationId) {
+      const app = (state.serviceApplications || []).find(row => row.id === str(request.applicationId));
+      if (!app) fail('Application not found.');
+      if (['Approved', 'Recorded'].includes(app.status)) fail('Application is ' + app.status + '. Reopen before adding attachments.');
+      app.attachments = Array.isArray(app.attachments) ? app.attachments : [];
+      app.attachments.push(attachment);
+      // 'reply' is not a content change to original documents — do NOT demote Submitted
+      if (kind !== 'reply' && ['Ready', 'Submitted'].includes(app.status)) {
+        app.ownerApproved = false;
+        app.status = 'Preparing';
+      }
+      app.version++;
+      // App change invalidates parent batch approval
+      (state.serviceBatches || []).forEach(b => {
+        if ((b.applicationIds || []).includes(app.id)) b.ownerApproved = false;
+      });
+      return { type: 'application', id: app.id, attachment };
+    }
+    if (request.batchId) {
+      const batch = (state.serviceBatches || []).find(row => row.id === str(request.batchId));
+      if (!batch) fail('Batch not found.');
+      if (['Approved', 'Recorded'].includes(batch.status)) fail('Batch is ' + batch.status + '. Reopen before adding attachments.');
+      batch.attachments = Array.isArray(batch.attachments) ? batch.attachments : [];
+      batch.attachments.push(attachment);
+      if (kind !== 'reply' && ['Ready', 'Submitted'].includes(batch.status)) {
+        batch.ownerApproved = false;
+        batch.status = 'Preparing';
+      }
+      batch.version++;
+      return { type: 'batch', id: batch.id, attachment };
+    }
+    fail('Application or batch ID is required.');
+  }
+  function serviceAward(state, request, context) {
+    const app = (state.serviceApplications || []).find(row => row.id === str(request.applicationId));
+    if (!app) fail('Application not found.');
+    if (request.version == null) fail('Version is required.');
+    if (Number(request.version) !== app.version) fail('Conflict: application changed. Reload first.');
+    if (app.status !== 'Approved') fail('Application must be Approved before recording the award.');
+    if (!app.ownerApproved) fail('Owner approval evidence missing. Re-approve before recording.');
+    if (!app.memberId) fail('Bind a member before recording the award.');
+    const member = (state.Members || []).find(row => row.id === app.memberId);
+    if (!member) fail('Linked member not found.');
+    const date = str(request.date);
+    const certificate = str(request.certificate).slice(0, 100);
+    if (!date) fail('Award date is required.');
+    if (app.awardDate) fail('Award already recorded for this application.');
+    const cy = Number(app.confirmedYear);
+    if (![1, 2, 3, 4, 5].includes(cy)) fail('Confirmed year must be 1-5 before recording.');
+    const catalogEntry = (state.Catalog || []).find(row =>
+      row.kind === 'Award' && !row.archived &&
+      row.category === 'Service Stripe & Star' &&
+      row.code === 'SERVICE_YEAR_' + cy
+    );
+    if (!catalogEntry) fail('Catalog entry SERVICE_YEAR_' + cy + ' not found. Run System Setup first.');
+    const existing = (state.Awards || []).find(row => row.memberId === app.memberId && row.catalogId === catalogEntry.id);
+    if (existing) fail('This member already has the same Service Stripe & Star award' + (existing.archived ? ' (archived records still count as issued).' : '.'));
+    const award = {
+      id: 'AWD-' + context.uuid(),
+      version: 1,
+      memberId: app.memberId,
+      catalogId: catalogEntry.id,
+      category: catalogEntry.category,
+      name: catalogEntry.name,
+      level: catalogEntry.level,
+      date,
+      certificate,
+      notes: 'Service application ' + app.id,
+      archived: false
+    };
+    state.Awards = state.Awards || [];
+    state.Awards.push(award);
+    app.awardDate = date;
+    app.awardCertificate = certificate;
+    app.awardId = award.id;
+    app.status = 'Recorded';
+    app.version++;
+    return { applicationId: app.id, awardId: award.id };
+  }
+  function serviceSummary(state) {
+    const apps = state.serviceApplications || [];
+    const batches = state.serviceBatches || [];
+    const unreadCount = apps.filter(a => ['PendingSecretary', 'NeedsInfo'].includes(a.status)).length;
+    const ownerReviewCount = apps.filter(a => a.status === 'AwaitingOwner').length + batches.filter(b => b.status === 'AwaitingOwner').length;
+    // changeKey: stable hash of last modification for cheap polling
+    const lastMod = apps.reduce((m, a) => Math.max(m, Date.parse(a.createdAt) || 0), 0) + apps.length * 1000 + batches.length * 100;
+    return { unreadCount, ownerReviewCount, changeKey: String(lastMod) };
+  }
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceAward, serviceRequiredSignedKinds, serviceSummary };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

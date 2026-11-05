@@ -8,6 +8,7 @@
   <a class="brand" href="./"><span class="brand-mark">TCCD</span><span><span class="brand-name">Division system</span><span class="brand-sub" id="organization">SMJK Triang Combined Cadet Division</span></span></a>
   <nav class="portal-nav" id="portal-nav" aria-label="Primary">
     <a href="#member-search">Find Member</a>
+    <a href="#service-apply">Service award</a>
     <a id="login-link" class="button primary portal-login" href="#">Login</a>
   </nav>
 </header>
@@ -32,10 +33,22 @@
   </form>
   <p class="hint">Names support partial matches. Enter the complete SJAM ID for an exact match.</p>
 </section>
+<section class="card service-teaser" id="service-teaser" aria-labelledby="service-teaser-title">
+  <div class="section-heading" style="margin-top:0"><div>
+    <div class="eyebrow">Service award</div>
+    <h2 id="service-teaser-title" style="margin:0">Service Stripe &amp; Star application</h2>
+  </div></div>
+  <p>Members who met the Efficient standard can apply here. Fill in your own details and tell us how many Efficient years you have — the office checks every year against the records.</p>
+  <div class="toolbar">
+    <button class="button primary" type="button" id="service-open">Open the application form</button>
+  </div>
+</section>
+<section id="service-apply" class="service-apply-host" hidden aria-live="polite"></section>
 <div id="message" class="message" role="status" aria-live="polite"></div>
 <div class="section-heading"><h2 id="results-title">Member records</h2><small id="updated"></small></div>
 <section id="results" class="results" aria-live="polite"><div class="card empty" style="grid-column:1/-1"><strong>Your search starts here</strong>Enter a member name or SJAM ID to view their achievements.</div></section>
 <footer class="public-footer"><span id="region">Kawasan Pahang Tengah</span><span>Member &amp; award directory · TCCD</span></footer>
 </main>
 <script src="config.js"></script><script src="public.js"></script>
+__SERVICE_SCRIPTS__
 </body></html>
