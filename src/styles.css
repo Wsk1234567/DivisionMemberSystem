@@ -183,3 +183,22 @@ body[data-mode="owner"] .finance-row,body[data-mode="owner"] .how-card{backgroun
 .legend-title{background:#852b3d}.legend-guide{background:#dce8f8}.legend-example{background:#fff3b0}.legend-entry{background:#fff;border:1px solid #852b3d}
 
 .svc-checks{margin:8px 0}.svc-check-row{min-width:160px}.svc-check-row select{min-height:44px}
+
+.svc-admin .svc-step {
+  min-width: 0;
+  margin: 0 0 1rem;
+  padding: clamp(.75rem, 2vw, 1.25rem);
+  border: 1px solid var(--line, #d8dbe2);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+.svc-admin .svc-step-heading { margin: 0 0 .85rem; }
+.svc-admin .svc-step-number { color: var(--accent, #762139); font-weight: 700; }
+.svc-admin .svc-substep + .svc-substep {
+  border-top: 1px solid var(--line, #d8dbe2);
+  margin-top: .85rem;
+  padding-top: .85rem;
+}
+.svc-admin .svc-substep h4 { margin: 0 0 .5rem; }
+.svc-admin .svc-detail { margin-top: 1rem; }
+.svc-admin .svc-step > .toolbar { flex-wrap: wrap; }
