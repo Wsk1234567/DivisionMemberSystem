@@ -85,7 +85,7 @@ test('serviceTransition: state graph enforced, cannot jump to Recorded/Approved'
   assert.equal(s.serviceApplications[0].status, 'Preparing');
 });
 
-test('serviceTransition: Owner exclusive for Ready, 4th year requires dual signed', () => {
+test('serviceTransition: Secretary can mark Ready, 4th year requires both signed forms', () => {
   const s = makeState();
   KPT.serviceSubmit(s, { applicant: { name: 'J', ic: 'I' }, declaredYear: 4, clientRequestId: 'r1' }, ctx());
   const c = ctx();
@@ -95,15 +95,10 @@ test('serviceTransition: Owner exclusive for Ready, 4th year requires dual signe
   s.serviceApplications[0].confirmedYear = 4;
   s.serviceApplications[0].attachments = [{ id: 'a1', kind: 'duty', active: true }];
   KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'AwaitingSignature' }, c);
-  // 4th year: AwaitingSignature -> AwaitingOwner requires dual signed
-  assert.throws(() => KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'AwaitingOwner' }, c), /signedStripe|signedStar|Year 4/);
+  assert.throws(() => KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'Ready' }, c), /signedStripe|signedStar|Year 4/);
   s.serviceApplications[0].attachments.push({ id: 'a2', kind: 'signedStripe', active: true }, { id: 'a3', kind: 'signedStar', active: true });
-  KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'AwaitingOwner' }, c);
-  assert.equal(s.serviceApplications[0].status, 'AwaitingOwner');
-  // Non-owner cannot set Ready
-  assert.throws(() => KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'Ready' }, { ...c, isOwner: false }), /Only the Owner/);
-  // Owner can set Ready
-  KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'Ready' }, { ...c, isOwner: true });
+  KPT.serviceTransition(s, { applicationId: s.serviceApplications[0].id, version: s.serviceApplications[0].version, status: 'Ready' }, c);
+  assert.equal(KPT.serviceSummary(s).ownerReviewCount, 1);
   assert.equal(s.serviceApplications[0].status, 'Ready');
   assert.equal(s.serviceApplications[0].ownerApproved, true);
 });
@@ -123,7 +118,7 @@ test('serviceTransition: Ready requires memberId, confirmedYear, duty attachment
   assert.throws(() => KPT.serviceTransition(s, { applicationId: app.id, version: s.serviceApplications[0].version, status: 'Ready' }, { ...ctx(), isOwner: true }), /Duty/);
 });
 
-test('serviceAward: creates real Awards record with SERVICE_YEAR mapping, requires Approved+ownerApproved', () => {
+test('serviceAward: creates real Awards record with SERVICE_YEAR mapping, requires Approved and preparation confirmation', () => {
   const s = makeState();
   KPT.serviceSubmit(s, { applicant: { name: 'J', ic: '123456-78-9012' }, clientRequestId: 'r1' }, ctx());
   const app = s.serviceApplications[0];
@@ -146,7 +141,7 @@ test('serviceAward: not Approved fails, no ownerApproved fails, no catalog entry
   assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /Approved/);
   // Approved but no ownerApproved
   app.status = 'Approved';
-  assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /Owner approval/);
+  assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /Preparation confirmation/);
   // Year 2 has no catalog entry in our fixture
   app.ownerApproved = true;
   assert.throws(() => KPT.serviceAward(s, { applicationId: app.id, version: app.version, date: '2026-11-01' }, ctx()), /SERVICE_YEAR_2/);

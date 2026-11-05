@@ -475,7 +475,7 @@
     // Partial update only — never re-render the page (would clobber dirty inputs).
     const serviceBtn = byId('navigation') ? byId('navigation').querySelector('[data-nav="Service"]') : null;
     if (!serviceBtn) return;
-    const total = Number(serviceSummary.unreadCount || 0) + Number(serviceSummary.ownerReviewCount || 0);
+    const total = Number(serviceSummary.unreadCount || 0) + (user && user.owner ? Number(serviceSummary.ownerReviewCount || 0) : 0);
     let badge = serviceBtn.querySelector('.hub-badge');
     if (!total) {
       if (badge) badge.remove();
@@ -852,7 +852,7 @@
     // Service badge: updated in place by the 5s summary poll, never by re-render.
     const serviceBtn = byId('navigation').querySelector('[data-nav="Service"]');
     if (serviceBtn && serviceSummary) {
-      const total = Number(serviceSummary.unreadCount || 0) + Number(serviceSummary.ownerReviewCount || 0);
+      const total = Number(serviceSummary.unreadCount || 0) + (user && user.owner ? Number(serviceSummary.ownerReviewCount || 0) : 0);
       if (total > 0) {
         const badge = document.createElement('span');
         badge.className = 'hub-badge';

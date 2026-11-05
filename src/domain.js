@@ -1422,7 +1422,7 @@
     Preparing: ['AwaitingSignature', 'AwaitingOwner', 'Ready', 'NeedsInfo', 'PendingSecretary'],
     AwaitingSignature: ['Preparing', 'AwaitingOwner', 'Ready', 'NeedsInfo'],
     AwaitingOwner: ['Preparing', 'Ready', 'NeedsInfo'],
-    Ready: ['Submitted', 'Preparing', 'NeedsInfo'],
+    Ready: ['Ready', 'Submitted', 'Preparing', 'NeedsInfo'],
     Submitted: ['Approved', 'NeedsInfo'],
     NeedsInfo: ['PendingSecretary', 'Preparing'],
     Approved: ['Recorded'],
@@ -1635,7 +1635,6 @@
     const status = str(request.status);
     if (!SERVICE_STATUSES.includes(status)) fail('Invalid status: ' + status);
     const remarks = str(request.remarks || '').slice(0, 2000);
-    const isOwner = !!(context && context.isOwner);
     // submittedAt server-side date validation
     if (request.submittedAt) {
       const d = str(request.submittedAt);
@@ -1654,24 +1653,22 @@
       if (!allowed.includes(status)) fail('Cannot change status from ' + app.status + ' to ' + status + '.');
       // Direct transition to Recorded is forbidden (must go through serviceAward)
       if (status === 'Recorded') fail('Use serviceAward to record the award; direct Recorded transition is not allowed.');
-      // Owner exclusive: only Owner can set Ready
-      if (status === 'Ready' && !isOwner) fail('Only the Owner can approve for submission (Ready).');
       // Signed forms required by year before AwaitingOwner
       if (status === 'AwaitingOwner') {
         serviceValidateSigned(app, false);
       }
       // Ready requires: memberId, confirmedYear, duty, signed forms, ownerApproved
       if (status === 'Ready') {
-        if (!app.memberId) fail('Bind a member before owner approval.');
-        if (app.confirmedYear == null) fail('Confirm the efficient year before owner approval.');
+        if (!app.memberId) fail('Bind a member before marking ready.');
+        if (app.confirmedYear == null) fail('Confirm the efficient year before marking ready.');
         const kinds = (app.attachments || []).filter(a => a.active).map(a => a.kind);
-        if (!kinds.includes('duty')) fail('Duty records must be uploaded before owner approval.');
+        if (!kinds.includes('duty')) fail('Duty records must be uploaded before marking ready.');
         serviceValidateSigned(app, true);
         app.ownerApproved = true;
       }
       // Submitted requires ownerApproved still true
       if (status === 'Submitted' && !app.ownerApproved) {
-        fail('Owner approval was invalidated. Re-approve before submitting.');
+        fail('Documents changed. Mark ready again before submitting.');
       }
       app.status = status;
       if (remarks) app.remarks = remarks;
@@ -1699,7 +1696,6 @@
       // Batch-level attachment kinds (combinedDuty/signedStripe/signedStar)
       const batchKinds = (batch.attachments || []).filter(a => a.active).map(a => a.kind);
       if (status === 'Ready') {
-        if (!isOwner) fail('Only the Owner can approve batch for submission (Ready).');
         if (!childApps.length) fail('Batch must contain at least one application.');
         // Validate ALL children before setting any
         for (const a of childApps) {
@@ -1726,10 +1722,10 @@
           a.version++;
         });
       } else if (status === 'Submitted') {
-        if (!batch.ownerApproved) fail('Batch owner approval was invalidated. Re-approve before submitting.');
+        if (!batch.ownerApproved) fail('Batch documents changed. Mark ready again before submitting.');
         // Verify all children still valid and approved
         for (const a of childApps) {
-          if (!a.ownerApproved) fail('Application ' + a.id + ' approval was invalidated. Re-approve before submitting.');
+          if (!a.ownerApproved) fail('Application ' + a.id + ' documents changed. Mark ready again before submitting.');
           if (!['Ready', 'Preparing'].includes(a.status) && a.status !== 'Submitted') {
             // Child must be Ready (from batch approval) to submit
           }
@@ -1822,7 +1818,7 @@
     if (request.version == null) fail('Version is required.');
     if (Number(request.version) !== app.version) fail('Conflict: application changed. Reload first.');
     if (app.status !== 'Approved') fail('Application must be Approved before recording the award.');
-    if (!app.ownerApproved) fail('Owner approval evidence missing. Re-approve before recording.');
+    if (!app.ownerApproved) fail('Preparation confirmation missing. Mark ready before recording.');
     if (!app.memberId) fail('Bind a member before recording the award.');
     const member = (state.Members || []).find(row => row.id === app.memberId);
     if (!member) fail('Linked member not found.');
@@ -1866,7 +1862,7 @@
     const apps = state.serviceApplications || [];
     const batches = state.serviceBatches || [];
     const unreadCount = apps.filter(a => ['PendingSecretary', 'NeedsInfo'].includes(a.status)).length;
-    const ownerReviewCount = apps.filter(a => a.status === 'AwaitingOwner').length + batches.filter(b => b.status === 'AwaitingOwner').length;
+    const ownerReviewCount = apps.filter(a => a.status === 'Ready' && a.ownerApproved).length + batches.filter(b => b.status === 'Ready' && b.ownerApproved).length;
     // changeKey: stable hash of last modification for cheap polling
     const lastMod = apps.reduce((m, a) => Math.max(m, Date.parse(a.createdAt) || 0), 0) + apps.length * 1000 + batches.length * 100;
     return { unreadCount, ownerReviewCount, changeKey: String(lastMod) };

@@ -98,10 +98,10 @@ async function makePdfBytes(title) {
     // ---- 2) Secretary's list must contain the new application ----
     const secretary = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     secretary.on('pageerror', e => errors.push('secretary: ' + e.message));
-    await armProxy(secretary, 'owner'); // demo secretary = admin
-    await secretary.goto(BASE + '/admin.html', { waitUntil: 'domcontentloaded' });
+    await armProxy(secretary, 'admin');
+    await secretary.goto(BASE + '/admin.html?mode=admin', { waitUntil: 'domcontentloaded' });
     await secretary.waitForFunction(() => window.KPTTransport && document.querySelector('#account'));
-    await secretary.locator('[data-action="setMode"][data-id="admin"]').first().click().catch(() => {});
+    await enterAdminWork(secretary);
     await secretary.waitForTimeout(200);
     await secretary.locator('#navigation [data-nav="Service"]').click();
     await secretary.waitForTimeout(500);
@@ -190,36 +190,13 @@ async function makePdfBytes(title) {
     assert.match(zipText, /Signed-Star|signed-star/i, 'ZIP contains the signed Star PDF');
     assert.match(zipText, /duty-detail|Duty/i, 'ZIP contains the duty PDF');
 
-    // ---- 9) Owner re-render + check → Ready (attachments already uploaded) ----
-    await sharedCall(secretary, { kind: 'setDemoRole', role: 'owner' });
-    // Re-render so the panel picks up options.owner — the Owner button only
-    // exists when the panel is built with owner privileges.
-    await secretary.locator('#reload').click();
-    await secretary.waitForTimeout(300);
-    await secretary.locator('[data-action="setMode"][data-id="admin"]').first().click().catch(() => {});
-    await secretary.waitForTimeout(200);
-    await secretary.locator('#navigation [data-nav="Service"]').click();
-    await secretary.waitForTimeout(400);
-    await secretary.locator('[data-svc-open]').first().click();
-    await secretary.waitForTimeout(300);
-    // Drive the application to AwaitingOwner.
-    for (const to of ['Preparing', 'AwaitingSignature', 'AwaitingOwner']) {
-      const btn = secretary.locator('[data-svc-status][data-svc-to="' + to + '"]');
-      if (await btn.count()) {
-        await btn.first().click();
-        await secretary.waitForTimeout(400);
-        await secretary.locator('[data-svc-open]').first().click().catch(() => {});
-        await secretary.waitForTimeout(200);
-      }
-    }
-    const ownerOk = secretary.locator('[data-svc-status][data-svc-to="Ready"]');
-    assert.ok(await ownerOk.count(), 'Owner check button (Ready) appears at AwaitingOwner');
-    await ownerOk.first().click();
-    await secretary.waitForTimeout(500);
-    assert.match(await secretary.locator('#content').innerText(), /可提交|Ready to submit/, 'Owner check moves the application to Ready');
+    // ---- 9) Secretary marks the batch ready, without switching to Owner ----
+    await secretary.locator('[data-svc-batch-status][data-svc-to="Ready"]').click();
+    await secretary.locator('[data-svc-batch-status][data-svc-to="Submitted"]').waitFor();
+    assert.match(await secretary.locator('#content').innerText(), /可提交|Ready to submit/);
 
     assert.deepEqual(errors, [], 'no page errors during the main flow');
-    console.log('PASS: strict submit → list → badge → member/ref/year → dual PDFs → 3 uploads → batch → ZIP contents → Owner Ready');
+    console.log('PASS: strict submit → list → badge → member/ref/year → dual PDFs → 3 uploads → batch → ZIP contents → Secretary Ready');
 
     // ---- Separate test: failure keeps every input (network fault injection) ----
     const faultPage = await browser.newPage({ viewport: { width: 375, height: 800 } });

@@ -11,7 +11,7 @@
   const TRANSITIONS = {
     PendingSecretary: { next: ['Preparing', 'NeedsInfo'], back: [] },
     Preparing: { next: ['AwaitingSignature'], back: ['NeedsInfo', 'PendingSecretary'] },
-    AwaitingSignature: { next: ['AwaitingOwner'], back: ['Preparing', 'NeedsInfo'] },
+    AwaitingSignature: { next: ['Ready'], back: ['Preparing', 'NeedsInfo'] },
     AwaitingOwner: { next: ['Ready'], back: ['Preparing', 'NeedsInfo'] },
     Ready: { next: ['Submitted'], back: ['Preparing', 'NeedsInfo'] },
     Submitted: { next: ['Approved'], back: ['NeedsInfo'] },
@@ -19,8 +19,6 @@
     Approved: { next: [], back: [] },
     Recorded: { next: [], back: [] }
   };
-  // Owner-only transitions.
-  const OWNER_ONLY = { Ready: true };
 
   // 1/2=Stripe, 3=Star, 4=Stripe+Star, 5=Star. NULL = unsure.
   const YEAR_MAP = { 1: ['Stripe'], 2: ['Stripe'], 3: ['Star'], 4: ['Stripe', 'Star'], 5: ['Star'] };
@@ -83,7 +81,7 @@
       upload: '上传文件',
       download: '下载',
       statusTitle: '下一步',
-      ownerOk: 'Owner 核对通过（Ready）',
+      ownerOk: '文件准备完成',
       awardDate: '获奖日期',
       awardCert: '证书编号',
       awardBtn: '登记获奖',
@@ -179,7 +177,7 @@
       upload: 'Upload file',
       download: 'Download',
       statusTitle: 'Next step',
-      ownerOk: 'Owner check passed (Ready)',
+      ownerOk: 'Mark documents ready',
       awardDate: 'Award date',
       awardCert: 'Certificate',
       awardBtn: 'Record award',
@@ -233,12 +231,12 @@
   }
   function statusLabel(status) {
     const zh = {
-      PendingSecretary: '等秘书处理', Preparing: '准备文件中', AwaitingSignature: '等签名', AwaitingOwner: '等 Owner 核对',
+      PendingSecretary: '等秘书处理', Preparing: '准备文件中', AwaitingSignature: '等签名', AwaitingOwner: '待标记准备完成',
       Ready: '可提交', Submitted: '已提交', NeedsInfo: '需要补资料', Approved: '已批准', Recorded: '已登记获奖'
     };
     const en = {
       PendingSecretary: 'Waiting for Secretary', Preparing: 'Preparing files', AwaitingSignature: 'Waiting for signature',
-      AwaitingOwner: 'Waiting for Owner check', Ready: 'Ready to submit', Submitted: 'Submitted',
+      AwaitingOwner: 'Waiting to mark ready', Ready: 'Ready to submit', Submitted: 'Submitted',
       NeedsInfo: 'Needs more information', Approved: 'Approved', Recorded: 'Award recorded'
     };
     return (lang === 'zh' ? zh : en)[status] || status;
@@ -574,7 +572,6 @@
   // Returns a controller so the host page can drive summary polling safely.
   function renderAdminPanel(container, api, options) {
     const call = (api && api.call) || (root.KPTTransport && root.KPTTransport.call);
-    const isOwner = !!(options && options.owner);
     // Secretary (admin) manages Awards too — the award action stays visible for
     // Owner and Secretary after the one-time Owner check.
     const canRecordAward = !!(options && (options.owner || options.admin));
@@ -724,7 +721,7 @@
     }
     function statusButtons(app) {
       const flow = TRANSITIONS[app.status] || { next: [], back: [] };
-      const next = flow.next.filter(s => !(OWNER_ONLY[s] && !isOwner));
+      const next = flow.next;
       const back = flow.back;
       if (!next.length && !back.length && app.status !== 'Approved') return '';
       let html = '<div class="toolbar">';
@@ -776,7 +773,12 @@
           + '<td>' + escape(String(b.year || '')) + '</td><td>' + escape(String(names)) + '</td>'
           + '<td><span class="pill svc-status svc-status-' + escape(b.status) + '">' + escape(statusLabel(b.status)) + '</span></td>'
           + '<td><div class="row-tools">'
-          + '<button type="button" class="button small" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Submitted">' + escape(t('markSubmitted')) + '</button>'
+          + (['Preparing', 'AwaitingSignature', 'AwaitingOwner'].includes(b.status) || (b.status === 'Ready' && !b.ownerApproved)
+            ? '<button type="button" class="button small btn-check" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Ready">' + escape(t('ownerOk')) + '</button>' : '')
+          + (b.status === 'Ready' && b.ownerApproved
+            ? '<button type="button" class="button small" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Submitted">' + escape(t('markSubmitted')) + '</button>' : '')
+          + (b.status === 'Submitted'
+            ? '<button type="button" class="button small" data-svc-batch-status="' + escape(b.id) + '" data-svc-to="Approved">' + escape(statusLabel('Approved')) + '</button>' : '')
           + '<button type="button" class="button small" data-svc-batch-pdf="' + escape(b.id) + '" data-svc-kind="Stripe">' + escape(t('checklistStripe')) + '</button>'
           + '<button type="button" class="button small" data-svc-batch-pdf="' + escape(b.id) + '" data-svc-kind="Star">' + escape(t('checklistStar')) + '</button>'
           + '<button type="button" class="button small" data-svc-batch-merge="' + escape(b.id) + '" data-svc-kind="Stripe">' + escape(t('mergeStripe')) + '</button>'
