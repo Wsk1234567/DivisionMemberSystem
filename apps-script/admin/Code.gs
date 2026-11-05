@@ -461,8 +461,25 @@ function sync_(state) {
     return { ok: true, revision: state.revision };
   } catch (error) {
     properties_().setProperty('SYNC_PENDING', String(state.revision));
-    return { ok: false, revision: state.revision, message: 'Private data saved. Public update failed; use Retry public update. Check Google permissions or quotas.' };
+    return { ok: false, revision: state.revision, message: 'Private data saved. Public update is pending. Check Google permissions or quotas if it persists.' };
   }
+}
+// Run once from the Admin Apps Script editor using the deployment account.
+function installPublicDirectorySync() {
+  const handler = 'syncPendingPublicDirectory_';
+  if (!ScriptApp.getProjectTriggers().some(trigger => trigger.getHandlerFunction() === handler)) {
+    ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
+  }
+  syncPendingPublicDirectory_();
+}
+function syncPendingPublicDirectory_() {
+  if (properties_().getProperty('SYNC_PENDING') === null) return;
+  withLock_(function () {
+    // A save or another worker may have published while we waited for the lock.
+    if (properties_().getProperty('SYNC_PENDING') === null) return;
+    const result = sync_(loadState_());
+    if (!result.ok) console.warn('Public directory sync failed; pending update will be retried.');
+  });
 }
 function context_(actor) { return { actor, now: new Date().toISOString(), uuid: () => Utilities.getUuid() }; }
 function docMime_(fileName) {

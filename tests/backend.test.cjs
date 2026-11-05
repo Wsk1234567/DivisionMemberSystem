@@ -371,16 +371,19 @@ test('admin doGet points to GitHub admin UI and does not require Admin.html', ()
   assert.match(String(sandbox.doGet({ parameter: {} }).text || ''), /Sign in with Google|Sign in with your Google account|Access unavailable|TCCD/);
   assert.equal(fileReads, 0);
 });
-test('sync failure leaves private save intact and can be retried', () => {
+test('sync failure leaves private save intact and the scheduled worker retries', () => {
   const { env, sandbox, initial, properties } = environment(); env.publicFailure = true;
   const response = sandbox.rpc({ action: 'save', table: 'Members', row: { ...initial.Members[0], name: 'Saved privately' }, year: 2026, revision: 1 });
   assert.equal(response.ok, true);
   assert.equal(response.data.sync.ok, false);
   assert.equal(sandbox.loadState_().Members[0].name, 'Saved privately');
   assert.equal(properties.getProperty('SYNC_PENDING'), '2');
+  sandbox.syncPendingPublicDirectory_();
+  assert.equal(properties.getProperty('SYNC_PENDING'), '2');
   env.publicFailure = false;
-  assert.equal(sandbox.rpc({ action: 'retrySync' }).data.sync.ok, true);
+  sandbox.syncPendingPublicDirectory_();
   assert.equal(properties.getProperty('SYNC_PENDING'), null);
+  assert.equal(properties.getProperty('PUBLISHED_REVISION'), '2');
 });
 test('an interrupted inactive-slot write does not switch away from saved data', () => {
   const { env, sandbox, initial, properties } = environment();
