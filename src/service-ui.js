@@ -394,7 +394,14 @@
       return Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year })).then(bundle => {
         const report = bundle && bundle.report;
         if (!report || !report.confirmed) return [];
-        return ((bundle && bundle.proofs) || []).filter(p => p && p.base64 && p.activityId && !seen.has(p.activityId)).map(p => {
+        const proofs = bundle.proofs || [];
+        const unavailable = proofs.find(proof => !proof.base64);
+        if (unavailable) {
+          const line = report.lines.find(row => row.activityId === unavailable.activityId);
+          const activity = line ? (line.activityName || line.dutyType || line.activityId) : unavailable.activityId;
+          throw new Error('Cannot read Duty proof for ' + activity + ' (' + unavailable.fileName + '). Re-upload the proof and retry.');
+        }
+        return proofs.filter(p => p.activityId && !seen.has(p.activityId)).map(p => {
           seen.add(p.activityId);
           const base = String(p.fileName || 'proof').replace(/[\\/:*?"<>|]/g, '_');
           return { filename: 'proofs/' + String(p.activityId).replace(/[\\/:*?"<>|]/g, '_') + '-' + base, bytes: toBytes(p.base64) };
@@ -1339,6 +1346,7 @@
     memberNumberFor: memberNumberFor,
     memberOptionLabel: memberOptionLabel,
     pdfKindsFor: pdfKindsFor,
+    gatherDutyProofs: gatherDutyProofs,
     statusLabel: statusLabel,
     TRANSITIONS: TRANSITIONS
   };

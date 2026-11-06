@@ -500,7 +500,7 @@
           admins = request.admins || [];
           treasurers = request.treasurers || [];
           ocs = request.ocs || [];
-          dutyInCharges = request.dutyInCharges || [];
+          if (Object.prototype.hasOwnProperty.call(request, 'dutyInCharges')) dutyInCharges = request.dutyInCharges || [];
           return { admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs), dutyInCharges: copy(dutyInCharges) };
         }
         admins = request.emails;

@@ -944,7 +944,8 @@ function rpcInternal_(request, apiEmail) {
         const admins = normalizeList(request.action === 'setAccess' ? request.admins : request.emails, 5);
         const treasurers = normalizeList(request.action === 'setAccess' ? request.treasurers : [], 8);
         const ocs = normalizeList(request.action === 'setAccess' ? request.ocs : [], 8);
-        const dutyInCharges = normalizeList(request.action === 'setAccess' ? request.dutyInCharges : [], 8);
+        const dutyInCharges = request.action === 'setAccess' && Object.prototype.hasOwnProperty.call(request, 'dutyInCharges')
+          ? normalizeList(request.dutyInCharges, 8) : actor.config.dutyInCharges;
         const previous = new Set([...actor.config.admins, ...actor.config.treasurers, ...actor.config.ocs]);
         const nextSet = new Set([...admins, ...treasurers, ...ocs]);
         const privateFile = DriveApp.getFileById(actor.config.privateId);

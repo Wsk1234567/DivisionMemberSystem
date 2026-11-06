@@ -253,3 +253,23 @@ test('duty save functions leave manual serviceApplications attachments untouched
   assert.equal(attachments[0].fileName, 'old-manual-duty.pdf');
   assert.equal(attachments[0].active, true);
 });
+
+test('ZIP proof collection reports the activity when an uploaded proof is unreadable', async () => {
+  const { gatherDutyProofs } = require('../src/service-ui.js');
+  const call = async () => ({
+    report: { confirmed: true, lines: [{ activityId: 'A-1', activityName: 'QA Activity One' }] },
+    proofs: [{ activityId: 'A-1', fileName: 'proof.pdf', base64: '' }]
+  });
+  await assert.rejects(gatherDutyProofs(call, [{ memberId: 'STU-900001', year: 2026 }]), /QA Activity One.*proof\.pdf/);
+});
+
+test('old access updates preserve Duty In Charge while an explicit empty list clears it', async () => {
+  const transport = makeTransport(seedState());
+  await transport.setDemoRole('owner');
+  const email = 'duty@example.test';
+  await transport.call({ action: 'setAccess', dutyInCharges: [email] });
+  const legacy = await transport.call({ action: 'setAccess', admins: [] });
+  assert.equal(legacy.dutyInCharges.join(','), email);
+  const cleared = await transport.call({ action: 'setAccess', dutyInCharges: [] });
+  assert.equal(cleared.dutyInCharges.length, 0);
+});
