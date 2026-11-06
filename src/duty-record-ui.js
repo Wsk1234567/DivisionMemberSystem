@@ -155,7 +155,12 @@
       } else {
         const activityText = String(cellValue('activity')).trim();
         out.display.activity = activityText;
-        out.activityId = resolve(activityText, 'Activities', failRow);
+        const legacy = pseudoState.Activities.filter(activity => activity.date && !activity.archived
+          && root.KPTWorkbook.matchKey(activity.name + ' · ' + activity.date) === root.KPTWorkbook.matchKey(activityText));
+        if (legacy.length === 1) out.activityId = legacy[0].id;
+        else if (legacy.length > 1) failRow('ambiguous', tr('有多个同名活动，请核对活动名称。', 'Multiple activities match. Check the activity name.'));
+        else if (!activityText || activityText.length > 200) failRow('invalid', tr('活动名称须为 1 至 200 个字符。', 'Activity name must be 1–200 characters.'));
+        else out.activityName = activityText;
         let dateVal = cellValue('date');
         let dateText = String(dateVal).trim();
         if (typeof dateVal === 'number' && Number.isFinite(dateVal)) {
@@ -459,7 +464,7 @@
     function importPayloadRows() {
       return state.importRows.map(row => state.importMode === 'previous'
         ? { __excelRow: row.__excelRow, memberId: row.memberId, year: row.year, hours: row.hours, note: row.note }
-        : { __excelRow: row.__excelRow, memberId: row.memberId, activityId: row.activityId, date: row.date, hours: row.hours, note: row.note });
+        : { __excelRow: row.__excelRow, memberId: row.memberId, activityId: row.activityId, activityName: row.activityName, date: row.date, hours: row.hours, note: row.note });
     }
     // Server errors merge into rows by __excelRow; 重复 messages surface as 'dup'.
     function mergePreviewErrors(preview) {
@@ -681,9 +686,8 @@
       const xlsx = root.XLSX;
       const data = [['Activity', 'Member', 'Date', 'Hours', 'Note']];
       state.records.filter(row => String(row.year) === state.rankingYear).forEach(row => {
-        const activity = activityById(row.activityId);
         const member = memberById(row.memberId);
-        data.push([activity && activity.date ? activity.name + ' · ' + activity.date : activityName(row.activityId),
+        data.push([activityName(row.activityId),
           member ? memberOptionLabel(member) : memberName(row.memberId), row.date, Number(row.hours), row.note || '']);
       });
       const sheet = xlsx.utils.aoa_to_sheet(data);
@@ -699,7 +703,7 @@
         + '<button type="button" class="button" data-duty-export="template">' + escape(tr('下载 Excel 模板', 'Download Excel template')) + '</button>'
         + labelled(tr('导出年度', 'Export year'), '<select id="duty-ranking-year">' + optionList(reportYearOptions().map(value => ({ value, label: value })), state.rankingYear) + '</select>')
         + '<button type="button" class="button" data-duty-export="records">' + escape(tr('导出该年度明细', 'Export duty records')) + '</button>'
-        + '</div><p class="hint">' + escape(tr('每位学员每次 Duty 填一行。活动和会员填系统里的名字，日期如 2026-03-14，小时如 3.5。', 'Enter one cadet per duty entry. Use the activity and member names in the system, a date such as 2026-03-14, and hours such as 3.5.')) + '</p>'
+        + '</div><p class="hint">' + escape(tr('每位学员每次 Duty 填一行。Activity 直接填活动名称，校外活动也可以。日期另填 Date，例如 2026-03-14。', 'Enter one cadet per duty entry. Type the activity name, including external activities. Enter the date separately, e.g. 2026-03-14.')) + '</p>'
         + (canAttachService ? labelled(tr('导入类型', 'Import type'), '<select id="duty-import-mode">' + optionList([
           { value: 'records', label: 'Duty Record' }, { value: 'previous', label: 'Previous' }
         ], state.importMode) + '</select>') : '')

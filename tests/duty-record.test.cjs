@@ -296,13 +296,18 @@ test('guided Duty Record template skips its example and imports from row 13', as
   assert.deepEqual(parseDutySheet(downloaded, 'records', state), []);
   const book = global.XLSX.read(downloaded, { type: 'array' });
   const sheet = book.Sheets['Duty Records'];
+  assert.equal(sheet.A9.v, 'Inter-school Sports Day');
   assert.equal(sheet.C9.v, '2026-03-14');
-  global.XLSX.utils.sheet_add_aoa(sheet, [['QA Activity One', 'QA Cadet One', '2026-02-01', 3.5]], { origin: 'A13' });
+  global.XLSX.utils.sheet_add_aoa(sheet, [['External Sports Day', 'QA Cadet One', '2026-02-01', 3.5]], { origin: 'A13' });
   const rows = parseDutySheet(global.XLSX.write(book, { type: 'array', bookType: 'xlsx' }), 'records', state);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].__excelRow, 13);
   assert.equal(rows[0].status, 'ok');
   assert.equal(rows[0].hours, 3.5);
+  assert.equal(rows[0].activityName, 'External Sports Day');
+  const result = KPT.dutyImportRows(state, { mode: 'records', rows }, ctx());
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.state.Activities.at(-1).name, 'External Sports Day');
 });
 
 test('manual duty batch creates one named external activity and saves all rows atomically', () => {

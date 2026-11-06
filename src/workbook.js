@@ -57,13 +57,13 @@
         title: 'TCCD Duty Record 导入表 · 新记录',
         intro: '填写指南 · 用于新增逐笔勤务记录，正式资料从第 13 行开始',
         columns: [
-          { ...field('activityId', 'Activity *', true, '', 'Sports Day Duty · 2026-03-14'), reference: 'Activities' },
+          field('activityId', 'Activity *', true, '', 'Inter-school Sports Day'),
           { ...field('memberId', 'Member *', true, '', 'TAN MEI LING'), reference: 'Members' },
           field('date', 'Date *', true, '', '2026-03-14'),
           field('hours', 'Hours *', true, '', 3.5),
           field('note', 'Note', false, '', 'First aid station')
         ],
-        instructions: ['每位学员每次 Duty 填一行。活动和会员可从下拉选择，也可以输入系统里的完整名称。', '活动同名时按日期区分，会员同名时按 SJAM ID 区分。活动和会员必须先在系统建立。', 'Date 填实际值勤日期，格式 YYYY-MM-DD。Hours 只填数字，例如 3.5。Note 可留空。', '同一会员、活动和日期只填一次。第 9 行是示例，填写后回网页预览再导入。']
+        instructions: ['每位学员每次 Duty 填一行。Activity 直接输入活动名称，校外活动也可以。', '活动名称里不用加日期。会员可从下拉选择，同名时用 SJAM ID 区分。', 'Date 填实际值勤日期，格式 YYYY-MM-DD。Hours 只填数字，例如 3.5。Note 可留空。', '同一会员、活动和日期只填一次。第 9 行是示例，填写后回网页预览再导入。']
       },
       Duty: {
         title: 'TCCD 年度勤务导入表 · 新记录',
