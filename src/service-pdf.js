@@ -49,7 +49,7 @@
     phone:      { x: 176, yTop: 358, maxWidth: 150 },
     email:      { x: 371, yTop: 358, maxWidth: 171 },
     occupation: { x: 147, yTop: 383 },
-    certRef:    { x: 396, yTop: 424, maxWidth: 65 }, // no dashed line, keep
+    certRef:    { x: 412, yTop: 426.07, maxWidth: 55 }, // Reference space after the printed prefix
     genderMale:   { x: 448, yTop: 252 },
     genderFemale: { x: 491, yTop: 252 },
     officerName:  { x: 132, yTop: 739 },
@@ -70,7 +70,7 @@
     phone:      { x: 176, yTop: 358, maxWidth: 150 },
     email:      { x: 371, yTop: 358, maxWidth: 171 },
     occupation: { x: 147, yTop: 383 },
-    certRef:    { x: 396, yTop: 424, maxWidth: 65 },
+    certRef:    { x: 403, yTop: 424.87, maxWidth: 55 },
     genderMale:   { x: 448, yTop: 252 },
     genderFemale: { x: 491, yTop: 252 },
     officerName:  { x: 132, yTop: 739 },
