@@ -32,10 +32,14 @@
       legendDetails: '个人资料',
       hintBlock: '日后填写纸本请用正楷大写（BLOCK LETTERS）。姓名拼法请与学校记录一致。',
       fName: '姓名', fIc: '身份证号码', fGender: '性别', fRank: '军阶', fJoined: '加入日期', fPhone: '电话', fEmail: '电邮', fOccupation: '职业',
-      hintName: '完整姓名，与记录一致。',
-      hintIc: '身份证号码。秘书需要这个才能找到你的记录。',
-      hintRank: '目前的军阶（如有）。',
-      hintJoined: '加入日期（如知道）。',
+      hintGender: '例如 MALE 或 FEMALE。',
+      hintPhone: '填可联系到你的号码，例如 012-345 6789。',
+      hintEmail: '填写常用电邮，例如 cadet@example.com。',
+      hintOccupation: '如果你是学生，填 STUDENT。',
+      hintName: '填与会员记录一致的完整姓名，例如 TAN MEI LING。',
+      hintIc: '填写自己的 MyKad 号码，保留开头的 0。格式示例：090101-00-0000（12 位数字，6-2-4）。',
+      hintRank: '填写目前的 Rank，例如 SERGEANT。没有就留空。',
+      hintJoined: '在日历选择实际加入 St. John 的日期，例如 2023 年 5 月 1 日。不知道可留空。',
       legendYears: 'Efficient 年数',
       hintYears: '你认为一共有几年达到 Efficient 标准？不确定就选「还不确定」，秘书会和你一起核对。',
       labelYears: '申报年数',
@@ -136,10 +140,14 @@
       legendDetails: 'Your details',
       hintBlock: 'Use BLOCK LETTERS on paper copies. Keep the spelling you use in school records.',
       fName: 'Name', fIc: 'IC', fGender: 'Gender', fRank: 'Rank', fJoined: 'Joined', fPhone: 'Phone', fEmail: 'Email', fOccupation: 'Occupation',
-      hintName: 'Full name, exactly as on your records.',
-      hintIc: 'Identity card number. Required so the Secretary can find your record.',
-      hintRank: 'Your current cadet rank, if any.',
-      hintJoined: 'Date you joined, if you know it.',
+      hintGender: 'For example, MALE or FEMALE.',
+      hintPhone: 'Enter a number we can reach you at, e.g. 012-345 6789.',
+      hintEmail: 'Enter an email you check, e.g. cadet@example.com.',
+      hintOccupation: 'If you are a student, enter STUDENT.',
+      hintName: 'Enter your full name as shown in your member record, e.g. TAN MEI LING.',
+      hintIc: 'Enter your own MyKad number, keeping any leading zero. Format example: 090101-00-0000 (12 digits, grouped 6-2-4).',
+      hintRank: 'Enter your current cadet rank, e.g. SERGEANT. Leave blank if you have no rank.',
+      hintJoined: 'Select the date you joined St. John, e.g. 1 May 2023. Leave blank if unsure.',
       legendYears: 'Efficient years',
       hintYears: 'How many years in total do you think you met the Efficient standard? If you are not sure, choose "Not sure yet" — a Secretary will work it out with you.',
       labelYears: 'Declared years',
@@ -507,12 +515,12 @@
         + '<div class="form-grid">'
         + field(t('fName'), 'name', '', { required: true, autocomplete: 'name', hint: t('hintName') })
         + field(t('fIc'), 'ic', '', { required: true, autocomplete: 'off', hint: t('hintIc') })
-        + field(t('fGender'), 'gender', '', {})
+        + field(t('fGender'), 'gender', '', { hint: t('hintGender') })
         + field(t('fRank'), 'rank', '', { hint: t('hintRank') })
         + field(t('fJoined'), 'joined', '', { type: 'date', hint: t('hintJoined') })
-        + field(t('fPhone'), 'phone', '', { type: 'tel', inputmode: 'tel', autocomplete: 'tel' })
-        + field(t('fEmail'), 'email', '', { type: 'email', autocomplete: 'email' })
-        + field(t('fOccupation'), 'occupation', '', {})
+        + field(t('fPhone'), 'phone', '', { type: 'tel', inputmode: 'tel', autocomplete: 'tel', hint: t('hintPhone') })
+        + field(t('fEmail'), 'email', '', { type: 'email', autocomplete: 'email', hint: t('hintEmail') })
+        + field(t('fOccupation'), 'occupation', '', { hint: t('hintOccupation') })
         + '</div></fieldset>'
         + '<fieldset class="svc-years"><legend>' + escape(t('legendYears')) + '</legend>'
         + '<p class="hint">' + escape(t('hintYears')) + '</p>'
@@ -687,7 +695,7 @@
         }
         progress(tr('生成 PDF…', 'Generating PDFs…'));
         const files = await timed('PDF generation', () => Promise.all(kinds.map(async kind => {
-          if (!cachedTemplates[kind]) throw new Error(tr('缺少私人签名模板：', 'Missing private signed template: ') + kind);
+          if (!cachedTemplates[kind]) throw new Error(tr('无法读取私人签名模板，请让 Owner 检查 TCCD Admin 的模板设置和 Drive 权限：', 'Private signed template unavailable. Ask the Owner to check TCCD Admin template settings and Drive access: ') + kind);
           const bytes = await root.KPTServicePDF.generateSigned(current, kind, {
             division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '',
             memberNumber, reference: current.reference, templateBase64: cachedTemplates[kind], signingDate
