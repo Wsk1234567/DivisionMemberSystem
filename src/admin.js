@@ -22,7 +22,7 @@
       if (user && (user.owner || user.treasurer || activePackageRoles().indexOf('ot') >= 0)) extra.push(['Finance', 'Organizing Treasurer']);
       return ocNav.concat(extra);
     }
-    if (mode === 'admin' && isDutyOnly()) return [['DutyRecord', 'Duty Record']];
+    if (mode === 'duty') return [['DutyRecord', 'Duty Record']];
     if (mode === 'admin' && user && !user.admin && user.oc && !user.owner && !user.treasurer) return ocNav;
     return nav[mode] || nav.admin;
   };
@@ -510,12 +510,13 @@
     }, 0);
     return host;
   }
+  let dutyWorkspace;
   function dutyRecordView() {
     const host = '<div id="duty-record-host"></div>';
     setTimeout(() => {
       const el = byId('duty-record-host');
       if (!el || !window.KPTDutyUI || !window.KPTDutyUI.renderDutyWorkspace) return;
-      window.KPTDutyUI.renderDutyWorkspace(el, {
+      dutyWorkspace = window.KPTDutyUI.renderDutyWorkspace(el, {
         call: request => window.KPTTransport.call(request)
       }, { owner: !!user.owner, admin: !!user.admin });
     }, 0);
@@ -811,9 +812,11 @@
   byId('year').value = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).slice(0, 4)) || new Date().getFullYear();
   function preferredMode() {
     if (!user) return 'admin';
+    if (isDutyOnly()) return 'duty';
     const hash = String(location.hash || '').replace('#', '').toLowerCase();
     const queryMode = String(new URLSearchParams(location.search).get('mode') || '').toLowerCase();
     const requested = queryMode || hash;
+    if (requested === 'duty' && user.dutyInCharge) return 'duty';
     if (requested === 'portal') return 'portal';
     if (requested === 'treasurer' && (user.treasurer || user.owner)) return 'treasurer';
     if (requested === 'owner' && user.owner) return 'owner';
@@ -828,8 +831,10 @@
   function modeSwitcher() {
     if (!user) return '';
     const items = [];
-    if (isOcOnly()) return '';
-    items.push(['portal', 'Member System']);
+    if (isDutyOnly() || (isOcOnly() && !user.dutyInCharge)) return '';
+    if (!isOcOnly()) items.push(['portal', 'Member System']);
+    if (user.oc && user.dutyInCharge) items.push(['oc', t('brand.ActivityWorkspace')]);
+    if (user.dutyInCharge) items.push(['duty', 'Duty Record']);
     if (user.owner || user.treasurer) items.push(['treasurer', 'Treasurer Work']);
     if (user.owner || user.admin) items.push(['admin', 'Admin Work']);
     if (user.owner) items.push(['owner', 'Owner']);
@@ -847,12 +852,13 @@
     if (role === 'oc') return 'Organizing Chairman' + suffix;
     if (role === 'os') return 'Organizing Secretary' + suffix;
     if (role === 'ot') return 'Organizing Treasurer' + suffix;
+    if (isDutyOnly()) return 'Duty In Charge';
     if (isOcOnly() || user.oc) return 'Activity member' + suffix;
     if (user.treasurer) return 'Treasurer';
     return 'Guest';
   }
   function renderNavigation() {
-    const ocMode = workspaceMode === 'oc' || isOcOnly();
+    const ocMode = workspaceMode === 'oc' || (workspaceMode !== 'duty' && isOcOnly());
     const lang = (window.KPTI18n && window.KPTI18n.getLang()) || 'en';
     const allowed = new Set(workspaceNav(workspaceMode).map(([key]) => key));
     const navButton = key => {
@@ -897,7 +903,7 @@
     });
   }
   function applyWorkspaceTheme() {
-    document.body.dataset.mode = isOcOnly() || workspaceMode === 'oc' ? 'oc' : workspaceMode;
+    document.body.dataset.mode = workspaceMode !== 'duty' && (isOcOnly() || workspaceMode === 'oc') ? 'oc' : workspaceMode;
   }
   const year = () => Number(byId('year').value);
   function notice(message, error) { byId('notice').className = 'message' + (error ? ' error' : ''); byId('notice').textContent = message || ''; }
@@ -1486,7 +1492,7 @@
   }
   function render() {
     if (!state) return;
-    const useHub = workspaceMode === 'oc' || isOcOnly() || (user && !user.owner && !user.admin && !user.treasurer && ocPackages().length > 0);
+    const useHub = workspaceMode !== 'duty' && (workspaceMode === 'oc' || isOcOnly() || (user && !user.owner && !user.admin && !user.treasurer && ocPackages().length > 0));
     if (useHub) {
       hubSidebar();
       document.body.dataset.mode = 'hub';
@@ -1495,7 +1501,7 @@
       const brandSub = document.querySelector('.sidebar .brand-sub');
       if (brandSub) brandSub.textContent = t('brand.ActivityWorkspace');
       byId('page-title').textContent = hubTab === 'hall' ? t('hub.hall') : hubTab === 'notifications' ? t('hub.notifications') : t('hub.studio');
-      byId('mode-switcher-slot').innerHTML = user.owner || user.admin || user.treasurer ? modeSwitcher() : '';
+      byId('mode-switcher-slot').innerHTML = modeSwitcher();
       const yearField = document.querySelector('.admin-top .field');
       if (yearField) yearField.hidden = true;
       byId('content').innerHTML = hubView();
@@ -1510,7 +1516,7 @@
     // Admin / Owner sidebar badge polls every 5s while any admin page is visible.
     if (user && (user.admin || user.owner)) serviceStartPolling();
     applyWorkspaceTheme();
-    const ocShell = isOcOnly() || workspaceMode === 'oc';
+    const ocShell = workspaceMode !== 'duty' && (isOcOnly() || workspaceMode === 'oc');
     const modeTitles = workspaceTitles(workspaceMode);
     byId('page-title').innerHTML = escape(navLabel(view) || titles[view] || view);
     byId('mode-switcher-slot').innerHTML = ocShell ? '' : modeSwitcher();
@@ -1637,7 +1643,7 @@
     // Role-based default: OC in submissions; OS/OT in workbench.
     hubTab = hubDefaultTab();
     const packageParam = new URLSearchParams(String(location.search || '')).get('package');
-    if (packageParam && state && state.DocPackages) {
+    if (workspaceMode !== 'duty' && packageParam && state && state.DocPackages) {
       const linked = state.DocPackages.find(row => row.id === packageParam);
       if (linked && canOpenPackage(linked)) {
         openDocPackageId = linked.id;
@@ -1650,7 +1656,8 @@
         if (linkedItem) hubTab = hubHas('oc') || ['OCChecked', 'Submitted', 'Approved'].includes(linkedItem.status) ? 'hall' : 'studio';
       }
     }
-    if (workspaceMode === 'portal') view = 'Portal';
+    if (workspaceMode === 'duty') view = 'DutyRecord';
+    else if (workspaceMode === 'portal') view = 'Portal';
     else if (isOcOnly()) view = 'Documents';
     else if (workspaceMode === 'treasurer') view = 'Finance';
     else if (workspaceMode === 'owner') view = 'Owner';
@@ -1899,6 +1906,10 @@
     if (name === 'recordEligible') { const [memberId, catalogId] = id.split('|'); openEditor('Awards', '', { memberId, catalogId, date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }) }); return; }
     if (name === 'duty') { const existing = state.Duty.find(row => row.memberId === id && row.year === year()); openEditor('Duty', existing && existing.id, { memberId: id, year: year(), hours: '' }); return; }
     if (name === 'setMode') {
+      if (id === workspaceMode) return;
+      if (workspaceMode === 'oc' && !hubConfirmLeave()) return;
+      if (byId('duty-record-host') && dutyWorkspace && dutyWorkspace.isDirty()
+        && !window.confirm('Leave Duty Record without saving?')) return;
       if (id === 'portal') {
         workspaceMode = 'portal';
         view = 'Portal';
@@ -1909,8 +1920,10 @@
       if (id === 'treasurer' && !(user.treasurer || user.owner)) throw new Error('No Treasurer access.');
       if (id === 'admin' && !(user.admin || user.owner)) throw new Error('No Admin access.');
       if (id === 'owner' && !user.owner) throw new Error('Owner only.');
+      if (id === 'duty' && !user.dutyInCharge) throw new Error('No Duty Record access.');
+      if (id === 'oc' && !user.oc) throw new Error('No Activity Workspace access.');
       workspaceMode = id;
-      view = id === 'treasurer' ? 'Finance' : id === 'owner' ? 'Owner' : id === 'portal' ? 'Portal' : 'Overview';
+      view = id === 'duty' ? 'DutyRecord' : id === 'oc' ? 'Documents' : id === 'treasurer' ? 'Finance' : id === 'owner' ? 'Owner' : id === 'portal' ? 'Portal' : 'Overview';
       try {
         const url = new URL(location.href);
         url.searchParams.set('mode', id);

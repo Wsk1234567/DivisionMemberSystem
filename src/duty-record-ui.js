@@ -188,6 +188,7 @@
       services: [],
       editPrev: null, editRec: null, dirty: false,
       report: null, reportProofs: [], reportMemberId: '', reportYear: String(new Date().getFullYear()),
+      tab: 'dashboard', rankingYear: String(new Date().getFullYear()),
       importMode: 'records', importRows: [], importPreviewOk: false, importGeneralErrors: []
     };
     let busy = false;
@@ -682,16 +683,59 @@
         + '<span class="hint">' + escape(tr('状态：✓ 可导入 / 重名 / 重复 / 无效行。有错误的行不能导入。', 'Status: ✓ ready / duplicate name / duplicate row / invalid row. Rows with errors cannot be imported.')) + '</span>'
         + '</div>';
     }
+    function rankingRows() {
+      const totals = new Map();
+      state.records.filter(row => String(row.year) === state.rankingYear).forEach(row => {
+        const current = totals.get(row.memberId) || { memberId: row.memberId, hours: 0, count: 0 };
+        current.hours += Number(row.hours);
+        current.count++;
+        totals.set(row.memberId, current);
+      });
+      const rows = [...totals.values()].map(row => ({ ...row, hours: Number(formatHours(row.hours)) })).sort((a, b) => b.hours - a.hours || memberName(a.memberId).localeCompare(memberName(b.memberId)));
+      return rows.map((row, index) => {
+        row.rank = index && row.hours === rows[index - 1].hours ? rows[index - 1].rank : index + 1;
+        return row;
+      });
+    }
+    function dashboardHtml() {
+      const rows = rankingRows();
+      const sum = rows.reduce((total, row) => total + row.hours, 0);
+      return '<section class="svc-step"><h3>' + escape(tr('勤务时数排名', 'Duty Hours Ranking')) + '</h3>'
+        + '<div class="toolbar">' + labelled(tr('年度', 'Year'), '<select id="duty-ranking-year">' + optionList(reportYearOptions().map(value => ({ value, label: value })), state.rankingYear) + '</select>') + '</div>'
+        + '<p class="hint">' + escape(tr('按本年度已录入的勤务时数排名。Previous 和秘书填写的年度时数另计。', 'Ranked by logged hours for the selected year. Previous and Secretary-entered annual totals are separate.')) + '</p>'
+        + '<p><strong>' + rows.length + '</strong> ' + escape(tr('位学员 · 合计', 'cadets · total')) + ' <strong>' + formatHours(sum) + ' h</strong></p>'
+        + (rows.length ? '<div class="table-wrap"><table><thead><tr>' + [tr('排名', 'Rank'), tr('学员', 'Cadet'), tr('勤务次数', 'Duty entries'), tr('时数', 'Hours')].map(label => '<th scope="col">' + escape(label) + '</th>').join('')
+          + '</tr></thead><tbody>' + rows.map(row => '<tr><td>' + row.rank + '</td><td>' + escape(memberName(row.memberId)) + '</td><td>' + row.count + '</td><td><strong>' + formatHours(row.hours) + '</strong></td></tr>').join('')
+          + '</tbody></table></div>' : '<p class="muted">' + escape(tr('这个年度还没有勤务记录。可先到「导入导出」上传 Excel。', 'No duty records for this year. Upload an Excel file under Import & export.')) + '</p>') + '</section>';
+    }
+    function exportDutyWorkbook(template) {
+      const xlsx = root.XLSX;
+      const data = [['Activity', 'Member', 'Date', 'Hours', 'Note']];
+      if (!template) state.records.filter(row => String(row.year) === state.rankingYear).forEach(row => {
+        const activity = activityById(row.activityId);
+        const member = memberById(row.memberId);
+        data.push([activity && activity.date ? activity.name + ' · ' + activity.date : activityName(row.activityId),
+          member ? memberOptionLabel(member) : memberName(row.memberId), row.date, Number(row.hours), row.note || '']);
+      });
+      const sheet = xlsx.utils.aoa_to_sheet(data);
+      sheet['!cols'] = [34, 28, 15, 12, 36].map(wch => ({ wch }));
+      const workbook = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(workbook, sheet, 'Duty Records');
+      xlsx.writeFile(workbook, template ? 'TCCD-Duty-Record-Template.xlsx' : 'TCCD-Duty-Records-' + state.rankingYear + '.xlsx');
+    }
+
     function importSectionHtml() {
-      return '<section class="svc-step">' + stepHeading(5, tr('导入', 'Import'))
+      return '<section class="svc-step"><h3>' + escape(tr('导入导出 · Duty Record', 'Import & export · Duty Record')) + '</h3>'
         + '<div class="toolbar">'
-        + labelled(tr('模式', 'Mode'), '<select id="duty-import-mode">'
-          + '<option value="records"' + (state.importMode === 'records' ? ' selected' : '') + '>' + escape(tr('勤务明细', 'Duty records')) + '</option>'
-          + '<option value="previous"' + (state.importMode === 'previous' ? ' selected' : '') + '>' + escape(tr('Previous 结余', 'Previous balance')) + '</option>'
-          + '</select>')
+        + '<button type="button" class="button" data-duty-export="template">' + escape(tr('下载 Excel 模板', 'Download Excel template')) + '</button>'
+        + labelled(tr('导出年度', 'Export year'), '<select id="duty-ranking-year">' + optionList(reportYearOptions().map(value => ({ value, label: value })), state.rankingYear) + '</select>')
+        + '<button type="button" class="button" data-duty-export="records">' + escape(tr('导出该年度明细', 'Export duty records')) + '</button>'
+        + '</div><p class="hint">' + escape(tr('每位学员每次 Duty 填一行。活动和会员填系统里的名字，日期如 2026-03-14，小时如 3.5。', 'Enter one cadet per duty entry. Use the activity and member names in the system, a date such as 2026-03-14, and hours such as 3.5.')) + '</p>'
+        + (canAttachService ? labelled(tr('导入类型', 'Import type'), '<select id="duty-import-mode">' + optionList([
+          { value: 'records', label: 'Duty Record' }, { value: 'previous', label: 'Previous' }
+        ], state.importMode) + '</select>') : '')
+        + (state.importMode === 'previous' ? '<p class="hint">Member, Report Year, Hours, Note</p>' : '')
         + labelled(tr('Excel 文件（.xlsx）', 'Excel file (.xlsx)'), '<input id="duty-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">')
-        + '</div>'
-        + '<p class="hint">' + escape(tr('第 1 行为表头。勤务明细列：活动/Activity、会员/Member、日期/Date、小时/Hours、备注/Note；Previous 列：会员/Member、报表年度/Report Year、小时/Hours、备注/Note。会员/活动按姓名匹配。', 'Row 1 is the header row. Duty records columns: Activity, Member, Date, Hours, Note. Previous columns: Member, Report Year, Hours, Note. Members and activities are matched by name.')) + '</p>'
         + '<div id="duty-import-area">' + importAreaHtml() + '</div></section>';
     }
 
@@ -702,11 +746,12 @@
         + '<h2 class="svc-step-heading">' + escape(tr('勤务记录（Duty In Charge）', 'Duty In Charge / Duty record')) + '</h2>'
         + langToggleHtml() + '</div>'
         + '<div id="duty-notice" class="message" role="status" aria-live="polite"></div></section>'
-        + prevSectionHtml()
-        + recSectionHtml()
-        + proofSectionHtml()
-        + reportSectionHtml()
-        + importSectionHtml()
+        + '<div class="toolbar" aria-label="Duty Record">'
+        + [['dashboard', tr('总览', 'Dashboard')], ['records', tr('记录与报表', 'Records & reports')], ['import', tr('导入导出', 'Import & export')]].map(([key, label]) =>
+          '<button type="button" class="button' + (state.tab === key ? ' primary' : '') + '" aria-pressed="' + (state.tab === key) + '" data-duty-tab="' + key + '">' + escape(label) + '</button>').join('')
+        + '</div>'
+        + (state.tab === 'dashboard' ? dashboardHtml() : state.tab === 'import' ? importSectionHtml()
+          : prevSectionHtml() + recSectionHtml() + proofSectionHtml() + reportSectionHtml())
         + '</div>';
       bind();
     }
@@ -725,6 +770,16 @@
         render();
       }));
       const on = (selector, handler) => container.querySelectorAll(selector).forEach(btn => btn.addEventListener('click', () => handler(btn)));
+      on('[data-duty-tab]', btn => {
+        if (busy || state.tab === btn.dataset.dutyTab) return;
+        if (state.dirty && !root.confirm(tr('离开后会失去未保存的修改。继续？', 'Discard unsaved changes and switch tabs?'))) return;
+        state.dirty = false;
+        state.tab = btn.dataset.dutyTab;
+        render();
+      });
+      const rankingYear = container.querySelector('#duty-ranking-year');
+      if (rankingYear) rankingYear.addEventListener('change', () => { state.rankingYear = rankingYear.value; render(); });
+      on('[data-duty-export]', btn => operate(btn, '', () => exportDutyWorkbook(btn.dataset.dutyExport === 'template')));
       on('[data-duty-prev-save]', btn => savePrev(btn));
       on('[data-duty-prev-cancel]', () => { state.editPrev = null; state.dirty = false; render(); });
       on('[data-duty-prev-edit]', btn => {
@@ -759,11 +814,12 @@
       on('[data-duty-report-attach]', btn => attachService(btn));
       const modeEl = container.querySelector('#duty-import-mode');
       if (modeEl) modeEl.addEventListener('change', () => {
-        state.importMode = modeEl.value === 'previous' ? 'previous' : 'records';
+        if (busy) { modeEl.value = state.importMode; return; }
+        state.importMode = modeEl.value;
         state.importRows = [];
         state.importPreviewOk = false;
         state.importGeneralErrors = [];
-        renderImportPreview();
+        render();
       });
       const fileEl = container.querySelector('#duty-import-file');
       if (fileEl) fileEl.addEventListener('change', () => {
