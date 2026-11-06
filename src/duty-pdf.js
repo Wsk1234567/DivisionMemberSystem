@@ -95,7 +95,8 @@
     page.drawText('SJAM ID: ' + sjamId, { x: 330, y: SUB_Y, size: 10, font: font, color: black });
     drawHeader(page);
     // Previous row: rule above (header rule) and below makes it read as the opening balance.
-    page.drawText('Previous', { x: X_DATE, y: PREV_Y, size: TABLE_SIZE, font: font, color: black });
+    page.drawText(year + '-01-01', { x: X_DATE, y: PREV_Y, size: TABLE_SIZE, font: font, color: black });
+    page.drawText('Duty Hours from Previous Year', { x: X_ACT, y: PREV_Y, size: TABLE_SIZE, font: font, color: black });
     drawRight(page, formatHours(report.previousTotal), PREV_Y, font, TABLE_SIZE, black);
     rule(page, PREV_Y - 6);
 
