@@ -8,7 +8,7 @@
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
-    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Service', 'Service'], ['Trash', 'Trash'], ['Settings', 'Settings']],
+    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['DutyRecord', 'Duty Record'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Service', 'Service'], ['Trash', 'Trash'], ['Settings', 'Settings']],
     owner: [['Owner', 'Owner'], ['Service', 'Service'], ['Settings', 'Settings']],
     portal: [['Portal', 'Portal']],
     oc: []
@@ -22,10 +22,12 @@
       if (user && (user.owner || user.treasurer || activePackageRoles().indexOf('ot') >= 0)) extra.push(['Finance', 'Organizing Treasurer']);
       return ocNav.concat(extra);
     }
+    if (mode === 'admin' && isDutyOnly()) return [['DutyRecord', 'Duty Record']];
     if (mode === 'admin' && user && !user.admin && user.oc && !user.owner && !user.treasurer) return ocNav;
     return nav[mode] || nav.admin;
   };
   const isOcOnly = () => !!(user && user.oc && !user.admin && !user.owner && !user.treasurer);
+  const isDutyOnly = () => !!(user && user.dutyInCharge && !user.admin && !user.owner && !user.treasurer && !user.oc);
   const packageRoleMatch = (pkg, email) => {
     const mail = String(email || '').toLowerCase();
     return [pkg.ocEmail, pkg.osEmail, pkg.otEmail].map(v => String(v || '').toLowerCase()).filter(Boolean).includes(mail);
@@ -106,6 +108,7 @@
   let admins = [];
   let treasurers = [];
   let ocs = [];
+  let dutyInCharges = [];
   let docFolders = { templates: '', submissions: '' };
   let openDocPackageId = null;
   let docEditOpen = false;
@@ -507,6 +510,17 @@
     }, 0);
     return host;
   }
+  function dutyRecordView() {
+    const host = '<div id="duty-record-host"></div>';
+    setTimeout(() => {
+      const el = byId('duty-record-host');
+      if (!el || !window.KPTDutyUI || !window.KPTDutyUI.renderDutyWorkspace) return;
+      window.KPTDutyUI.renderDutyWorkspace(el, {
+        call: request => window.KPTTransport.call(request)
+      }, { owner: !!user.owner, admin: !!user.admin });
+    }, 0);
+    return host;
+  }
   function serviceStartPolling() {
     if (!window.KPTServiceUI || !window.KPTServiceUI.startSummaryPolling) return;
     window.KPTServiceUI.startSummaryPolling({
@@ -846,7 +860,7 @@
       return '<button type="button" data-nav="' + key + '">' + icon + escape(text) + '</button>';
     };
     const groups = [
-      ['会员资料', 'Member records', ['Members', 'Activities', 'Exams', 'Duty']],
+      ['会员资料', 'Member records', ['Members', 'Activities', 'Exams', 'Duty', 'DutyRecord']],
       ['活动与奖励', 'Activities & awards', ['Documents', 'Service', 'Awards']],
       ['财政', 'Finance', ['Finance']],
       ['资料与设置', 'Data & settings', ['Owner', 'Data', 'Import', 'Phase', 'Setup', 'Trash', 'Settings']]
@@ -1468,7 +1482,7 @@
   }
   function ownerAccessView() {
     if (!user.owner) return '<div class="card"><p class="muted">Only the Owner can manage access.</p></div>';
-    return '<p class="page-intro">Set who works as Secretary (Admin Work), Organizing Treasurer (Treasurer Work) and Organizing Chairman / OC (Annual Activity due dates &amp; checklist). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards — and can approve documents.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div><div class="field full"><label for="oc-emails">Organizing Chairman (OC) · Gmail list</label><textarea id="oc-emails" rows="3">' + escape(ocs.join('\n')) + '</textarea><p class="hint">Once approved here, OC opens Annual Activity and selects an assigned activity there. OC can edit due dates, upload and submit, but cannot approve.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
+    return '<p class="page-intro">Set who works as Secretary (Admin Work), Organizing Treasurer (Treasurer Work), Organizing Chairman / OC (Annual Activity due dates &amp; checklist) and Duty In Charge (manage the Duty Record workspace). You always have full access.</p><section class="card"><form id="access-form"><div class="form-grid"><div class="field full"><label for="admin-emails">Secretary / Admin Work · Gmail list</label><textarea id="admin-emails" rows="4">' + escape(admins.join('\n')) + '</textarea><p class="hint">These accounts manage members, activities, exams, duty and awards — and can approve documents.</p></div><div class="field full"><label for="treasurer-emails">Organizing Treasurer · Gmail list</label><textarea id="treasurer-emails" rows="4">' + escape(treasurers.join('\n')) + '</textarea><p class="hint">These accounts manage event finance books only.</p></div><div class="field full"><label for="oc-emails">Organizing Chairman (OC) · Gmail list</label><textarea id="oc-emails" rows="3">' + escape(ocs.join('\n')) + '</textarea><p class="hint">Once approved here, OC opens Annual Activity and selects an assigned activity there. OC can edit due dates, upload and submit, but cannot approve.</p></div><div class="field full"><label for="duty-emails">Duty In Charge · Gmail list</label><textarea id="duty-emails" rows="3">' + escape(dutyInCharges.join('\n')) + '</textarea><p class="hint">These accounts manage the Duty Record workspace: duty occurrences, Previous balances, private proofs and the personal Duty Record PDF.</p></div></div><button class="button primary" type="submit">Save access lists</button></form></section>';
   }
   function render() {
     if (!state) return;
@@ -1511,6 +1525,7 @@
       Finance: () => (financeDraft ? financeEditor() : financeList()),
       Exams: examList,
       Duty: dutyList,
+      DutyRecord: dutyRecordView,
       Awards: awardList,
       Documents: documentsView,
       Data: dataList,
@@ -1566,7 +1581,7 @@
     document.querySelectorAll('#content input, #content textarea, #content select').forEach(input => { input.readOnly = true; if (input.type === 'file' || input.tagName === 'SELECT') input.disabled = true; });
     document.querySelectorAll('#content [data-action]').forEach(element => { if (/^finance(Add|Remove)/.test(element.dataset.action)) element.disabled = true; });
   }
-  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…', createDocPackage: 'Creating package…', docItemUpload: 'Uploading file…', docItemSubmit: 'Submitting to OC…', docItemCheck: 'OC checking…', docItemForward: 'Forwarding…', docItemReview: 'Reviewing document…', docItemReopen: 'Reopening document…', saveDocTemplate: 'Saving template…', docPackageArchive: 'Updating package…', initDocFolders: 'Creating folders…', submitFinBook: 'Submitting finance to OC…', checkFinBook: 'OC finance check…', forwardFinBook: 'Forwarding finance…', reviewFinBook: 'Reviewing finance…', reopenFinBook: 'Reopening finance…' };
+  const busyLabels = { bootstrap: 'Loading records…', save: 'Saving records…', attendance: 'Saving attendance…', saveFinanceBook: 'Saving finance records…', previewImport: 'Checking Excel file…', commitImport: 'Importing Excel changes…', applySetupDefaults: 'Applying system setup…', deleteRecord: 'Moving to Recycle Bin…', deleteAllMembers: 'Moving students to Recycle Bin…', restoreTrash: 'Restoring from Recycle Bin…', purgeTrash: 'Deleting permanently…', retrySync: 'Updating public directory…', backup: 'Creating private backup…', listBackups: 'Loading backups…', restore: 'Restoring backup…', setAdmins: 'Saving administrator access…', setAccess: 'Saving access lists…', setCurrentPhase: 'Updating phase…', installBackup: 'Installing daily backup…', createDocPackage: 'Creating package…', docItemUpload: 'Uploading file…', docItemSubmit: 'Submitting to OC…', docItemCheck: 'OC checking…', docItemForward: 'Forwarding…', docItemReview: 'Reviewing document…', docItemReopen: 'Reopening document…', saveDocTemplate: 'Saving template…', docPackageArchive: 'Updating package…', initDocFolders: 'Creating folders…', submitFinBook: 'Submitting finance to OC…', checkFinBook: 'OC finance check…', forwardFinBook: 'Forwarding finance…', reviewFinBook: 'Reviewing finance…', reopenFinBook: 'Reopening finance…', dutyImportPreview: 'Checking duty Excel…', dutyImportCommit: 'Importing duty rows…', dutyRecordSave: 'Saving duty record…', dutyRecordRemove: 'Removing duty record…', dutyPreviousSave: 'Saving Previous balance…', dutyPreviousRemove: 'Removing Previous entry…', dutyProofUpload: 'Uploading private proof…', dutyReportBundle: 'Preparing duty report…', dutyBootstrap: 'Loading duty workspace…' };
   async function call(request, label) {
     if (busy) throw new Error('Please wait for the current operation.');
     busy = true;
@@ -1615,6 +1630,7 @@
     admins = response.admins || [];
     treasurers = response.treasurers || [];
     ocs = response.ocs || [];
+    dutyInCharges = response.dutyInCharges || [];
     docFolders = response.docFolders || { templates: '', submissions: '' };
     currentPhase = response.currentPhase || 1;
     workspaceMode = preferredMode();
@@ -2663,11 +2679,13 @@
           action: 'setAccess',
           admins: byId('admin-emails').value.split(/\s+/).filter(Boolean),
           treasurers: byId('treasurer-emails').value.split(/\s+/).filter(Boolean),
-          ocs: byId('oc-emails') ? byId('oc-emails').value.split(/\s+/).filter(Boolean) : []
+          ocs: byId('oc-emails') ? byId('oc-emails').value.split(/\s+/).filter(Boolean) : [],
+          dutyInCharges: byId('duty-emails') ? byId('duty-emails').value.split(/\s+/).filter(Boolean) : []
         });
         admins = result.admins || [];
         treasurers = result.treasurers || [];
         ocs = result.ocs || [];
+        dutyInCharges = result.dutyInCharges || [];
         render();
         notice('Access lists saved.');
       } else if (event.target.id === 'doc-package-form') {

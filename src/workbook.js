@@ -691,6 +691,6 @@
     library.writeFile(book, fileName);
     return book;
   }
-  root.KPTWorkbook = { parse, create, createStyledBytes, download, templateInfo, TYPED_TABLES };
+  root.KPTWorkbook = { parse, create, createStyledBytes, download, templateInfo, TYPED_TABLES, resolveName, referenceChoices, matchKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTWorkbook;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

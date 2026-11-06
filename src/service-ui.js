@@ -377,6 +377,39 @@
     if (data && data.base64) return toBytes(data.base64);
     return new Uint8Array(0);
   }
+  // Uint8Array -> base64 for serviceUpload payloads built in-page (Duty Record PDF).
+  function bytesToBase64(bytes) {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let bin = '';
+    for (let i = 0; i < arr.length; i += 0x8000) bin += String.fromCharCode.apply(null, arr.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  // Private duty proofs backing the Duty Record PDF. One proof per activity,
+  // deduped across the whole batch so the same proof is never packed twice.
+  // Only confirmed reports contribute proofs (未确认阻止正式生成).
+  function gatherDutyProofs(call, applications) {
+    const seen = new Set();
+    const jobs = applications.map(app => {
+      if (!app || !app.memberId || !app.year) return Promise.resolve([]);
+      return Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year })).then(bundle => {
+        const report = bundle && bundle.report;
+        if (!report || !report.confirmed) return [];
+        const proofs = bundle.proofs || [];
+        const unavailable = proofs.find(proof => !proof.base64);
+        if (unavailable) {
+          const line = report.lines.find(row => row.activityId === unavailable.activityId);
+          const activity = line ? (line.activityName || line.dutyType || line.activityId) : unavailable.activityId;
+          throw new Error('Cannot read Duty proof for ' + activity + ' (' + unavailable.fileName + '). Re-upload the proof and retry.');
+        }
+        return proofs.filter(p => p.activityId && !seen.has(p.activityId)).map(p => {
+          seen.add(p.activityId);
+          const base = String(p.fileName || 'proof').replace(/[\\/:*?"<>|]/g, '_');
+          return { filename: 'proofs/' + String(p.activityId).replace(/[\\/:*?"<>|]/g, '_') + '-' + base, bytes: toBytes(p.base64) };
+        });
+      });
+    });
+    return Promise.all(jobs).then(lists => [].concat.apply([], lists));
+  }
   // Collect the Officer-signed PDFs for one kind. 4th-year applications
   // legitimately appear in BOTH the Stripe and the Star merge.
   // Collect the Officer-signed PDFs for one kind. Batch-level combined uploads
@@ -813,6 +846,13 @@
         + '<select data-svc-kind-for="' + escape(target.kind) + ':' + escape(target.id) + '">' + attachKindOptions(target.kind, app) + '</select></label>'
         + '<label class="button small">' + escape(t('upload')) + '<input type="file" data-svc-upload-for="' + escape(target.kind) + ':' + escape(target.id) + '" hidden></label></div>';
     }
+    function dutyRecordBlock(app) {
+      if (!canRecordAward || !app || !app.memberId || !app.year) return '';
+      return '<div class="toolbar svc-duty-bar">'
+        + '<button type="button" class="button small" data-svc-duty-preview="' + escape(app.id) + '">' + escape(tr('预览 Duty Record', 'Preview Duty Record')) + '</button>'
+        + '<button type="button" class="button small" data-svc-duty-attach="' + escape(app.id) + '">' + escape(tr('附入 Duty Record PDF', 'Attach Duty Record PDF')) + '</button>'
+        + '</div><p class="hint">' + escape(tr('需先在 Duty 记录工作区确认 Previous；旧的手动附件会保留。', 'Confirm the Previous balance in the Duty Record workspace first. Older manual attachments are kept.')) + '</p>';
+    }
     function pdfButtons(app) {
       if (['Submitted', 'Approved', 'Recorded'].includes(app.status)) return '<p class="hint">' + escape(tr('已提交的申请表可从附件下载。', 'Download submitted forms from the attachments.')) + '</p>';
       return '<div class="toolbar"><label class="field"><span>' + escape(tr('实际签署日期', 'Signing date')) + '</span>'
@@ -879,7 +919,7 @@
         + '</form>'
         + '</section>'
         + stepBlock(2, tr('生成申请表', 'Generate application forms'), pdfButtons(app))
-        + stepBlock(3, t('files'), attachmentsBlock({ kind: 'application', id: app.id }, app))
+        + stepBlock(3, t('files'), attachmentsBlock({ kind: 'application', id: app.id }, app) + dutyRecordBlock(app))
         + (actions ? stepBlock(4, t('statusTitle'), actions) : '')
         + (canRecordAward && app.status === 'Approved' ? '<section class="svc-step">' + stepHeading(5, t('awardBtn')) + '<p class="hint">' + escape(t('awardHint')) + '</p>'
           + '<div class="toolbar"><label class="field"><span>' + escape(t('awardDate')) + '</span><input type="date" id="svc-award-date"></label><label class="field"><span>' + escape(t('awardCert')) + '</span><input type="text" id="svc-award-cert"></label>'
@@ -1122,6 +1162,40 @@
         });
       }));
       container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'))));
+      container.querySelectorAll('[data-svc-duty-preview]').forEach(btn => btn.addEventListener('click', () => {
+        const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-duty-preview'));
+        if (!app) return;
+        operate('3', tr('生成 Duty Record…', 'Building Duty Record…'), async () => {
+          const bundle = await Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year }));
+          const report = bundle && bundle.report;
+          if (!report) throw new Error(tr('找不到报表资料。', 'Report data not found.'));
+          if (!report.confirmed) throw new Error(tr('Previous 未确认，无法生成正式 PDF。', 'Previous balance is not confirmed — formal generation is blocked.'));
+          const bytes = await root.KPTDutyPDF.generateDutyRecord(report);
+          const url = URL.createObjectURL(new Blob([toBytes(bytes)], { type: 'application/pdf' }));
+          window.open(url, '_blank');
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          notice(tr('已打开 Duty Record 预览。', 'Duty Record preview opened.'), false, '3');
+        });
+      }));
+      container.querySelectorAll('[data-svc-duty-attach]').forEach(btn => btn.addEventListener('click', () => {
+        const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-duty-attach'));
+        if (!app) return;
+        operate('3', tr('附入 Duty Record…', 'Attaching Duty Record…'), async progress => {
+          const bundle = await Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year }));
+          const report = bundle && bundle.report;
+          if (!report) throw new Error(tr('找不到报表资料。', 'Report data not found.'));
+          if (!report.confirmed) throw new Error(tr('Previous 未确认，无法生成正式 PDF。', 'Previous balance is not confirmed — formal generation is blocked.'));
+          progress(tr('生成 PDF…', 'Generating PDF…'));
+          const bytes = await root.KPTDutyPDF.generateDutyRecord(report);
+          const safe = String(report.member && report.member.name || 'member').replace(/[^A-Za-z0-9_-]/g, '_');
+          const data = await Promise.resolve(call({ action: 'serviceUpload', applicationId: app.id, kind: 'duty', fileName: 'Duty-Record-' + report.year + '-' + safe + '.pdf', mime: 'application/pdf', base64: bytesToBase64(bytes) }));
+          state.applications = (data && data.applications) || state.applications;
+          state.batches = (data && data.batches) || state.batches;
+          state.unreadCount = Number((data && data.unreadCount) || 0);
+          render();
+          notice(tr('Duty Record PDF 已附入（旧的手动附件保留）。', 'Duty Record PDF attached. Older manual attachments are kept.'), false, '3');
+        });
+      }));
       container.querySelectorAll('[data-svc-status]').forEach(btn => btn.addEventListener('click', () => {
         const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-status'));
         const to = btn.getAttribute('data-svc-to');
@@ -1222,13 +1296,14 @@
           .then(() => Promise.all([
             needsStripe ? gatherSignedDocs(call, b, apps, 'Stripe') : [],
             needsStar ? gatherSignedDocs(call, b, apps, 'Star') : [],
-            gatherExtraAttachments(call, b, apps)
+            gatherExtraAttachments(call, b, apps),
+            gatherDutyProofs(call, apps)
           ]))
-          .then(([stripeSigned, starSigned, extras]) => {
+          .then(([stripeSigned, starSigned, extras, dutyProofs]) => {
             const merges = [];
             if (needsStripe && stripeSigned.length) merges.push(Promise.resolve(pdf.mergeDocuments(stripeSigned, 'Signed-Stripe.pdf')).then(bytes => { map['Signed-Stripe.pdf'] = toBytes(bytes); }));
             if (needsStar && starSigned.length) merges.push(Promise.resolve(pdf.mergeDocuments(starSigned, 'Signed-Star.pdf')).then(bytes => { map['Signed-Star.pdf'] = toBytes(bytes); }));
-            return Promise.all(merges).then(() => extras);
+            return Promise.all(merges).then(() => extras.concat(dutyProofs));
           })
           .then(extras => {
             extras.forEach((file, index) => {
@@ -1286,6 +1361,7 @@
     memberNumberFor: memberNumberFor,
     memberOptionLabel: memberOptionLabel,
     pdfKindsFor: pdfKindsFor,
+    gatherDutyProofs: gatherDutyProofs,
     statusLabel: statusLabel,
     TRANSITIONS: TRANSITIONS
   };

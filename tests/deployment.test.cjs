@@ -21,7 +21,8 @@ test('built admin page embeds literal scripts without unresolved placeholders', 
   const html = read('build/apps-script/admin/Admin.html');
   assert.equal(/__(STYLE|LIBRARY|DOMAIN|WORKBOOK|FINANCETPL|FINANCEWB|FINANCEPDF|TRANSPORT|ADMIN|CONFIG)__/.test(html), false);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-  assert.equal(scripts.length, 15);
+  // 15 legacy inline scripts + duty-pdf + duty-record-ui
+  assert.equal(scripts.length, 17);
   for (const script of scripts) assert.doesNotThrow(() => new vm.Script(script));
   assert.match(scripts[0], /KPT_CONFIG/);
   assert.equal(scripts[1], read('vendor/xlsx.full.min.js').replace(/<\/script/gi, '<\\/script'));
@@ -30,6 +31,8 @@ test('built admin page embeds literal scripts without unresolved placeholders', 
   assert.ok(scripts.some(script => script.includes('KPTTransport')));
   assert.ok(scripts.some(script => script.includes('KPTServicePDF')));
   assert.ok(scripts.some(script => script.includes('KPTServiceUI')));
+  assert.ok(scripts.some(script => script.includes('KPTDutyPDF')));
+  assert.ok(scripts.some(script => script.includes('KPTDutyUI')));
   assert.ok(scripts.some(script => script.startsWith('window.SERVICE_PDF_TEMPLATES = ')));
   const githubAdmin = read('dist/admin.html');
   assert.match(githubAdmin, /src="config\.js\?v=[a-f0-9]{12}"/);
@@ -98,7 +101,7 @@ test('admin bridge derives an origin from the full GitHub Pages URL', () => {
   assert.match(source, /setXFrameOptionsMode\(HtmlService\.XFrameOptionsMode\.ALLOWALL\)/);
 });
 test('source JavaScript and Apps Script compile; vendored Excel library checksum matches', () => {
-  for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'demo-transport.js', 'transport.js', 'i18n.js', 'activity-intro.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);
+  for (const name of ['domain.js', 'admin.js', 'public.js', 'workbook.js', 'finance-templates.js', 'finance-workbook.js', 'finance-pdf.js', 'demo-transport.js', 'transport.js', 'i18n.js', 'activity-intro.js', 'duty-pdf.js', 'duty-record-ui.js']) assert.doesNotThrow(() => new vm.Script(read('src/' + name)), name);
   for (const project of ['admin', 'public']) assert.doesNotThrow(() => new vm.Script(read('apps-script/' + project + '/Code.gs')), project);
   assert.equal(crypto.createHash('sha256').update(read('vendor/xlsx.full.min.js')).digest('hex'), read('vendor/SHA256.txt').trim());
 });

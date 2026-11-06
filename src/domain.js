@@ -6,6 +6,9 @@
     Attendance: ['id', 'version', 'activityId', 'memberId', 'present'],
     Exams: ['id', 'version', 'memberId', 'activityId', 'type', 'date', 'result', 'attended', 'certificate', 'archived'],
     Duty: ['id', 'version', 'memberId', 'year', 'hours'],
+    DutyRecords: ['id', 'version', 'memberId', 'activityId', 'date', 'year', 'hours', 'note'],
+    DutyPrevious: ['id', 'version', 'memberId', 'year', 'hours', 'note'],
+    DutyProofs: ['id', 'version', 'activityId', 'fileName', 'mime', 'bytes', 'uploadedBy', 'uploadedAt'],
     Awards: ['id', 'version', 'memberId', 'catalogId', 'category', 'name', 'date', 'level', 'certificate', 'notes', 'archived'],
     Enrolments: ['id', 'version', 'memberId', 'year', 'form', 'status'],
     Catalog: ['id', 'version', 'code', 'sortOrder', 'kind', 'category', 'name', 'level', 'eligibilityMetric', 'eligibilityThreshold', 'archived'],
@@ -96,6 +99,8 @@
     });
     if (fields[table].includes('year')) row.year = Number(input.year);
     if (table === 'Duty') row.hours = str(input.hours) === '' ? null : Number(input.hours);
+    if (table === 'DutyRecords' || table === 'DutyPrevious') row.hours = str(input.hours) === '' ? null : Number(input.hours);
+    if (table === 'DutyProofs') row.bytes = str(input.bytes) === '' ? 0 : Number(input.bytes);
     if (table === 'FinIncomes' || table === 'FinExpenses' || table === 'FinReimbursements') row.amount = money(input.amount);
     if (table === 'FinReimburseLines') {
       row.total = money(input.total);
@@ -166,6 +171,16 @@
           }
         }
         if (table === 'Duty' && row.hours !== null && (!Number.isFinite(row.hours) || row.hours < 0 || row.hours > 8784)) fail('Duty hours must be between 0 and 8784, or blank.');
+        if (table === 'DutyRecords') {
+          if (!Number.isFinite(row.hours) || row.hours <= 0 || row.hours > 24) fail('Duty record hours must be above 0 and at most 24 per date.');
+          if (row.year !== yearOf(row.date)) fail('Duty record year must match its date.');
+        }
+        if (table === 'DutyPrevious' && (!Number.isFinite(row.hours) || row.hours < 0 || row.hours > 99999)) fail('Previous hours must be between 0 and 99999.');
+        if (table === 'DutyProofs') {
+          if (!row.activityId) fail('Duty proof needs an activity.');
+          if (!row.fileName) fail('Duty proof needs a file name.');
+          if (row.bytes != null && (!Number.isFinite(row.bytes) || row.bytes < 0)) fail('Invalid duty proof size.');
+        }
         if (table === 'Awards') {
           const catalog = row.catalogId && state.Catalog.find(item => item.id === row.catalogId && item.kind === 'Award');
           if (!categories.includes(row.category) || (!catalog && !state.Catalog.some(item => item.kind === 'Award' && item.category === row.category && item.name === row.name && item.level === row.level))) fail('Choose an award and level from the catalogue.');
@@ -244,6 +259,8 @@
     unique(state.Members, row => norm(row.sjamId), 'SJAM ID');
     unique(state.Attendance, row => row.activityId + ':' + row.memberId, 'attendance');
     unique(state.Duty, row => row.memberId + ':' + row.year, 'annual Duty');
+    unique(state.DutyRecords, row => row.memberId + ':' + row.activityId + ':' + row.date, 'duty occurrence');
+    unique(state.DutyProofs, row => row.activityId, 'duty proof per activity');
     unique(state.Enrolments, row => row.memberId + ':' + row.year, 'annual enrolment');
     unique(state.Exams.filter(row => row.activityId), row => row.activityId + ':' + row.memberId, 'linked exam');
     unique(state.Catalog, row => [row.kind, row.category, norm(row.name), norm(row.level)].join(':'), 'catalogue entry');
@@ -993,11 +1010,13 @@
     while (changed) {
       changed = false;
       const memberIds = selected.Members;
-      if (memberIds.size) ['Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments'].forEach(name => add(name, state[name].filter(row => memberIds.has(row.memberId))));
+      if (memberIds.size) ['Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments', 'DutyRecords', 'DutyPrevious'].forEach(name => add(name, state[name].filter(row => memberIds.has(row.memberId))));
       const activityIds = selected.Activities;
       if (activityIds.size) {
         add('Attendance', state.Attendance.filter(row => activityIds.has(row.activityId)));
         add('Exams', state.Exams.filter(row => activityIds.has(row.activityId)));
+        add('DutyRecords', state.DutyRecords.filter(row => activityIds.has(row.activityId)));
+        add('DutyProofs', state.DutyProofs.filter(row => activityIds.has(row.activityId)));
       }
       if (selected.Attendance.size) add('Exams', state.Exams.filter(exam => exam.activityId && state.Attendance.some(attendance => selected.Attendance.has(attendance.id) && attendance.activityId === exam.activityId && attendance.memberId === exam.memberId)));
       const bookIds = selected.FinBooks;
@@ -1035,7 +1054,7 @@
     if (!state.Members.length) fail('There are no students to delete.');
     const memberIds = new Set(state.Members.map(row => row.id));
     const records = { Members: copy(state.Members) };
-    ['Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments'].forEach(name => {
+    ['Attendance', 'Exams', 'Duty', 'Awards', 'Enrolments', 'DutyRecords', 'DutyPrevious'].forEach(name => {
       const rows = state[name].filter(row => memberIds.has(row.memberId));
       if (rows.length) records[name] = copy(rows);
     });
@@ -2024,7 +2043,160 @@
     });
     return app.id;
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceRemoveAttachment, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
+  // --- Duty In Charge / Duty Record ledger (per-occurrence duty + Previous balance) ---
+  const dutyYear = value => {
+    const year = Number(value);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) fail('Report year must be between 2000 and 2100.');
+    return year;
+  };
+  function dutyWorkspaceProjection(state) {
+    return {
+      revision: state.revision,
+      members: state.Members.map(row => ({ id: row.id, name: row.name, sjamId: row.sjamId })),
+      activities: state.Activities.map(row => ({ id: row.id, name: row.name, date: row.date })),
+      records: copy(state.DutyRecords),
+      previous: copy(state.DutyPrevious),
+      proofs: state.DutyProofs.map(row => ({ id: row.id, version: row.version, activityId: row.activityId, fileName: row.fileName, mime: row.mime, bytes: row.bytes, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt }))
+    };
+  }
+  function dutyReportBundle(state, request) {
+    const year = dutyYear(request.year);
+    const member = state.Members.find(row => row.id === str(request.memberId));
+    if (!member) fail('Unknown member. Reload current data.');
+    const previousEntries = state.DutyPrevious.filter(row => row.memberId === member.id && row.year === year)
+      .map(row => ({ id: row.id, version: row.version, hours: row.hours, note: row.note }));
+    const previousTotal = previousEntries.reduce((sum, row) => sum + (Number.isFinite(row.hours) ? row.hours : 0), 0);
+    const lines = state.DutyRecords.filter(row => row.memberId === member.id && row.year === year)
+      .slice().sort((first, second) => first.date < second.date ? -1 : first.date > second.date ? 1 : 0)
+      .map(row => {
+        const activity = state.Activities.find(item => item.id === row.activityId);
+        return { id: row.id, version: row.version, date: row.date, activityId: row.activityId, activityName: activity ? activity.name : '', hours: row.hours, note: row.note };
+      });
+    const subtotal = lines.reduce((sum, row) => sum + (Number.isFinite(row.hours) ? row.hours : 0), 0);
+    return { member: { id: member.id, name: member.name, sjamId: member.sjamId }, year, previousEntries, previousTotal, confirmed: previousEntries.length > 0, lines, subtotal, cumulative: previousTotal + subtotal };
+  }
+  function dutyImportRows(original, request, context) {
+    const state = copy(original);
+    const errors = [];
+    const changes = [];
+    const mode = str(request.mode);
+    if (mode !== 'records' && mode !== 'previous') fail('Import mode must be records or previous.');
+    const rows = Array.isArray(request.rows) ? request.rows : [];
+    const seen = new Set();
+    rows.forEach((input, index) => {
+      const rowNo = input.__excelRow || index + 2;
+      try {
+        const memberId = str(input.memberId);
+        if (!memberId || !state.Members.some(row => row.id === memberId)) fail('Unknown member "' + memberId + '". Resolve the student before importing.');
+        if (mode === 'records') {
+          const activityId = str(input.activityId);
+          if (!activityId || !state.Activities.some(row => row.id === activityId)) fail('Unknown activity "' + activityId + '". Resolve the activity before importing.');
+          const date = str(input.date);
+          if (!dateValid(date)) fail('Invalid date "' + date + '". Use a valid YYYY-MM-DD date.');
+          const hours = str(input.hours) === '' ? NaN : Number(input.hours);
+          if (!Number.isFinite(hours) || hours <= 0 || hours > 24) fail('Duty record hours must be above 0 and at most 24 per date.');
+          const note = str(input.note);
+          if (note.length > 200) fail('Note must be at most 200 characters.');
+          const key = memberId + ':' + activityId + ':' + date;
+          if (seen.has(key)) fail('重复 Duplicate row: this member, activity and date already appear earlier in this file (' + key + ').');
+          if (state.DutyRecords.some(row => row.memberId === memberId && row.activityId === activityId && row.date === date)) fail('重复 Duplicate: this member already has a saved duty record for the same activity and date (' + key + ').');
+          seen.add(key);
+          const row = upsert(state, 'DutyRecords', { memberId, activityId, date, year: yearOf(date), hours, note }, context.uuid);
+          changes.push({ row: rowNo, id: row.id, change: 'Add' });
+        } else {
+          const year = Number(input.year);
+          if (!Number.isInteger(year) || year < 2000 || year > 2100) fail('Invalid year "' + str(input.year) + '". Report year must be between 2000 and 2100.');
+          const hours = str(input.hours) === '' ? NaN : Number(input.hours);
+          if (!Number.isFinite(hours)) fail('Blank or non-numeric hours. Use 0 for a confirmed zero balance.');
+          if (hours < 0 || hours > 99999) fail('Previous hours must be between 0 and 99999.');
+          const note = str(input.note);
+          const key = memberId + ':' + year + ':' + hours + ':' + note;
+          if (seen.has(key)) fail('重复 Duplicate row: the same previous-balance entry already appears earlier in this file.');
+          if (state.DutyPrevious.some(row => row.memberId === memberId && row.year === year && row.hours === hours && row.note === note)) fail('重复 Duplicate: this member already has a saved previous-balance entry with the same year, hours and note.');
+          seen.add(key);
+          const row = upsert(state, 'DutyPrevious', { memberId, year, hours, note }, context.uuid);
+          changes.push({ row: rowNo, id: row.id, change: 'Add' });
+        }
+      } catch (error) { errors.push({ row: rowNo, message: error.message }); }
+    });
+    if (!errors.length) {
+      try { validateState(state); } catch (error) {
+        const change = changes.find(row => row.id === error.recordId);
+        errors.push({ row: change ? change.row : null, message: error.message });
+      }
+    }
+    if (!errors.length && changes.length) finish(state, context.actor, 'Duty import: ' + changes.length + ' changes', context.now);
+    return { state: errors.length ? null : state, changes, errors, revision: original.revision };
+  }
+  function dutyRecordSave(original, request, context) {
+    const state = copy(original);
+    const id = str(request.id);
+    const memberId = str(request.memberId);
+    const activityId = str(request.activityId);
+    const date = str(request.date);
+    if (!dateValid(date)) fail('Use a valid YYYY-MM-DD date.');
+    const note = str(request.note);
+    if (note.length > 200) fail('Note must be at most 200 characters.');
+    const clash = state.DutyRecords.find(row => row.id !== id && row.memberId === memberId && row.activityId === activityId && row.date === date);
+    if (clash) fail('重复 Duplicate duty occurrence: this member already has a record for the same activity and date (' + clash.id + ').');
+    const row = upsert(state, 'DutyRecords', { id, version: request.version, memberId, activityId, date, year: yearOf(date), hours: request.hours, note }, context.uuid);
+    finish(state, context.actor, 'Save duty record: ' + row.id, context.now);
+    return { state, row };
+  }
+  function dutyRecordRemove(original, request, context) {
+    const state = copy(original);
+    const id = str(request.id);
+    const index = state.DutyRecords.findIndex(row => row.id === id);
+    if (index < 0) fail('Record not found. Reload current data.');
+    if (Number(request.version) !== state.DutyRecords[index].version) fail('Conflict: this record changed. Reload current data before saving.');
+    state.DutyRecords.splice(index, 1);
+    finish(state, context.actor, 'Remove duty record: ' + id, context.now);
+    return { state, id };
+  }
+  function dutyPreviousSave(original, request, context) {
+    const state = copy(original);
+    const id = str(request.id);
+    const memberId = str(request.memberId);
+    const year = dutyYear(request.year);
+    const hours = str(request.hours) === '' ? null : Number(request.hours);
+    const note = str(request.note);
+    const clash = state.DutyPrevious.find(row => row.id !== id && row.memberId === memberId && row.year === year && row.hours === hours && row.note === note);
+    if (clash) fail('重复 Duplicate previous entry: this member already has the same year, hours and note (' + clash.id + ').');
+    const row = upsert(state, 'DutyPrevious', { id, version: request.version, memberId, year, hours, note }, context.uuid);
+    finish(state, context.actor, 'Save previous balance: ' + row.id, context.now);
+    return { state, row };
+  }
+  function dutyPreviousRemove(original, request, context) {
+    const state = copy(original);
+    const id = str(request.id);
+    const index = state.DutyPrevious.findIndex(row => row.id === id);
+    if (index < 0) fail('Record not found. Reload current data.');
+    if (Number(request.version) !== state.DutyPrevious[index].version) fail('Conflict: this record changed. Reload current data before saving.');
+    state.DutyPrevious.splice(index, 1);
+    finish(state, context.actor, 'Remove previous balance: ' + id, context.now);
+    return { state, id };
+  }
+  function dutyProofSave(original, request, context) {
+    const state = copy(original);
+    const activityId = str(request.activityId);
+    if (!activityId || !state.Activities.some(row => row.id === activityId)) fail('Unknown activity "' + activityId + '". Duty proof needs an activity.');
+    const fileName = str(request.fileName);
+    if (!fileName) fail('Duty proof needs a file name.');
+    const existing = state.DutyProofs.find(row => row.activityId === activityId);
+    const proof = upsert(state, 'DutyProofs', {
+      id: existing ? existing.id : '',
+      version: existing ? existing.version : 0,
+      activityId,
+      fileName,
+      mime: str(request.mime),
+      bytes: request.bytes,
+      uploadedBy: str(context.actor),
+      uploadedAt: context.now
+    }, context.uuid);
+    finish(state, context.actor, 'Save duty proof: ' + proof.id, context.now);
+    return { state, proof };
+  }
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, dutyWorkspaceProjection, dutyReportBundle, dutyImportRows, dutyRecordSave, dutyRecordRemove, dutyPreviousSave, dutyPreviousRemove, dutyProofSave, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceRemoveAttachment, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
