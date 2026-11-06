@@ -438,9 +438,10 @@
     // 2) Otherwise gather the per-application signed forms (only the needed kind).
     const sources = [];
     applications.forEach(app => {
-      if (!wantsKind(app)) return;
+      if (!(batch.applicationIds || []).includes(app.id) || !wantsKind(app)) return;
       const current = (app.attachments || []).filter(att => att.kind === signedKind && att.id && att.active !== false).at(-1);
-      if (current) sources.push(current);
+      if (!current) throw new Error((app.applicant && app.applicant.name || app.id) + ': missing signed ' + kind + ' form.');
+      sources.push(current);
     });
     return Promise.all(sources.map(downloadOne));
   }
@@ -1266,7 +1267,7 @@
         if (!b) return;
         const pdf = root.KPTServicePDF;
         if (!pdf || typeof pdf.mergeAndDownload !== 'function') { notice(t('pdfUnavailable'), true); return; }
-        gatherSignedDocs(call, b, state.applications, kind).then(items => {
+        Promise.resolve().then(() => gatherSignedDocs(call, b, state.applications, kind)).then(items => {
           if (!items.length) throw new Error(t('pdfNoSigned'));
           // Contract: mergeAndDownload(items, fileName) -> Promise + downloads the merged PDF.
           const mergeName = (kind === 'Stripe' ? 'Signed-Stripe-' : 'Signed-Star-') + (b.title || b.year || 'batch') + '.pdf';
