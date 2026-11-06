@@ -115,6 +115,8 @@
   let currentPhase = 1;
   let sync = { ok: true };
   let view = 'Overview';
+  let navGroups = {};
+  try { navGroups = JSON.parse(localStorage.getItem('tccd-admin-nav-groups')) || {}; } catch (error) { /* storage unavailable */ }
   let query = '';
   let page = 0;
   let dialogRecord;
@@ -476,6 +478,11 @@
     const serviceBtn = byId('navigation') ? byId('navigation').querySelector('[data-nav="Service"]') : null;
     if (!serviceBtn) return;
     const total = Number(serviceSummary.unreadCount || 0) + (user && user.owner ? Number(serviceSummary.ownerReviewCount || 0) : 0);
+    const groupBadge = byId('service-group-badge');
+    if (groupBadge) {
+      groupBadge.textContent = String(total);
+      groupBadge.hidden = !total;
+    }
     let badge = serviceBtn.querySelector('.hub-badge');
     if (!total) {
       if (badge) badge.remove();
@@ -842,13 +849,20 @@
       ['会员资料', 'Member records', ['Members', 'Activities', 'Exams', 'Duty']],
       ['活动与奖励', 'Activities & awards', ['Documents', 'Service', 'Awards']],
       ['财政', 'Finance', ['Finance']],
-      ['资料与设置', 'Data & settings', ['Owner', 'Data', 'Phase', 'Setup', 'Import', 'Trash', 'Settings']]
+      ['资料与设置', 'Data & settings', ['Owner', 'Data', 'Import', 'Phase', 'Setup', 'Trash', 'Settings']]
     ];
     let html = ['Overview', 'Portal'].filter(key => allowed.has(key)).map(navButton).join('');
     groups.forEach(([zh, en, keys]) => {
       const links = keys.filter(key => allowed.has(key)).map(navButton).join('');
       if (!links) return;
       const label = escape(lang === 'zh' ? zh : en);
+      if (workspaceMode === 'admin') {
+        const id = 'nav-section-' + keys[0];
+        const expanded = navGroups[id] ?? keys[0] !== 'Owner';
+        const badge = allowed.has('Service') && keys.includes('Service') ? '<span id="service-group-badge" class="hub-badge" hidden></span>' : '';
+        html += '<div class="nav-group"><button type="button" class="nav-group-toggle" aria-expanded="' + expanded + '" aria-controls="' + id + '">' + label + badge + '</button><div class="nav-group-links" id="' + id + '">' + links + '</div></div>';
+        return;
+      }
       html += '<div class="nav-group" role="group" aria-label="' + label + '"><span class="nav-group-title" aria-hidden="true">' + label + '</span>' + links + '</div>';
     });
     if (ocMode && state && state.DocPackages) {
@@ -863,18 +877,7 @@
     html += '<button type="button" data-action="telegramSettings">' + icon + 'Telegram</button>';
     html += '<button type="button" data-action="toggleLang" style="margin-top:auto">' + icon + (lang === 'zh' ? 'EN' : '中') + '</button>';
     byId('navigation').innerHTML = html;
-    // Service badge: updated in place by the 5s summary poll, never by re-render.
-    const serviceBtn = byId('navigation').querySelector('[data-nav="Service"]');
-    if (serviceBtn && serviceSummary) {
-      const total = Number(serviceSummary.unreadCount || 0) + (user && user.owner ? Number(serviceSummary.ownerReviewCount || 0) : 0);
-      if (total > 0) {
-        const badge = document.createElement('span');
-        badge.className = 'hub-badge';
-        badge.id = 'service-nav-badge';
-        badge.textContent = String(total);
-        serviceBtn.appendChild(badge);
-      }
-    }
+    serviceRefreshBadge();
     document.querySelectorAll('[data-package]').forEach(element => {
       element.classList.toggle('active', !!openDocPackageId && element.dataset.package === openDocPackageId);
     });
@@ -1635,6 +1638,12 @@
     else if (isOcOnly()) view = 'Documents';
     else if (workspaceMode === 'treasurer') view = 'Finance';
     else if (workspaceMode === 'owner') view = 'Owner';
+    const linkedView = new URLSearchParams(location.search).get('view');
+    if (workspaceMode === 'admin' && linkedView && workspaceNav('admin').some(([key]) => key === linkedView) && view !== linkedView) {
+      view = linkedView;
+      const group = { Members: 'Members', Activities: 'Members', Exams: 'Members', Duty: 'Members', Documents: 'Documents', Service: 'Documents', Awards: 'Documents', Data: 'Owner', Import: 'Owner', Phase: 'Owner', Setup: 'Owner', Trash: 'Owner', Settings: 'Owner' }[view];
+      if (group) navGroups['nav-section-' + group] = true;
+    }
     byId('account').textContent = user.email;
     byId('role').textContent = roleLabel();
     byId('demo-banner').hidden = !window.KPTTransport.demo;
@@ -1889,6 +1898,7 @@
       try {
         const url = new URL(location.href);
         url.searchParams.set('mode', id);
+        url.searchParams.delete('view');
         history.replaceState({}, '', url);
       } catch (error) { /* ignore */ }
       render();
@@ -2467,9 +2477,25 @@
       render();
       return;
     }
+    const toggle = event.target.closest('.nav-group-toggle');
+    if (toggle) {
+      const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+      toggle.setAttribute('aria-expanded', String(expanded));
+      navGroups[toggle.getAttribute('aria-controls')] = expanded;
+      try { localStorage.setItem('tccd-admin-nav-groups', JSON.stringify(navGroups)); } catch (error) { /* storage unavailable */ }
+      return;
+    }
     const element = event.target.closest('[data-nav]');
     if (!element || busy || !state) return;
     if (element.dataset.nav === 'Documents') openDocPackageId = null;
+    if (workspaceMode === 'admin') {
+      try {
+        const url = new URL(location.href);
+        url.searchParams.set('mode', 'admin');
+        url.searchParams.set('view', element.dataset.nav);
+        history.replaceState({}, '', url);
+      } catch (error) { /* URL unavailable */ }
+    }
     view = element.dataset.nav; query = ''; page = 0; notice(''); render();
   });
   byId('close-editor').addEventListener('click', () => { if (!busy) byId('editor').close(); });
