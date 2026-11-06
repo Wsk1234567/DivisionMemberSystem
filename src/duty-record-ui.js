@@ -36,14 +36,6 @@
     const text = String(value == null ? '' : value);
     return /^\d{4}-\d{2}-\d{2}$/.test(text) && !isNaN(Date.parse(text)) && new Date(text).toISOString().slice(0, 10) === text;
   }
-  function readAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error(tr('无法读取文件。', 'Could not read the file.')));
-      reader.readAsDataURL(file);
-    });
-  }
   function readAsBuffer(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -187,7 +179,7 @@
     const canAttachService = !!((options && options.owner) || (options && options.admin));
     const state = {
       revision: 0,
-      members: [], activities: [], records: [], previous: [], proofs: [],
+      members: [], activities: [], records: [], previous: [],
       services: [],
       editPrev: null, editRec: null, dirty: false,
       report: null, reportProofs: [], reportMemberId: '', reportYear: String(new Date().getFullYear()),
@@ -223,7 +215,6 @@
       state.activities = data.activities || [];
       state.records = data.records || [];
       state.previous = data.previous || [];
-      state.proofs = data.proofs || [];
     }
     function load() {
       const jobs = [Promise.resolve(call({ action: 'dutyBootstrap' })).then(data => { applyProjection(data); })];
@@ -386,39 +377,6 @@
       });
     }
 
-    // ----- section 3: private proofs -----
-    function uploadProof(btn) {
-      return operate(btn, tr('上传中…', 'Uploading…'), async () => {
-        const activityEl = container.querySelector('#duty-proof-activity');
-        const fileEl = container.querySelector('#duty-proof-file');
-        const activityId = activityEl ? String(activityEl.value || '') : '';
-        const file = fileEl && fileEl.files ? fileEl.files[0] : null;
-        if (!activityId) throw new Error(tr('请先选择活动。', 'Choose an activity first.'));
-        if (!file) throw new Error(tr('请先选择文件（PDF/JPG/PNG）。', 'Choose a file first (PDF/JPG/PNG).'));
-        const mime = String(file.type || '').toLowerCase();
-        const okType = mime === 'application/pdf' || mime === 'image/jpeg' || mime === 'image/png'
-          || /\.(pdf|jpe?g|png)$/i.test(file.name || '');
-        if (!okType) throw new Error(tr('只接受 PDF/JPG/PNG 文件。', 'Only PDF/JPG/PNG files are accepted.'));
-        const dataUrl = await readAsDataUrl(file);
-        const base64 = dataUrl.split(',')[1] || '';
-        applyProjection(await call({
-          action: 'dutyProofUpload',
-          activityId, fileName: file.name, mime: mime || 'application/octet-stream',
-          bytes: file.size || base64ToBytes(base64).length, base64
-        }));
-        render();
-        notice(tr('证明已上传。同一活动仅一份证明，重新上传会替换。', 'Proof uploaded. One proof per activity — re-upload replaces it.'), false);
-      });
-    }
-    function downloadProof(btn, proofId) {
-      return operate(btn, tr('下载中…', 'Downloading…'), async () => {
-        const file = await call({ action: 'dutyProofDownload', proofId: proofId });
-        if (!file || !file.base64) throw new Error(tr('没有文件内容。', 'No file content returned.'));
-        downloadBytes(base64ToBytes(file.base64), file.fileName || 'proof', file.mime || 'application/octet-stream');
-        notice(tr('已开始下载。', 'Download started.'), false);
-      });
-    }
-
     // ----- section 4: report -----
     function loadReport(btn) {
       return operate(btn, tr('载入中…', 'Loading…'), async () => {
@@ -570,13 +528,13 @@
       const f = state.editPrev || { memberId: '', year: '', hours: '', note: '' };
       const rows = state.previous.map(prevRowHtml).join('');
       return '<section class="svc-step">' + stepHeading(1, tr('Previous 结余', 'Previous balance'))
-        + '<p class="hint">' + escape(tr('条目按年度累加（60 + 10 = 70）；0 是已确认的零结余；没有任何条目 = 未确认，会禁止生成正式 PDF；年度之间不会自动结转。', 'Entries accumulate (60 + 10 = 70); 0 is a confirmed zero; no entries at all = not confirmed, which blocks formal PDF generation; nothing is ever carried over automatically between years.')) + '</p>'
+        + '<p class="hint">' + escape(tr('Previous 是从上一年带进来的时数。没有带过来就填 0，再按「添加」。留空代表还没确认，暂时不能生成个人 Duty Record。', 'Previous means hours carried over from the prior year. If there are none, enter 0 and click Add. A blank entry is unconfirmed and prevents PDF generation.')) + '</p>'
         + tableWrap([tr('会员', 'Member'), tr('报表年度', 'Year'), tr('小时', 'Hours'), tr('备注', 'Note'), tr('操作', 'Actions')], rows, tr('还没有 Previous 结余。', 'No previous-balance entries yet.'))
         + '<div id="duty-prev-form">'
         + '<div class="toolbar">'
         + labelled(tr('会员', 'Member'), '<select id="duty-prev-member">' + memberOptions(f.memberId) + '</select>', true)
         + labelled(tr('报表年度', 'Year'), '<input id="duty-prev-year" type="number" min="2000" max="2100" step="1" value="' + escape(f.year) + '">', true)
-        + labelled(tr('小时', 'Hours'), '<input id="duty-prev-hours" type="number" min="0" step="any" value="' + escape(f.hours) + '">', true)
+        + labelled(tr('小时', 'Hours'), '<input id="duty-prev-hours" placeholder="0" type="number" min="0" step="any" value="' + escape(f.hours) + '">', true)
         + labelled(tr('备注', 'Note'), '<input id="duty-prev-note" type="text" maxlength="200" value="' + escape(f.note) + '">')
         + '</div>'
         + '<div class="toolbar">'
@@ -617,25 +575,6 @@
         + '<button type="button" class="button primary" data-duty-rec-save="1">' + escape(state.editRec ? tr('保存修改', 'Save changes') : tr('添加', 'Add')) + '</button>'
         + (state.editRec ? '<button type="button" class="button" data-duty-rec-cancel="1">' + escape(tr('取消编辑', 'Cancel edit')) + '</button>' : '')
         + '</div>') + '</div></section>';
-    }
-    function proofRowHtml(row) {
-      return '<tr>'
-        + '<td data-label="' + escape(tr('活动', 'Activity')) + '">' + escape(activityName(row.activityId)) + '</td>'
-        + '<td data-label="' + escape(tr('文件', 'File')) + '">' + escape(row.fileName || '') + '</td>'
-        + '<td data-label="' + escape(tr('上传时间', 'Uploaded')) + '">' + escape(String(row.uploadedAt || '').slice(0, 10)) + '</td>'
-        + '<td data-label="' + escape(tr('下载', 'Download')) + '"><button type="button" class="button small" data-duty-proof-dl="' + escape(row.id) + '">' + escape(tr('下载', 'Download')) + '</button></td>'
-        + '</tr>';
-    }
-    function proofSectionHtml() {
-      const rows = state.proofs.map(proofRowHtml).join('');
-      return '<section class="svc-step">' + stepHeading(3, tr('上传活动证明（可选）', 'Upload activity evidence (optional)'))
-        + '<p class="hint">' + escape(tr('例如值勤名单或活动证明信。每场活动上传一份，同场的学员共用。上传新文件会替换旧文件。', 'For example, a duty roster or an event confirmation letter. Upload one file per activity for all participating cadets. Uploading a new file replaces the old one.')) + '</p>'
-        + tableWrap([tr('活动', 'Activity'), tr('文件', 'File'), tr('上传时间', 'Uploaded'), tr('下载', 'Download')], rows, tr('还没有证明。', 'No proofs yet.'))
-        + '<div class="toolbar">'
-        + labelled(tr('活动', 'Activity'), '<select id="duty-proof-activity">' + activityOptions('') + '</select>', true)
-        + labelled(tr('文件（PDF/JPG/PNG）', 'File (PDF/JPG/PNG)'), '<input id="duty-proof-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png">', true)
-        + '<button type="button" class="button primary" data-duty-proof-upload="1">' + escape(tr('上传证明', 'Upload proof')) + '</button>'
-        + '</div></section>';
     }
     function reportSectionHtml() {
       const report = state.report;
@@ -680,7 +619,7 @@
       } else {
         summary = '<p class="muted">' + escape(tr('选择会员和年度后载入报表。', 'Pick a member and a year, then load the report.')) + '</p>';
       }
-      return '<section class="svc-step">' + stepHeading(4, tr('生成个人 Duty Record', 'Generate a personal Duty Record'))
+      return '<section class="svc-step">' + stepHeading(3, tr('生成个人 Duty Record', 'Generate a personal Duty Record'))
         + '<p class="hint">' + escape(tr('选学员和年份，查看当年的值勤记录和 Previous。可预览 PDF，或下载申请用的文件。', 'Choose a cadet and year to review duty entries and Previous hours, preview the PDF, or download the application files.')) + '</p>'
         + '<div class="toolbar">'
         + labelled(tr('会员', 'Member'), '<select id="duty-report-member">' + memberOptions(state.reportMemberId) + '</select>', true)
@@ -781,7 +720,7 @@
           '<button type="button" class="button' + (state.tab === key ? ' primary' : '') + '" aria-pressed="' + (state.tab === key) + '" data-duty-tab="' + key + '">' + escape(label) + '</button>').join('')
         + '</div>'
         + (state.tab === 'dashboard' ? dashboardHtml() : state.tab === 'import' ? importSectionHtml()
-          : prevSectionHtml() + recSectionHtml() + proofSectionHtml() + reportSectionHtml())
+          : prevSectionHtml() + recSectionHtml() + reportSectionHtml())
         + '</div>';
       bind();
     }
@@ -842,8 +781,6 @@
         const row = state.records.find(item => String(item.id) === btn.getAttribute('data-duty-rec-del'));
         if (row) removeRec(btn, row);
       });
-      on('[data-duty-proof-upload]', btn => uploadProof(btn));
-      on('[data-duty-proof-dl]', btn => downloadProof(btn, btn.getAttribute('data-duty-proof-dl')));
       on('[data-duty-report-load]', btn => loadReport(btn));
       on('[data-duty-report-preview]', btn => previewPdf(btn));
       on('[data-duty-report-zip]', btn => downloadZip(btn));
