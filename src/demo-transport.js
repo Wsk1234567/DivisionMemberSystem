@@ -7,6 +7,7 @@
   let admins = ['preview-secretary@example.test'];
   let treasurers = ['preview-treasurer@example.test'];
   let ocs = ['preview-oc@example.test'];
+  let dutyInCharges = ['preview-duty@example.test'];
   let currentPhase = 1;
   let counter = 0;
   let demoRole = 'owner';
@@ -53,17 +54,22 @@
     treasurer: 'preview-treasurer@example.test',
     oc: 'preview-oc@example.test',
     os: 'preview-os@example.test',
-    ot: 'preview-ot@example.test'
+    ot: 'preview-ot@example.test',
+    duty: 'preview-duty@example.test'
   };
   const context = actor => ({ actor: (actor || identity()).email, now: new Date().toISOString(), uuid: () => 'demo-' + ++counter });
-  const identity = () => ({
-    email: emails[demoRole] || emails.owner,
-    owner: demoRole === 'owner',
-    admin: demoRole === 'owner' || demoRole === 'admin',
-    treasurer: demoRole === 'owner' || demoRole === 'treasurer',
-    oc: demoRole === 'owner' || demoRole === 'admin' || demoRole === 'oc',
-    roles: demoRole === 'owner' ? ['owner', 'admin', 'treasurer', 'oc'] : [demoRole]
-  });
+  const identity = () => {
+    const email = emails[demoRole] || emails.owner;
+    return {
+      email,
+      owner: demoRole === 'owner',
+      admin: demoRole === 'owner' || demoRole === 'admin',
+      treasurer: demoRole === 'owner' || demoRole === 'treasurer',
+      oc: demoRole === 'owner' || demoRole === 'admin' || demoRole === 'oc',
+      dutyInCharge: demoRole === 'owner' || demoRole === 'admin' || demoRole === 'duty' || dutyInCharges.indexOf(String(email).toLowerCase()) >= 0,
+      roles: demoRole === 'owner' ? ['owner', 'admin', 'treasurer', 'oc'] : [demoRole]
+    };
+  };
   const copy = value => KPT.copy(value);
   const liveHash = text => {
     // Mirrors Code.gs liveHash_: SHA-256 of UTF-8 material. Node crypto (tests) and Web Crypto.
@@ -134,7 +140,8 @@
     actor && actor.oc ? '1' : '0',
     admins.slice().sort().join(','),
     treasurers.slice().sort().join(','),
-    ocs.slice().sort().join(',')
+    ocs.slice().sort().join(','),
+    dutyInCharges.slice().sort().join(',')
   ].join('|'));
   const liveChangeKey = (actor, revisionMarker, seqMarker) => liveHash([
     String(actor && actor.email || ''),
@@ -147,6 +154,7 @@
   const requireApprover = actor => { if (!(actor.owner || actor.admin)) throw new Error('Access denied. Only Owner or Secretary can approve documents.'); };
   const requireFinanceApprover = actor => { if (!(actor.owner || actor.treasurer)) throw new Error('Access denied. Only Owner or Divisional Treasurer can approve finance.'); };
   const requireOwner = actor => { if (!actor.owner) throw new Error('Only the owner can perform this action.'); };
+  const requireDuty = actor => { if (!(actor.owner || actor.admin || actor.dutyInCharge)) throw new Error('Access denied. Duty In Charge access is required.'); };
   const packageRolesForEmail = (pkg, email) => {
     const mail = String(email || '').trim().toLowerCase();
     const roles = [];
@@ -279,6 +287,7 @@
       out.admins = isOwner ? copy(admins) : [];
       out.treasurers = isOwner ? copy(treasurers) : [];
       out.ocs = isOwner ? copy(ocs) : [];
+      out.dutyInCharges = isOwner ? copy(dutyInCharges) : [];
       out.docFolders = isOwner ? copy(docFolders) : { templates: '', submissions: '' };
     }
     return out;
@@ -287,7 +296,7 @@
       if (!state) { const response = await fetch('demo-private.json'); if (!response.ok) throw new Error('Preview data could not be loaded.'); state = KPT.upgradeState(await response.json()); }
       await new Promise(resolve => setTimeout(resolve, 30));
       if (request.action === 'bootstrap') {
-        return { state: copy(state), user: actor, changeKey: liveChangeKey(actor, state.revision, liveSeq), sync: { ok: true, revision: state.revision }, admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs), currentPhase, docFolders: copy(docFolders) };
+        return { state: copy(state), user: actor, changeKey: liveChangeKey(actor, state.revision, liveSeq), sync: { ok: true, revision: state.revision }, admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs), dutyInCharges: copy(dutyInCharges), currentPhase, docFolders: copy(docFolders) };
       }
       if (request.action === 'liveProbe') {
         // Per-identity irreversible changeKey only — no global counters or raw lists.
@@ -491,7 +500,8 @@
           admins = request.admins || [];
           treasurers = request.treasurers || [];
           ocs = request.ocs || [];
-          return { admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs) };
+          dutyInCharges = request.dutyInCharges || [];
+          return { admins: copy(admins), treasurers: copy(treasurers), ocs: copy(ocs), dutyInCharges: copy(dutyInCharges) };
         }
         admins = request.emails;
         return copy(admins);
@@ -632,6 +642,52 @@
         syncServiceToStore();
         return KPT.serviceListProjection(state);
       }
+      // --- Duty In Charge / Duty Record ---
+      if (request.action === 'dutyBootstrap') {
+        requireDuty(actor);
+        return KPT.dutyWorkspaceProjection(state);
+      }
+      if (request.action === 'dutyImportPreview') {
+        requireDuty(actor);
+        const preview = KPT.dutyImportRows(state, request, context(actor));
+        return { changes: preview.changes, errors: preview.errors, revision: preview.revision };
+      }
+      if (request.action === 'dutyImportCommit') {
+        requireDuty(actor);
+        const preview = KPT.dutyImportRows(state, request, context(actor));
+        if (preview.errors.length) throw new Error('Import has validation errors.');
+        if (preview.changes.length) { backup('Before duty change'); state = preview.state; }
+        return KPT.dutyWorkspaceProjection(state);
+      }
+      if (['dutyRecordSave', 'dutyRecordRemove', 'dutyPreviousSave', 'dutyPreviousRemove', 'dutyProofUpload'].includes(request.action)) {
+        requireDuty(actor);
+        const fn = request.action === 'dutyProofUpload' ? 'dutyProofSave' : request.action;
+        backup('Before duty change');
+        const result = KPT[fn](state, request, context(actor));
+        state = result.state;
+        if (request.action === 'dutyProofUpload' && result.proof && request.base64) {
+          demoFiles.set(result.proof.id, { fileName: result.proof.fileName, mime: result.proof.mime || 'application/octet-stream', base64: request.base64 });
+        }
+        return KPT.dutyWorkspaceProjection(state);
+      }
+      if (request.action === 'dutyReportBundle') {
+        requireDuty(actor);
+        const report = KPT.dutyReportBundle(state, request);
+        const activityIds = new Set(report.lines.map(line => line.activityId));
+        const proofs = (state.DutyProofs || []).filter(row => activityIds.has(row.activityId)).map(row => {
+          const stored = demoFiles.get(row.id);
+          return { activityId: row.activityId, fileName: row.fileName, mime: row.mime || 'application/octet-stream', base64: stored ? stored.base64 : '' };
+        });
+        return { report, proofs };
+      }
+      if (request.action === 'dutyProofDownload') {
+        requireDuty(actor);
+        const row = (state.DutyProofs || []).find(item => item.id === String(request.proofId || ''));
+        if (!row) throw new Error('Proof not found.');
+        const stored = demoFiles.get(row.id);
+        if (!stored) throw new Error('File content unavailable after page refresh. Please re-upload the proof.');
+        return { fileName: stored.fileName, mime: stored.mime, base64: stored.base64 };
+      }
       throw new Error('Unsupported preview action.');
   }
   function requireOwnerOrAdmin() {
@@ -642,7 +698,7 @@
     demo: true,
     publicUrl: 'index.html',
     async setDemoRole(role) {
-      if (!['owner', 'admin', 'treasurer', 'oc', 'os', 'ot'].includes(role)) throw new Error('Unknown demo role.');
+      if (!['owner', 'admin', 'treasurer', 'oc', 'os', 'ot', 'duty'].includes(role)) throw new Error('Unknown demo role.');
       demoRole = role;
       return identity();
     },

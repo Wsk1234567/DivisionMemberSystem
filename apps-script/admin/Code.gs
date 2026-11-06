@@ -8,7 +8,10 @@ function configuration_() {
   const admins = JSON.parse(props.getProperty('ADMINS') || props.getProperty('ADMIN_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
   const treasurers = JSON.parse(props.getProperty('TREASURER_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
   const ocs = JSON.parse(props.getProperty('OC_EMAILS') || '[]').map(email => String(email).trim().toLowerCase());
-  return { owner, admins, treasurers, ocs, privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID'), templatesId: props.getProperty('DOC_TEMPLATES_FOLDER_ID'), submissionsId: props.getProperty('DOC_SUBMISSIONS_FOLDER_ID') };
+  const dutyRaw = String(props.getProperty('DUTY_IN_CHARGE_EMAILS') || '').trim();
+  const dutyValues = dutyRaw.charAt(0) === '[' ? JSON.parse(dutyRaw) : dutyRaw.split(',');
+  const dutyInCharges = (Array.isArray(dutyValues) ? dutyValues : []).map(email => String(email).trim().toLowerCase()).filter(Boolean);
+  return { owner, admins, treasurers, ocs, dutyInCharges, privateId: props.getProperty('PRIVATE_SHEET_ID'), publicId: props.getProperty('PUBLIC_SHEET_ID'), backupsId: props.getProperty('BACKUP_FOLDER_ID'), templatesId: props.getProperty('DOC_TEMPLATES_FOLDER_ID'), submissionsId: props.getProperty('DOC_SUBMISSIONS_FOLDER_ID') };
 }
 function actorFromEmail_(email) {
   const config = configuration_();
@@ -18,12 +21,14 @@ function actorFromEmail_(email) {
   const isAdmin = config.admins.includes(normalized);
   const isTreasurer = config.treasurers.includes(normalized);
   const inOcList = config.ocs.includes(normalized);
+  const inDutyList = config.dutyInCharges.includes(normalized);
   return {
     email: normalized,
     owner: isOwner,
     admin: isOwner || isAdmin,
     treasurer: isOwner || isTreasurer,
     oc: isOwner || inOcList,
+    dutyInCharge: isOwner || isAdmin || inDutyList,
     config
   };
 }
@@ -69,7 +74,8 @@ function identity_(ownerOnly, requireAccess, apiEmail) {
   const isAdmin = config.admins.includes(email);
   const isTreasurer = config.treasurers.includes(email);
   const isOc = isOwner || config.ocs.includes(email);
-  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email)) {
+  const inDutyList = config.dutyInCharges.includes(email);
+  if (requireAccess !== false && !isOwner && !isAdmin && !isTreasurer && !config.ocs.includes(email) && !inDutyList) {
     // Portal/API path: allow anyone already assigned as OC/OS/OT on a package, then register for future logins.
     if (apiEmail && isPackageRoleEmail_(email)) {
       registerPackageRoleEmails_([email]);
@@ -78,13 +84,16 @@ function identity_(ownerOnly, requireAccess, apiEmail) {
     }
   }
   if (ownerOnly && !isOwner) throw new Error('Only the owner can perform this action.');
-  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOwner || config.ocs.includes(email) || (!isOwner && !isAdmin && !isTreasurer && isPackageRoleEmail_(email)), config };
+  return { email, owner: isOwner, admin: isOwner || isAdmin, treasurer: isOwner || isTreasurer, oc: isOc || (!isOwner && !isAdmin && !isTreasurer && isPackageRoleEmail_(email)), dutyInCharge: isOwner || isAdmin || inDutyList, config };
 }
 function requireFinance_(actor) {
   if (!actor.owner && !actor.treasurer) throw new Error('Access denied. Treasurer access is required.');
 }
 function requireAdmin_(actor) {
   if (!actor.owner && !actor.admin) throw new Error('Access denied. Administrator access is required.');
+}
+function requireDuty_(actor) {
+  if (!actor.owner && !actor.admin && !actor.dutyInCharge) throw new Error('Access denied. Duty In Charge access is required.');
 }
 function requireDocuments_(actor) {
   if (actor.owner || actor.admin || actor.oc) return;
@@ -391,7 +400,8 @@ function permissionFingerprint_(actor) {
     actor && actor.oc ? '1' : '0',
     (config.admins || []).slice().sort().join(','),
     (config.treasurers || []).slice().sort().join(','),
-    (config.ocs || []).slice().sort().join(',')
+    (config.ocs || []).slice().sort().join(','),
+    (config.dutyInCharges || []).slice().sort().join(',')
   ];
   // Irreversible only — never return raw lists or parts (would leak other emails).
   return liveHash_(parts.join('|'));
@@ -656,6 +666,7 @@ function bootstrap_(actor) {
       admin: actor.admin,
       treasurer: actor.treasurer,
       oc: actor.oc,
+      dutyInCharge: actor.dutyInCharge,
       roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null, actor.oc ? 'oc' : null].filter(Boolean)
     },
     changeKey: liveChangeKey_(actor, state.revision, markAfter.seq),
@@ -663,6 +674,7 @@ function bootstrap_(actor) {
     admins: actor.owner ? actor.config.admins : [],
     treasurers: actor.owner ? actor.config.treasurers : [],
     ocs: actor.owner ? actor.config.ocs : [],
+    dutyInCharges: actor.owner ? actor.config.dutyInCharges : [],
     currentPhase: Number.isInteger(currentPhase) && currentPhase >= 1 && currentPhase <= 6 ? currentPhase : 1,
     docFolders: actor.owner ? { templates: actor.config.templatesId || '', submissions: actor.config.submissionsId || '' } : { templates: '', submissions: '' }
   };
@@ -689,6 +701,7 @@ function rpcInternal_(request, apiEmail) {
     if (!request || typeof request !== 'object') throw new Error('Invalid request.');
     const ownerOnlyActions = ['restore', 'setAdmins', 'setAccess', 'installBackup', 'setCurrentPhase', 'previewDelete', 'deleteRecord', 'previewDeleteAllMembers', 'deleteAllMembers', 'restoreTrash', 'purgeTrash', 'initDocFolders'];
     const adminOnlyActions = ['previewImport', 'commitImport', 'previewSetupDefaults', 'applySetupDefaults'];
+    const dutyActions = ['dutyBootstrap', 'dutyImportPreview', 'dutyImportCommit', 'dutyRecordSave', 'dutyRecordRemove', 'dutyPreviousSave', 'dutyPreviousRemove', 'dutyProofUpload', 'dutyReportBundle', 'dutyProofDownload'];
     const financeActions = ['saveFinanceBook', 'submitFinBook', 'checkFinBook', 'forwardFinBook', 'reviewFinBook', 'reopenFinBook', 'uploadFinanceAttachment', 'removeFinanceAttachment'];
     const memberDataActions = ['save', 'attendance'];
     const documentActions = ['createDocPackage', 'saveDocPackageMeta', 'saveDocItemsMeta', 'docItemUpload', 'docItemSubmit', 'docItemCheck', 'docItemForward', 'docItemReopen', 'docPackageArchive', 'saveDocTemplate', 'docDownload'];
@@ -729,6 +742,7 @@ function rpcInternal_(request, apiEmail) {
               admin: actor.admin,
               treasurer: actor.treasurer,
               oc: actor.oc,
+              dutyInCharge: actor.dutyInCharge,
               roles: [actor.owner ? 'owner' : null, actor.admin ? 'admin' : null, actor.treasurer ? 'treasurer' : null, actor.oc ? 'oc' : null].filter(Boolean)
             },
             changeKey: liveChangeKey_(actor, state.revision, markAfter.seq),
@@ -745,6 +759,7 @@ function rpcInternal_(request, apiEmail) {
     return withLock_(() => {
       const actor = identity_(ownerOnlyActions.includes(request.action), true, apiEmail);
       if (adminOnlyActions.includes(request.action)) requireAdmin_(actor);
+      if (dutyActions.includes(request.action)) requireDuty_(actor);
       if (memberDataActions.includes(request.action)) requireAdmin_(actor);
       if (documentActions.includes(request.action) || documentApproveActions.includes(request.action)) requireDocuments_(actor);
       if (documentApproveActions.includes(request.action)) requireDocumentApprover_(actor);
@@ -929,6 +944,7 @@ function rpcInternal_(request, apiEmail) {
         const admins = normalizeList(request.action === 'setAccess' ? request.admins : request.emails, 5);
         const treasurers = normalizeList(request.action === 'setAccess' ? request.treasurers : [], 8);
         const ocs = normalizeList(request.action === 'setAccess' ? request.ocs : [], 8);
+        const dutyInCharges = normalizeList(request.action === 'setAccess' ? request.dutyInCharges : [], 8);
         const previous = new Set([...actor.config.admins, ...actor.config.treasurers, ...actor.config.ocs]);
         const nextSet = new Set([...admins, ...treasurers, ...ocs]);
         const privateFile = DriveApp.getFileById(actor.config.privateId);
@@ -948,7 +964,9 @@ function rpcInternal_(request, apiEmail) {
         properties_().setProperty('ADMIN_EMAILS', JSON.stringify(admins));
         properties_().setProperty('TREASURER_EMAILS', JSON.stringify(treasurers));
         properties_().setProperty('OC_EMAILS', JSON.stringify(ocs));
-        return { ok: true, data: { admins, treasurers, ocs } };
+        // Duty In Charge is list-only: no Drive editors, so their minimal duty projection cannot widen to raw sheets.
+        properties_().setProperty('DUTY_IN_CHARGE_EMAILS', JSON.stringify(dutyInCharges));
+        return { ok: true, data: { admins, treasurers, ocs, dutyInCharges } };
       }
       if (request.action === 'initDocFolders') {
         const props = properties_();
@@ -1101,6 +1119,16 @@ function rpcInternal_(request, apiEmail) {
           throw error;
         }
       }
+      // --- Duty In Charge / Duty Record actions ---
+      if (request.action === 'dutyBootstrap') return { ok: true, data: dutyWorkspaceData_(state) };
+      if (request.action === 'dutyImportPreview') return { ok: true, data: dutyImportPreview_(state, request, context) };
+      if (request.action === 'dutyImportCommit') return { ok: true, data: dutyImportCommit_(state, request, context) };
+      if (['dutyRecordSave', 'dutyRecordRemove', 'dutyPreviousSave', 'dutyPreviousRemove'].includes(request.action)) {
+        return { ok: true, data: dutyRecordAction_(request.action, state, request, context) };
+      }
+      if (request.action === 'dutyProofUpload') return { ok: true, data: dutyProofUpload_(state, request, context) };
+      if (request.action === 'dutyReportBundle') return { ok: true, data: dutyReportBundleData_(state, request) };
+      if (request.action === 'dutyProofDownload') return { ok: true, data: dutyProofDownload_(state, request) };
       throw new Error('Unsupported request.');
     });
   } catch (error) {
@@ -1193,7 +1221,8 @@ function portalLogin_(request) {
       owner: actor.owner,
       admin: actor.admin,
       treasurer: actor.treasurer,
-      oc: actor.oc
+      oc: actor.oc,
+      dutyInCharge: actor.dutyInCharge
     },
     packages: session.packages || []
   };
