@@ -53,6 +53,18 @@
         columns: [member(), activity(false), field('type', '考试类别（Exam Type） *', true, '从下拉选择 System Setup 里的正式考试名称，英文名称和括号保留原样。示范 BFA (New) 也须在你的目录里存在。', 'BFA (New)', 'ExamTypes'), date(), field('result', '考试结果（Result） *', true, '保留英文：Pass＝及格，Fail＝不及格，Pending＝待确认，Absent＝缺席。', 'Pass', root.KPT.results), field('attended', '参与考试（TRUE/FALSE） *', true, 'Pass/Fail 必须选 TRUE；Absent 必须选 FALSE；Pending 按实际参与情况填写。', 'TRUE', ['TRUE', 'FALSE']), certificate(), field('archived', 'Archived（归档）', false, '新记录通常留空或选 FALSE。TRUE 表示归档保留历史，不是删除或完成；归档的考试记录不参与年度考试参与和 Efficient 判断。可在系统里 Unarchive 恢复。', 'FALSE', ['TRUE', 'FALSE'])],
         instructions: ['会员须已存在，请选择或输入完整姓名。考试类别须在 System Setup 中存在。', 'Result 使用 Pass / Fail / Pending / Absent；参与考试 TRUE / FALSE；Pass/Fail 对 TRUE，Absent 对 FALSE。活动可留空，选填时须与日期和类别一致。', 'Archived：FALSE／留空＝正常；TRUE＝保留历史但不计入年度考试参与证据，不是已完成。证书编号可留空。', 'Archived 记录可在系统里 Unarchive 恢复。修改已有记录请用导出文件保留 id/version。']
       },
+      'Duty Records': {
+        title: 'TCCD Duty Record 导入表 · 新记录',
+        intro: '填写指南 · 用于新增逐笔勤务记录，正式资料从第 13 行开始',
+        columns: [
+          { ...field('activityId', 'Activity *', true, '', 'Sports Day Duty · 2026-03-14'), reference: 'Activities' },
+          { ...field('memberId', 'Member *', true, '', 'TAN MEI LING'), reference: 'Members' },
+          field('date', 'Date *', true, '', '2026-03-14'),
+          field('hours', 'Hours *', true, '', 3.5),
+          field('note', 'Note', false, '', 'First aid station')
+        ],
+        instructions: ['每位学员每次 Duty 填一行。活动和会员可从下拉选择，也可以输入系统里的完整名称。', '活动同名时按日期区分，会员同名时按 SJAM ID 区分。活动和会员必须先在系统建立。', 'Date 填实际值勤日期，格式 YYYY-MM-DD。Hours 只填数字，例如 3.5。Note 可留空。', '同一会员、活动和日期只填一次。第 9 行是示例，填写后回网页预览再导入。']
+      },
       Duty: {
         title: 'TCCD 年度勤务导入表 · 新记录',
         columns: [member(), year(), field('hours', 'Duty Hours（小时）', false, '只填 0–8784 的数字，可有小数，例如 60.5。0 表示已知为零；留空表示未知，不要加「小时」。', 60.5)],
@@ -410,7 +422,7 @@
   function buildGuidedAoa(info) {
     const n = info.columns.length;
     const line = text => [text, ...Array(n - 1).fill('')];
-    const rows = [line(info.title), line('填写指南 · 本模板用于新增记录；更新已有资料请使用导出的记录文件')];
+    const rows = [line(info.title), line(info.intro || '填写指南 · 本模板用于新增记录；更新已有资料请使用导出的记录文件')];
     info.instructions.forEach((text, i) => rows[i + 2] = line((i + 1) + '. ' + text));
     rows[6] = line('示范区 · 仅供参考，不会导入');
     rows[7] = info.columns.map(column => column.label);
@@ -691,6 +703,9 @@
     library.writeFile(book, fileName);
     return book;
   }
-  root.KPTWorkbook = { parse, create, createStyledBytes, download, templateInfo, TYPED_TABLES, resolveName, referenceChoices, matchKey };
+  function downloadDutyRecordTemplate(state) {
+    return triggerDownload(buildGuidedStyledBytes('Duty Records', state), 'TCCD-Duty-Record-Template.xlsx');
+  }
+  root.KPTWorkbook = { downloadDutyRecordTemplate, parse, create, createStyledBytes, download, templateInfo, TYPED_TABLES, resolveName, referenceChoices, matchKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTWorkbook;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

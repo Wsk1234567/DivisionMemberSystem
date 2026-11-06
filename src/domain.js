@@ -2089,10 +2089,17 @@
         const memberId = str(input.memberId);
         if (!memberId || !state.Members.some(row => row.id === memberId)) fail('Unknown member "' + memberId + '". Resolve the student before importing.');
         if (mode === 'records') {
-          const activityId = str(input.activityId);
-          if (!activityId || !state.Activities.some(row => row.id === activityId)) fail('Unknown activity "' + activityId + '". Resolve the activity before importing.');
           const date = str(input.date);
           if (!dateValid(date)) fail('Invalid date "' + date + '". Use a valid YYYY-MM-DD date.');
+          let activityId = str(input.activityId);
+          const activityName = str(input.activityName);
+          if (!activityId && activityName) {
+            if (activityName.length > 200) fail('Activity name must be at most 200 characters.');
+            const matches = state.Activities.filter(row => !row.archived && row.date === date && row.name.toLowerCase() === activityName.toLowerCase());
+            if (matches.length > 1) fail('Multiple activities have this name and date.');
+            activityId = (matches[0] || upsert(state, 'Activities', { name: activityName, date, tags: ['Other'] }, context.uuid)).id;
+          }
+          if (!activityId || !state.Activities.some(row => row.id === activityId)) fail('Enter a valid activity name.');
           const hours = str(input.hours) === '' ? NaN : Number(input.hours);
           if (!Number.isFinite(hours) || hours <= 0 || hours > 24) fail('Duty record hours must be above 0 and at most 24 per date.');
           const note = str(input.note);

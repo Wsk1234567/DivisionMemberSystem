@@ -27,7 +27,10 @@ function dutyImportPreview_(state, request, context) {
 
 function dutyImportCommit_(state, request, context) {
   const preview = KPT.dutyImportRows(state, request, context);
-  if (preview.errors.length) throw new Error('Import failed validation. Preview the file again.');
+  if (preview.errors.length) {
+    const first = preview.errors[0];
+    throw new Error((first.row ? 'Row ' + first.row + ': ' : '') + first.message);
+  }
   if (!preview.changes.length) return dutyWorkspaceData_(state);
   backup_(state, 'Before duty import');
   commit_(preview.state);

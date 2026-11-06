@@ -92,10 +92,13 @@
     const sheet = sheetName ? book.Sheets[sheetName] : null;
     if (!sheet || !sheet['!ref']) throw new Error(tr('工作表没有资料。', 'The sheet has no data.'));
     const range = library.utils.decode_range(sheet['!ref']);
+    const guided = mode === 'records' && sheet.A1
+      && sheet.A1.v === root.KPTWorkbook.templateInfo('Duty Records').title;
+    const headerRow = guided ? 11 : 0;
     const colOf = {};
     for (let c = 0; c <= range.e.c; c++) {
-      const cell = sheet[library.utils.encode_cell({ r: 0, c })];
-      const label = String(cell && cell.v != null ? cell.v : '').trim().toLowerCase();
+      const cell = sheet[library.utils.encode_cell({ r: headerRow, c })];
+      const label = String(cell && cell.v != null ? cell.v : '').trim().replace(/\s*\*$/, '').toLowerCase();
       if (!label) continue;
       const def = defs.find(item => item.names.indexOf(label) >= 0);
       if (def && colOf[def.field] == null) colOf[def.field] = c;
@@ -117,7 +120,7 @@
       }
     };
     const rows = [];
-    for (let r = 1; r <= range.e.r; r++) {
+    for (let r = headerRow + 1; r <= range.e.r; r++) {
       const cellValue = field => {
         const c = colOf[field];
         if (c == null) return '';
@@ -330,13 +333,34 @@
     }
 
     // ----- section 2: duty records -----
-    function readRecForm() {
-      const get = id => { const el = container.querySelector(id); return el ? String(el.value == null ? '' : el.value).trim() : ''; };
-      return { memberId: get('#duty-rec-member'), activityId: get('#duty-rec-activity'), date: get('#duty-rec-date'), hours: get('#duty-rec-hours'), note: get('#duty-rec-note') };
+    function readRecRow(row) {
+      const get = key => row.querySelector('[data-duty-field="' + key + '"]').value.trim();
+      return { memberId: get('member'), activityName: get('activity'), date: get('date'), hours: get('hours'), note: get('note') };
+    }
+    function dutyEntryRow() {
+      return '<div class="toolbar" data-duty-entry>'
+        + labelled(tr('学员', 'Cadet'), '<select data-duty-field="member">' + memberOptions('') + '</select>', true)
+        + labelled(tr('活动名称', 'Activity name'), '<input data-duty-field="activity" maxlength="200" placeholder="' + escape(tr('例如：外校运动会', 'e.g. Inter-school Sports Day')) + '">', true)
+        + labelled(tr('值勤日期', 'Duty date'), '<input data-duty-field="date" type="date">', true)
+        + labelled(tr('时数', 'Hours'), '<input data-duty-field="hours" type="number" min="0" max="24" step="any" placeholder="3.5">', true)
+        + labelled(tr('备注', 'Note'), '<input data-duty-field="note" maxlength="200">')
+        + '</div>';
     }
     function saveRec(btn) {
       return operate(btn, tr('保存中…', 'Saving…'), async () => {
-        const values = readRecForm();
+        if (!state.editRec) {
+          const rows = Array.from(container.querySelectorAll('[data-duty-entry]'), readRecRow)
+            .map((row, index) => ({ ...row, __excelRow: index + 1 }))
+            .filter(row => row.memberId || row.activityName || row.date || row.hours || row.note);
+          if (!rows.length) throw new Error(tr('请先填写一行。', 'Fill in at least one row.'));
+          applyProjection(await call({ action: 'dutyImportCommit', mode: 'records', rows }));
+          state.dirty = false;
+          render();
+          notice(tr('已保存 ', 'Saved ') + rows.length + tr(' 条 Duty 记录。', ' duty records.'));
+          return;
+        }
+        const get = key => container.querySelector('#duty-rec-' + key).value.trim();
+        const values = { memberId: get('member'), activityId: get('activity'), date: get('date'), hours: get('hours'), note: get('note') };
         if (!values.memberId) throw new Error(tr('请先选择会员。', 'Choose a member first.'));
         if (!values.activityId) throw new Error(tr('请先选择活动。', 'Choose an activity first.'));
         if (!isRealDate(values.date)) throw new Error(tr('请输入真实存在的 YYYY-MM-DD 日期。', 'Enter a real YYYY-MM-DD date.'));
@@ -575,10 +599,14 @@
     function recSectionHtml() {
       const f = state.editRec || { memberId: '', activityId: '', date: '', hours: '', note: '' };
       const rows = state.records.map(recRowHtml).join('');
-      return '<section class="svc-step">' + stepHeading(2, tr('勤务明细', 'Duty records'))
-        + tableWrap([tr('日期', 'Date'), tr('活动', 'Activity'), tr('会员', 'Member'), tr('小时', 'Hours'), tr('备注', 'Note'), tr('操作', 'Actions')], rows, tr('还没有勤务明细。', 'No duty records yet.'))
+      return '<section class="svc-step">' + stepHeading(2, tr('手动登记 Duty Hours', 'Log Duty Hours manually'))
+        + '<p class="hint">' + escape(tr('记录谁在哪一天参加哪一场 Duty、做了几小时。例如：陈美玲在校运会值勤 3.5 小时。已经用 Excel 导入的记录会显示在这里，无需再填。', 'Record who did duty, at which event, on what date, and for how many hours. For example: Tan Mei Ling worked 3.5 hours at Sports Day. Imported Excel entries appear here too.')) + '</p>'
+        + tableWrap([tr('日期', 'Date'), tr('活动', 'Activity'), tr('会员', 'Member'), tr('小时', 'Hours'), tr('备注', 'Note'), tr('操作', 'Actions')], rows, tr('还没有登记任何 Duty Hours。', 'No duty records yet.'))
         + '<div id="duty-rec-form">'
-        + '<div class="toolbar">'
+        + (!state.editRec ? '<div id="duty-entry-list">' + dutyEntryRow() + '</div><div class="toolbar">'
+          + '<button type="button" class="button" data-duty-add-row>' + escape(tr('加一行', 'Add row')) + '</button>'
+          + '<button type="button" class="button primary" data-duty-rec-save>' + escape(tr('一次提交', 'Submit all rows')) + '</button>'
+          + '</div>' : '<div class="toolbar">'
         + labelled(tr('会员', 'Member'), '<select id="duty-rec-member">' + memberOptions(f.memberId) + '</select>', true)
         + labelled(tr('活动', 'Activity'), '<select id="duty-rec-activity">' + activityOptions(f.activityId) + '</select>', true)
         + labelled(tr('日期', 'Date'), '<input id="duty-rec-date" type="date" value="' + escape(f.date) + '">', true)
@@ -588,7 +616,7 @@
         + '<div class="toolbar">'
         + '<button type="button" class="button primary" data-duty-rec-save="1">' + escape(state.editRec ? tr('保存修改', 'Save changes') : tr('添加', 'Add')) + '</button>'
         + (state.editRec ? '<button type="button" class="button" data-duty-rec-cancel="1">' + escape(tr('取消编辑', 'Cancel edit')) + '</button>' : '')
-        + '</div></div></section>';
+        + '</div>') + '</div></section>';
     }
     function proofRowHtml(row) {
       return '<tr>'
@@ -600,8 +628,8 @@
     }
     function proofSectionHtml() {
       const rows = state.proofs.map(proofRowHtml).join('');
-      return '<section class="svc-step">' + stepHeading(3, tr('私人证明', 'Private proofs'))
-        + '<p class="hint">' + escape(tr('同一活动仅一份证明，重新上传会替换。', 'One proof per activity, re-upload replaces.')) + '</p>'
+      return '<section class="svc-step">' + stepHeading(3, tr('上传活动证明（可选）', 'Upload activity evidence (optional)'))
+        + '<p class="hint">' + escape(tr('例如值勤名单或活动证明信。每场活动上传一份，同场的学员共用。上传新文件会替换旧文件。', 'For example, a duty roster or an event confirmation letter. Upload one file per activity for all participating cadets. Uploading a new file replaces the old one.')) + '</p>'
         + tableWrap([tr('活动', 'Activity'), tr('文件', 'File'), tr('上传时间', 'Uploaded'), tr('下载', 'Download')], rows, tr('还没有证明。', 'No proofs yet.'))
         + '<div class="toolbar">'
         + labelled(tr('活动', 'Activity'), '<select id="duty-proof-activity">' + activityOptions('') + '</select>', true)
@@ -622,7 +650,7 @@
           summary += '<ul class="svc-files">' + (entries || '<li class="muted">—</li>') + '</ul>'
             + '<p>' + escape(tr('Previous 合计：', 'Previous total: ')) + '<strong>' + escape(formatHours(report.previousTotal)) + '</strong></p>';
         } else {
-          summary += '<div class="message warning">' + escape(tr('Previous 未确认 — 不允许生成正式 PDF。', 'Not confirmed — generation blocked.')) + '</div>';
+          summary += '<div class="message warning">' + escape(tr('请先填写带进这个年度的 Previous 时数。没有带进来的时数就填 0，再生成 PDF。', 'Not confirmed — generation blocked.')) + '</div>';
         }
         const lines = (report.lines || []).map(line => '<tr>'
           + '<td data-label="' + escape(tr('日期', 'Date')) + '">' + escape(line.date || '') + '</td>'
@@ -652,7 +680,8 @@
       } else {
         summary = '<p class="muted">' + escape(tr('选择会员和年度后载入报表。', 'Pick a member and a year, then load the report.')) + '</p>';
       }
-      return '<section class="svc-step">' + stepHeading(4, tr('报表', 'Report'))
+      return '<section class="svc-step">' + stepHeading(4, tr('生成个人 Duty Record', 'Generate a personal Duty Record'))
+        + '<p class="hint">' + escape(tr('选学员和年份，查看当年的值勤记录和 Previous。可预览 PDF，或下载申请用的文件。', 'Choose a cadet and year to review duty entries and Previous hours, preview the PDF, or download the application files.')) + '</p>'
         + '<div class="toolbar">'
         + labelled(tr('会员', 'Member'), '<select id="duty-report-member">' + memberOptions(state.reportMemberId) + '</select>', true)
         + labelled(tr('报表年度', 'Year'), '<select id="duty-report-year">' + optionList(reportYearOptions().map(y => ({ value: y, label: y })), state.reportYear, tr('（选择年度）', '(choose a year)')) + '</select>', true)
@@ -709,9 +738,10 @@
           + '</tbody></table></div>' : '<p class="muted">' + escape(tr('这个年度还没有勤务记录。可先到「导入导出」上传 Excel。', 'No duty records for this year. Upload an Excel file under Import & export.')) + '</p>') + '</section>';
     }
     function exportDutyWorkbook(template) {
+      if (template) return root.KPTWorkbook.downloadDutyRecordTemplate({ Members: state.members, Activities: state.activities });
       const xlsx = root.XLSX;
       const data = [['Activity', 'Member', 'Date', 'Hours', 'Note']];
-      if (!template) state.records.filter(row => String(row.year) === state.rankingYear).forEach(row => {
+      state.records.filter(row => String(row.year) === state.rankingYear).forEach(row => {
         const activity = activityById(row.activityId);
         const member = memberById(row.memberId);
         data.push([activity && activity.date ? activity.name + ' · ' + activity.date : activityName(row.activityId),
@@ -721,7 +751,7 @@
       sheet['!cols'] = [34, 28, 15, 12, 36].map(wch => ({ wch }));
       const workbook = xlsx.utils.book_new();
       xlsx.utils.book_append_sheet(workbook, sheet, 'Duty Records');
-      xlsx.writeFile(workbook, template ? 'TCCD-Duty-Record-Template.xlsx' : 'TCCD-Duty-Records-' + state.rankingYear + '.xlsx');
+      xlsx.writeFile(workbook, 'TCCD-Duty-Records-' + state.rankingYear + '.xlsx');
     }
 
     function importSectionHtml() {
@@ -793,6 +823,12 @@
         const row = state.previous.find(item => String(item.id) === btn.getAttribute('data-duty-prev-del'));
         if (row) removePrev(btn, row);
       });
+      on('[data-duty-add-row]', () => {
+        if (busy) return;
+        const list = container.querySelector('#duty-entry-list');
+        list.insertAdjacentHTML('beforeend', dutyEntryRow());
+        list.lastElementChild.querySelector('select').focus();
+      });
       on('[data-duty-rec-save]', btn => saveRec(btn));
       on('[data-duty-rec-cancel]', () => { state.editRec = null; state.dirty = false; render(); });
       on('[data-duty-rec-edit]', btn => {
@@ -844,7 +880,8 @@
   }
 
   root.KPTDutyUI = {
-    renderDutyWorkspace: renderDutyWorkspace
+    renderDutyWorkspace: renderDutyWorkspace,
+    parseDutySheet: parseDutySheet
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTDutyUI;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

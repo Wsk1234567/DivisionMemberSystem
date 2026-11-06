@@ -273,3 +273,48 @@ test('old access updates preserve Duty In Charge while an explicit empty list cl
   const cleared = await transport.call({ action: 'setAccess', dutyInCharges: [] });
   assert.equal(cleared.dutyInCharges.length, 0);
 });
+
+test('guided Duty Record template skips its example and imports from row 13', async () => {
+  const workbook = require('../src/workbook.js');
+  global.KPTWorkbook = workbook;
+  const { parseDutySheet } = require('../src/duty-record-ui.js');
+  const state = seedState();
+  let downloaded;
+  const sandbox = {
+    KPT,
+    TextEncoder, TextDecoder,
+    XLSX: global.XLSX,
+    Blob: class { constructor(parts) { downloaded = parts[0]; } },
+    URL: { createObjectURL: () => 'blob:qa' },
+    document: {
+      createElement: () => ({ click() {} }),
+      body: { appendChild() {}, removeChild() {} }
+    }
+  };
+  vm.runInNewContext(fs.readFileSync(require.resolve('../src/workbook.js'), 'utf8'), sandbox);
+  sandbox.KPTWorkbook.downloadDutyRecordTemplate(state);
+  assert.deepEqual(parseDutySheet(downloaded, 'records', state), []);
+  const book = global.XLSX.read(downloaded, { type: 'array' });
+  const sheet = book.Sheets['Duty Records'];
+  assert.equal(sheet.C9.v, '2026-03-14');
+  global.XLSX.utils.sheet_add_aoa(sheet, [['QA Activity One', 'QA Cadet One', '2026-02-01', 3.5]], { origin: 'A13' });
+  const rows = parseDutySheet(global.XLSX.write(book, { type: 'array', bookType: 'xlsx' }), 'records', state);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].__excelRow, 13);
+  assert.equal(rows[0].status, 'ok');
+  assert.equal(rows[0].hours, 3.5);
+});
+
+test('manual duty batch creates one named external activity and saves all rows atomically', () => {
+  const state = seedState();
+  const entry = { date: '2026-02-14', activityName: 'External Sports Day', hours: 3.5 };
+  const rows = [{ ...entry, memberId: 'STU-900001' }, { ...entry, memberId: 'STU-900002' }];
+  const saved = KPT.dutyImportRows(state, { mode: 'records', rows }, ctx());
+  assert.deepEqual(saved.errors, []);
+  assert.equal(saved.state.Activities.length, state.Activities.length + 1);
+  assert.equal(saved.state.DutyRecords.length, 2);
+  assert.equal(saved.state.DutyRecords[0].activityId, saved.state.DutyRecords[1].activityId);
+  const invalid = KPT.dutyImportRows(state, { mode: 'records', rows: [rows[0], { ...rows[1], hours: 25 }] }, ctx());
+  assert.equal(invalid.state, null);
+  assert.equal(state.DutyRecords.length, 0);
+});
