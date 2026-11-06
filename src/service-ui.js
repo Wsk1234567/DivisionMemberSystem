@@ -801,8 +801,12 @@
     }
     function attachmentsBlock(target, app) {
       const list = (app && app.attachments) || [];
+      const locked = ['Submitted', 'Approved', 'Recorded'];
+      const removable = target.kind === 'application' && !locked.includes(app.status)
+        && !state.batches.some(batch => (batch.applicationIds || []).includes(app.id) && locked.includes(batch.status));
       const rows = list.map(att => '<li><strong>' + escape(attachKindLabel(att.kind)) + '</strong> · ' + escape(att.fileName || '') + (att.active === false ? ' · ' + escape(tr('已过期', 'Superseded')) : '')
-        + ' <button type="button" class="button small" data-svc-dl="' + escape(att.id) + '">' + escape(t('download')) + '</button></li>').join('');
+        + ' <button type="button" class="button small" data-svc-dl="' + escape(att.id) + '">' + escape(t('download')) + '</button>'
+        + (removable ? ' <button type="button" class="button small danger" data-svc-remove-file="' + escape(att.id) + '">' + escape(tr('删除', 'Remove')) + '</button>' : '') + '</li>').join('');
       // Each target gets its own kind select + upload input; no shared first-match lookup.
       return '<ul class="svc-files">' + (rows || '<li class="muted">' + escape(t('noFiles')) + '</li>') + '</ul>'
         + '<div class="toolbar"><label class="field"><span>' + escape(t('kindLabel')) + '</span>'
@@ -1105,6 +1109,17 @@
         const kindEl = container.querySelector('[data-svc-kind-for="' + token + '"]');
         input.value = '';
         upload({ kind: targetKind, id: targetId }, kindEl ? kindEl.value : 'support', file);
+      }));
+      container.querySelectorAll('[data-svc-remove-file]').forEach(btn => btn.addEventListener('click', () => {
+        const attachmentId = btn.dataset.svcRemoveFile;
+        const app = state.applications.find(row => (row.attachments || []).some(att => att.id === attachmentId));
+        if (!app || !root.confirm(tr('从这份申请移除该附件？', 'Remove this attachment from the application?'))) return;
+        operate('3', tr('删除中…', 'Removing…'), async () => {
+          if (state.dirty) throw new Error(tr('请先保存资料。', 'Save your edits first.'));
+          applyResponse(await call({ action: 'serviceRemoveAttachment', applicationId: app.id, version: app.version, attachmentId }));
+          render();
+          notice(tr('附件已从申请移除。', 'Attachment removed from the application.'), false, '3');
+        });
       }));
       container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'))));
       container.querySelectorAll('[data-svc-status]').forEach(btn => btn.addEventListener('click', () => {

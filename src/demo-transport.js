@@ -557,6 +557,13 @@
         syncServiceToStore();
         return KPT.serviceListProjection(state);
       }
+      if (request.action === 'serviceRemoveAttachment') {
+        requireOwnerOrAdmin();
+        syncServiceFromStore();
+        KPT.serviceRemoveAttachment(state, request);
+        syncServiceToStore();
+        return KPT.serviceListProjection(state);
+      }
       if (request.action === 'serviceDownload') {
         requireOwnerOrAdmin();
         syncServiceFromStore();

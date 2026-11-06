@@ -1028,6 +1028,13 @@ function rpcInternal_(request, apiEmail) {
           throw error;
         }
       }
+      if (request.action === 'serviceRemoveAttachment') {
+        if (!actor.owner && !actor.admin) throw new Error('Access denied.');
+        const next = KPT.copy(state);
+        KPT.serviceRemoveAttachment(next, request);
+        commit_(next);
+        return { ok: true, data: serviceListResponse_(next) };
+      }
       if (request.action === 'serviceDownload') {
         if (!actor.owner && !actor.admin) throw new Error('Access denied.');
         return { ok: true, data: serviceDownloadFile_(state, request.attachmentId) };

@@ -1841,6 +1841,27 @@
     }
     fail('Application or batch ID is required.');
   }
+  function serviceRemoveAttachment(state, request) {
+    const app = (state.serviceApplications || []).find(row => row.id === request.applicationId);
+    if (!app) fail('Application not found.');
+    if (Number(request.version) !== app.version) fail('Conflict: application changed. Reload first.');
+    const locked = ['Submitted', 'Approved', 'Recorded'];
+    const batches = (state.serviceBatches || []).filter(batch => (batch.applicationIds || []).includes(app.id));
+    if (locked.includes(app.status) || batches.some(batch => locked.includes(batch.status))) fail('Submitted application attachments are locked.');
+    const index = (app.attachments || []).findIndex(att => att.id === request.attachmentId);
+    if (index < 0) fail('Attachment not found.');
+    const [removed] = app.attachments.splice(index, 1);
+    if (removed.active !== false) {
+      if (app.status === 'Ready') app.status = 'Preparing';
+      app.ownerApproved = false;
+      batches.forEach(batch => {
+        if (batch.status === 'Ready') batch.status = 'Preparing';
+        batch.ownerApproved = false;
+        batch.version++;
+      });
+    }
+    app.version++;
+  }
   function serviceAward(state, request, context) {
     const app = (state.serviceApplications || []).find(row => row.id === str(request.applicationId));
     if (!app) fail('Application not found.');
@@ -2003,7 +2024,7 @@
     });
     return app.id;
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceRemoveAttachment, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
