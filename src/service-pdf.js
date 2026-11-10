@@ -271,12 +271,7 @@
       const measured = font.widthOfTextAtSize(text, size);
       page.drawText(text, { x, y, size: measured > width ? size * width / measured : size, font, color: rgb(0, 0, 0) });
     };
-    const fill = (value, left, right, baseline) => {
-      if (!safeText(value)) return;
-      page.drawRectangle({ x: left, y: baseline - 1, width: right - left, height: 10, color: rgb(1, 1, 1) });
-      write(value, left + 1, baseline, right - left - 3);
-    };
-    return { doc, page, write, fill };
+    return { doc, page, write };
   }
 
   function sssDate(value) {
@@ -285,10 +280,11 @@
   }
 
   async function generateSSSApplication(application, config = {}) {
-    const { doc, page, write, fill } = await loadSssForm('sss02');
+    const { doc, page, write } = await loadSssForm('sss02');
     const app = application || {};
     const applicant = app.applicant || {};
     const existing = config.currentSSS || app.currentSSS || {};
+    const fill = (value, left, right, baseline) => write(value, left + 4, baseline + 7, right - left - 7);
     const mark = (x, y) => write('X', x, y, 9, 11);
     [[100, 181, 612], [200, 250, 612], [500, 321, 612], [750, 395, 612], [1000, 463, 611]]
       .forEach(([tier, x, y]) => { if (Number(app.confirmedTier) === tier) mark(x, y); });

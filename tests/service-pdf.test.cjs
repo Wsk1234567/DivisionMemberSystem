@@ -47,6 +47,25 @@ test('SSS generators create clean one-page official documents', async () => {
   }
 });
 
+test('SSS-02 writes applicant data above the original rules without masking them', async () => {
+  const { PDFDocument, decodePDFRawStream } = global.PDFLib;
+  const original = await PDFDocument.load(Buffer.from(global.SERVICE_PDF_TEMPLATES.sss02, 'base64'));
+  const filled = await PDFDocument.load(await KPTServicePDF.generateSSSApplication({
+    applicant: { name: 'TEST CADET', ic: '001122-33-4455', rank: 'Sergeant', phone: '011-12345678', email: 'cadet@example.test', occupation: 'Student', joined: '2020-11-02' }
+  }, { memberNumber: '00123' }));
+  const streams = doc => {
+    const contents = doc.getPage(0).node.Contents();
+    const entries = contents.asArray ? contents.asArray() : [contents];
+    return entries.map(entry => Buffer.from(decodePDFRawStream(doc.context.lookup(entry)).decode()).toString('latin1'));
+  };
+  const originalStreams = streams(original);
+  const filledStreams = streams(filled);
+  assert.deepEqual(filledStreams.slice(1, 1 + originalStreams.length), originalStreams);
+  const overlay = filledStreams.at(-1);
+  assert.doesNotMatch(overlay, /\bre\s*$/m);
+  assert.match(overlay, /1 0 0 1 154 551\.5 Tm\s+<54455354204341444554> Tj/);
+});
+
 test('mergeDocuments: empty array throws clear error', async () => {
   await assert.rejects(
     () => KPTServicePDF.mergeDocuments([]),
