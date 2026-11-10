@@ -303,9 +303,16 @@
     const row = ATTACH_KINDS.concat(ATTACH_KINDS_BATCH).find(([key]) => key === value);
     return row ? row[1] : value;
   }
+  const formName = kind => kind === 'Star' ? 'SSTR-02' : 'SS-02';
   function attachKindOptions(targetKind, record) {
-    const list = targetKind === 'batch' ? ATTACH_KINDS_BATCH : ATTACH_KINDS.filter(([kind]) => ['duty', 'support'].includes(kind) || (kind === 'reply' && (record.status === 'Submitted' || (record.status === 'NeedsInfo' && record.submittedAt))));
-    return list.map(([value, label]) => '<option value="' + escape(value) + '">' + escape(label) + '</option>').join('');
+    const list = targetKind === 'batch' ? ATTACH_KINDS_BATCH : [
+      ...(YEAR_MAP[record.confirmedYear] || []).map(kind => ['signed' + kind, formName(kind)]),
+      ['duty', 'Duty Record'],
+      ['support', lang === 'zh' ? 'Supporting document（选交）' : 'Supporting document (optional)'],
+      ...(record.status === 'NeedsInfo' && record.submittedAt ? [['reply', 'Reply']] : [])
+    ];
+    const placeholder = targetKind === 'application' ? '<option value="">' + escape(lang === 'zh' ? '选择要上传的文件类型' : 'Choose a file type') + '</option>' : '';
+    return placeholder + list.map(([value, label]) => '<option value="' + escape(value) + '">' + escape(label) + '</option>').join('');
   }
 
   function yearAwardText(year) {
@@ -700,17 +707,18 @@
         notice(t('saved'), false, '4');
       });
     }
-    async function generateApplication(app, payload, signingDate) {
-      return operate('2', tr('保存中…', 'Saving…'), async progress => {
+    async function generateApplication(app, payload, signingDate, downloadKind) {
+      return operate('2.1', tr('保存中…', 'Saving…'), async progress => {
         const selectedMember = memberById(members, payload.memberId);
         const memberNumber = selectedMember && String(selectedMember.sjamId || '').trim();
-        const kinds = YEAR_MAP[payload.confirmedYear] || [];
+        const kinds = (YEAR_MAP[payload.confirmedYear] || []).filter(kind => !downloadKind || kind === downloadKind);
         if (!memberNumber) throw new Error(t('pdfNeedMember'));
         if (!kinds.length) throw new Error(t('pdfNeedYear'));
         if (!signingDate) throw new Error(tr('请选择实际签署日期。', 'Select the signing date.'));
         if (!root.KPTServicePDF || typeof root.KPTServicePDF.generateSigned !== 'function') throw new Error(t('pdfUnavailable'));
         let current = app;
-        if (state.dirty || !app.reference) {
+        const needsSave = state.dirty || !app.reference;
+        if (needsSave) {
           applyResponse(await timed('save', () => call({ action: 'serviceSave', application: payload })));
           current = state.applications.find(row => row.id === app.id);
           state.dirty = false;
@@ -734,18 +742,22 @@
             division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '',
             memberNumber, reference: current.reference, templateBase64: cachedTemplates[kind], signingDate
           });
-          const base64 = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result).split(',')[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(new Blob([bytes], { type: 'application/pdf' }));
-          });
-          return { kind: 'signed' + kind, fileName: (kind === 'Star' ? 'SSTR-02' : 'SS-02') + '_' + current.reference.replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf', mime: 'application/pdf', base64 };
+          return { kind: 'signed' + kind, fileName: formName(kind) + '_' + current.reference.replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf', bytes };
         })));
+        if (downloadKind) {
+          if (needsSave) {
+            render();
+            const signingDateInput = container.querySelector('#svc-signing-date');
+            if (signingDateInput) signingDateInput.value = signingDate;
+          }
+          downloadFile(files[0].bytes, files[0].fileName, 'application/pdf');
+          notice(tr('PDF 已开始下载。', 'PDF download started.'), false, '2.1');
+          return;
+        }
         progress(tr('上传申请表…', 'Uploading application forms…'));
-        applyResponse(await timed('upload', () => call({ action: 'serviceAttachGenerated', applicationId: current.id, version: current.version, files, signingDate })));
+        applyResponse(await timed('upload', () => call({ action: 'serviceAttachGenerated', applicationId: current.id, version: current.version, files: files.map(({ kind, fileName, bytes }) => ({ kind, fileName, mime: 'application/pdf', base64: bytesToBase64(bytes) })), signingDate })));
         render();
-        notice(tr('已生成并附上 ', 'Generated and attached ') + files.length + tr(' 份申请表。', ' application form(s).'), false, '2');
+        notice(tr('已生成并附上 ', 'Generated and attached ') + files.length + tr(' 份申请表。', ' application form(s).'), false, '2.1');
       });
     }
     function transition(target, version, status, remarks, submittedAt) {
@@ -760,9 +772,17 @@
         notice(tr('状态已更新。', 'Status updated.'), false, '4');
       });
     }
-    function upload(target, kind, file) {
+    function upload(target, kind, file, draft) {
       return operate('3', tr('上传中…', 'Uploading…'), async () => {
-        if (state.dirty) throw new Error(tr('请先保存资料，再上传附件。', 'Save your edits before uploading an attachment.'));
+        if (draft) {
+          applyResponse(await call({ action: 'serviceSave', application: draft }));
+          state.dirty = false;
+          const current = state.applications.find(row => row.id === draft.id);
+          const ref = container.querySelector('#svc-reference');
+          const year = container.querySelector('#svc-year');
+          if (ref) ref.value = current.reference || '';
+          if (year && current.reference) year.readOnly = true;
+        } else if (state.dirty) throw new Error(tr('请先保存资料，再上传附件。', 'Save your edits before uploading an attachment.'));
         const base64 = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
@@ -777,19 +797,29 @@
         notice(tr('附件已上传。', 'Attachment uploaded.'), false, '3');
       });
     }
-    function download(attachmentId) {
-      return Promise.resolve(call({ action: 'serviceDownload', attachmentId: attachmentId })).then(file => {
-        if (!file || !file.base64) throw new Error('No file returned.');
-        const binary = atob(file.base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const url = URL.createObjectURL(new Blob([bytes], { type: file.mime || 'application/octet-stream' }));
-        const a = document.createElement('a');
-        a.href = url; a.download = file.fileName || 'attachment';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-      }).catch(error => notice(error && error.message ? error.message : '下载失败。', true));
+    function downloadFile(bytes, fileName, mime) {
+      const url = URL.createObjectURL(new Blob([toBytes(bytes)], { type: mime || 'application/octet-stream' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName || 'attachment';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
+    async function downloadAttachment(attachmentId) {
+      const file = await call({ action: 'serviceDownload', attachmentId });
+      if (!file || !file.base64) throw new Error(tr('文件无法读取。', 'File unavailable.'));
+      downloadFile(file.base64, file.fileName, file.mime);
+    }
+    function download(attachmentId, section) {
+      return operate(section, tr('下载中…', 'Downloading…'), async () => {
+        await downloadAttachment(attachmentId);
+        notice(tr('文件已开始下载。', 'Download started.'), false, section);
+      });
+    }
+    const latestAttachment = (app, kind) => (app.attachments || []).findLast(att => att.kind === kind && att.active !== false);
+    const lockedApplication = app => ['Submitted', 'Approved', 'Recorded'].includes(app.status);
     function award(app, date, certificate) {
       return Promise.resolve(call({ action: 'serviceAward', applicationId: app.id, version: app.version, date: date, certificate: certificate })).then(data => {
         state.applications = (data && data.applications) || state.applications;
@@ -843,23 +873,43 @@
         + (removable ? ' <button type="button" class="button small danger" data-svc-remove-file="' + escape(att.id) + '">' + escape(tr('删除', 'Remove')) + '</button>' : '') + '</li>').join('');
       // Each target gets its own kind select + upload input; no shared first-match lookup.
       return '<ul class="svc-files">' + (rows || '<li class="muted">' + escape(t('noFiles')) + '</li>') + '</ul>'
-        + '<div class="toolbar"><label class="field"><span>' + escape(t('kindLabel')) + '</span>'
-        + '<select data-svc-kind-for="' + escape(target.kind) + ':' + escape(target.id) + '">' + attachKindOptions(target.kind, app) + '</select></label>'
-        + '<label class="button small">' + escape(t('upload')) + '<input type="file" data-svc-upload-for="' + escape(target.kind) + ':' + escape(target.id) + '" hidden></label></div>';
+        + (target.kind === 'application' && lockedApplication(app)
+          ? ((app.status === 'Submitted') ? uploadFields(target, '<option value="reply">Reply</option>') : '')
+          : uploadFields(target, attachKindOptions(target.kind, app)));
     }
-    function dutyRecordBlock(app) {
-      if (!canRecordAward || !app || !app.memberId || !app.year) return '';
-      return '<div class="toolbar svc-duty-bar">'
-        + '<button type="button" class="button small" data-svc-duty-preview="' + escape(app.id) + '">' + escape(tr('预览 Duty Record', 'Preview Duty Record')) + '</button>'
-        + '<button type="button" class="button small" data-svc-duty-attach="' + escape(app.id) + '">' + escape(tr('附入 Duty Record PDF', 'Attach Duty Record PDF')) + '</button>'
-        + '</div><p class="hint">' + escape(tr('需先在 Duty 记录工作区确认 Previous；旧的手动附件会保留。', 'Confirm the Previous balance in the Duty Record workspace first. Older manual attachments are kept.')) + '</p>';
+    function uploadFields(target, options) {
+      const token = escape(target.kind) + ':' + escape(target.id);
+      const manual = target.kind === 'application';
+      return '<div class="toolbar"><label class="field"><span>' + escape(t('kindLabel')) + '</span>'
+        + '<select data-svc-kind-for="' + token + '">' + options + '</select></label>'
+        + (manual
+          ? '<label class="field"><span>' + escape(tr('选择要上传的文件', 'Choose a file to upload')) + '</span><input type="file" class="svc-file-picker" data-svc-pick-file="' + token + '"></label>'
+            + '<button type="button" class="button primary" data-svc-upload-picked="' + token + '">' + escape(t('upload')) + '</button>'
+          : '<label class="button small">' + escape(t('upload')) + '<input type="file" data-svc-upload-for="' + token + '" hidden></label>')
+        + '</div>';
     }
-    function pdfButtons(app) {
-      if (['Submitted', 'Approved', 'Recorded'].includes(app.status)) return '<p class="hint">' + escape(tr('已提交的申请表可从附件下载。', 'Download submitted forms from the attachments.')) + '</p>';
-      return '<div class="toolbar"><label class="field"><span>' + escape(tr('实际签署日期', 'Signing date')) + '</span>'
-        + '<input id="svc-signing-date" type="date" value="' + escape(todayMY()) + '"></label>'
-        + '<button type="button" class="button primary" data-svc-generate="' + escape(app.id) + '">' + escape(tr('生成并上传申请表', 'Generate and attach application forms')) + '</button></div>'
-        + '<p class="hint">' + escape(tr('先选会员并确认 Efficient year。4th 会一次生成两份。', 'Select the member and confirm the Efficient year. The 4th year generates both forms.')) + '</p>';
+    function requiredFiles(app, year) {
+      const kinds = YEAR_MAP[year] || [];
+      return '<p class="hint">' + escape(tr('必交文件', 'Required files')) + '</p><ul class="svc-files">'
+        + [...kinds.map(kind => ['signed' + kind, formName(kind)]), ['duty', 'Duty Record']].map(([kind, label]) =>
+          '<li>' + escape(label) + ' · <strong>' + escape(latestAttachment(app, kind) ? tr('已附上', 'Attached') : tr('缺少', 'Missing')) + '</strong></li>').join('')
+        + '</ul>' + (!kinds.length ? '<p class="hint">' + escape(tr('先确认 Efficient year，系统才会列出要交的申请表。', 'Confirm the Efficient year to see which application forms are required.')) + '</p>' : '')
+        + '<p class="hint">Supporting document · ' + escape(tr('选交', 'Optional')) + '</p>';
+    }
+    function generationBlock(app) {
+      const id = escape(app.id);
+      const locked = lockedApplication(app);
+      const feedback = key => '<p class="svc-feedback" data-svc-feedback="' + key + '" role="status"></p>';
+      const button = (label, attrs, primary = false) => '<button type="button" class="button small' + (primary ? ' primary' : '') + '" ' + attrs + '>' + escape(label) + '</button>';
+      return '<h4>2.1 SS-02／SSTR-02</h4><div class="toolbar">'
+        + (!locked ? '<label class="field"><span>' + escape(tr('实际签署日期', 'Signing date')) + '</span><input id="svc-signing-date" type="date" value="' + escape(todayMY()) + '"></label>' : '')
+        + ['Stripe', 'Star'].map(kind => button(tr('下载 ', 'Download ') + formName(kind), 'data-svc-form-download="' + id + '" data-svc-form-kind="' + kind + '" hidden')).join('')
+        + (!locked ? button(tr('生成并上传', 'Generate and upload'), 'data-svc-generate="' + id + '"', true) : '')
+        + '</div><p class="hint" data-svc-year-help></p>' + feedback('2.1')
+        + '<h4>2.2 Duty Record</h4><div class="toolbar">'
+        + (!locked || latestAttachment(app, 'duty') ? button(tr('下载 PDF', 'Download PDF'), 'data-svc-duty-download="' + id + '"') : '')
+        + (!locked ? button(tr('生成并上传', 'Generate and upload'), 'data-svc-duty-attach="' + id + '"', true) : '')
+        + '</div><p class="hint">' + escape(tr('生成前先在 Duty Record 确认 Previous。没有结转时数就填 0。', 'Before generating, confirm Previous in Duty Record. Enter 0 if there are no carried-over hours.')) + '</p>' + feedback('2.2');
     }
     function memberPicker(app) {
       // Searchable select. Value is the internal id; label shows name, and
@@ -919,8 +969,8 @@
         + field(t('remarks'), 'remarks', app.remarks, { type: 'textarea' })
         + '</form>'
         + '</section>'
-        + stepBlock(2, tr('生成申请表', 'Generate application forms'), pdfButtons(app))
-        + stepBlock(3, t('files'), attachmentsBlock({ kind: 'application', id: app.id }, app) + dutyRecordBlock(app))
+        + stepBlock(2, tr('生成所需文件', 'Generate required files'), generationBlock(app))
+        + stepBlock(3, tr('提交文件', 'Attach files'), '<div data-svc-required>' + requiredFiles(app, app.confirmedYear) + '</div>' + attachmentsBlock({ kind: 'application', id: app.id }, app))
         + (actions ? stepBlock(4, t('statusTitle'), actions) : '')
         + (canRecordAward && app.status === 'Approved' ? '<section class="svc-step">' + stepHeading(5, t('awardBtn')) + '<p class="hint">' + escape(t('awardHint')) + '</p>'
           + '<div class="toolbar"><label class="field"><span>' + escape(t('awardDate')) + '</span><input type="date" id="svc-award-date"></label><label class="field"><span>' + escape(t('awardCert')) + '</span><input type="text" id="svc-award-cert"></label>'
@@ -1026,6 +1076,7 @@
         + langToggleHtml() + '</div>'
         + '<div id="svc-toast" class="svc-toast" role="status" hidden></div>'
         + '<div id="svc-admin-notice" class="message" role="status" aria-live="polite"></div>'
+        + (isApps ? '<p class="hint">' + escape(tr('必交：SS-02／SSTR-02（按 Efficient year）和 Duty Record。选交：Supporting document。', 'Required: SS-02 / SSTR-02 (based on Efficient year) and Duty Record. Optional: Supporting document.')) + '</p>' : '')
         + '<div class="svc-tabs" role="group" aria-label="' + escape(lang === 'zh' ? '申请类型' : 'Application type') + '">'
         + '<button type="button" class="svc-tab' + (isApps ? ' svc-tab-active' : '') + '" data-svc-tab="applications" aria-pressed="' + (isApps ? 'true' : 'false') + '">' + escape(t('tabApplications')) + '</button>'
         + '<button type="button" class="svc-tab' + (!isApps ? ' svc-tab-active' : '') + '" data-svc-tab="batches" aria-pressed="' + (isApps ? 'false' : 'true') + '">' + escape(t('tabBatches')) + '</button>'
@@ -1132,14 +1183,57 @@
         }
         return payload;
       }
-      container.querySelectorAll('[data-svc-save], [data-svc-generate]').forEach(btn => btn.addEventListener('click', () => {
+      const efficientYear = container.querySelector('#svc-confYear');
+      function syncFileRequirements() {
+        const app = state.applications.find(row => row.id === state.selectedId);
+        if (!app || !efficientYear) return;
+        const year = lockedApplication(app) ? app.confirmedYear : Number(efficientYear.value);
+        const kinds = YEAR_MAP[year] || [];
+        container.querySelectorAll('[data-svc-form-download]').forEach(btn => {
+          const kind = btn.dataset.svcFormKind;
+          btn.hidden = !kinds.includes(kind) || (lockedApplication(app) && !latestAttachment(app, 'signed' + kind));
+        });
+        const generate = container.querySelector('[data-svc-generate]');
+        if (generate) generate.disabled = !kinds.length;
+        const hint = container.querySelector('[data-svc-year-help]');
+        if (hint) hint.textContent = kinds.length
+          ? kinds.map(formName).join(' + ')
+          : tr('请先确认 Efficient year。', 'Confirm the Efficient year first.');
+        const checklist = container.querySelector('[data-svc-required]');
+        if (checklist) checklist.innerHTML = requiredFiles(app, year);
+        const picker = container.querySelector('[data-svc-kind-for="application:' + app.id + '"]');
+        if (picker && !lockedApplication(app)) {
+          const selected = picker.value;
+          picker.innerHTML = attachKindOptions('application', { ...app, confirmedYear: year });
+          if (Array.from(picker.options).some(opt => opt.value === selected)) picker.value = selected;
+        }
+      }
+      if (efficientYear) efficientYear.addEventListener('change', syncFileRequirements);
+      syncFileRequirements();
+      container.querySelectorAll('[data-svc-save], [data-svc-generate], [data-svc-form-download]').forEach(btn => btn.addEventListener('click', () => {
         if (busy) return;
-        const app = state.applications.find(row => row.id === (btn.dataset.svcSave || btn.dataset.svcGenerate));
+        const app = state.applications.find(row => row.id === (btn.dataset.svcSave || btn.dataset.svcGenerate || btn.dataset.svcFormDownload));
         if (!app) return;
+        const kind = btn.dataset.svcFormKind;
+        const existing = kind && latestAttachment(app, 'signed' + kind);
+        if (existing && (lockedApplication(app) || !state.dirty)) { download(existing.id, '2.1'); return; }
+        if (lockedApplication(app) && kind) return;
         const payload = collectApplication(app, btn.dataset.svcDocumentStatus);
         if (!payload) return;
-        if (btn.dataset.svcGenerate) generateApplication(app, payload, container.querySelector('#svc-signing-date').value);
-        else saveApplication(payload);
+        if (btn.dataset.svcSave) saveApplication(payload);
+        else generateApplication(app, payload, container.querySelector('#svc-signing-date').value, kind);
+      }));
+      container.querySelectorAll('[data-svc-upload-picked]').forEach(btn => btn.addEventListener('click', () => {
+        if (busy) return;
+        const token = btn.dataset.svcUploadPicked;
+        const app = state.applications.find(row => 'application:' + row.id === token);
+        if (!app) return;
+        const kind = container.querySelector('[data-svc-kind-for="' + token + '"]').value;
+        const file = container.querySelector('[data-svc-pick-file="' + token + '"]').files[0];
+        if (!kind || !file) { notice(tr('请先选择文件类型和文件。', 'Choose a file type and a file first.'), true, '3'); return; }
+        const draft = state.dirty && !lockedApplication(app) ? collectApplication(app) : null;
+        if (state.dirty && !lockedApplication(app) && !draft) return;
+        upload({ kind: 'application', id: app.id }, kind, file, draft);
       }));
       // Uploads are scoped per target (application vs batch) with their own kind select.
       container.querySelectorAll('[data-svc-upload-for]').forEach(input => input.addEventListener('change', () => {
@@ -1162,39 +1256,42 @@
           notice(tr('附件已从申请移除。', 'Attachment removed from the application.'), false, '3');
         });
       }));
-      container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'))));
-      container.querySelectorAll('[data-svc-duty-preview]').forEach(btn => btn.addEventListener('click', () => {
-        const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-duty-preview'));
+      container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'), '3')));
+      container.querySelectorAll('[data-svc-duty-download], [data-svc-duty-attach]').forEach(btn => btn.addEventListener('click', () => {
+        if (busy) return;
+        const attach = Boolean(btn.dataset.svcDutyAttach);
+        const app = state.applications.find(row => row.id === (btn.dataset.svcDutyAttach || btn.dataset.svcDutyDownload));
         if (!app) return;
-        operate('3', tr('生成 Duty Record…', 'Building Duty Record…'), async () => {
-          const bundle = await Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year }));
+        const existing = latestAttachment(app, 'duty');
+        if (!attach && existing && (lockedApplication(app) || !state.dirty)) { download(existing.id, '2.2'); return; }
+        if (lockedApplication(app)) return;
+        const draft = state.dirty ? collectApplication(app) : null;
+        if (state.dirty && !draft) return;
+        const memberId = draft ? draft.memberId : app.memberId;
+        const year = draft && draft.year != null ? draft.year : app.year;
+        operate('2.2', tr('生成 Duty Record…', 'Building Duty Record…'), async progress => {
+          if (!memberId || !year) throw new Error(tr('请先选择会员和申请年度。', 'Select a member and application year first.'));
+          const bundle = await call({ action: 'dutyReportBundle', memberId, year });
           const report = bundle && bundle.report;
-          if (!report) throw new Error(tr('找不到报表资料。', 'Report data not found.'));
-          if (!report.confirmed) throw new Error(tr('Previous 未确认，无法生成正式 PDF。', 'Previous balance is not confirmed — formal generation is blocked.'));
-          const bytes = await root.KPTDutyPDF.generateDutyRecord(report);
-          const url = URL.createObjectURL(new Blob([toBytes(bytes)], { type: 'application/pdf' }));
-          window.open(url, '_blank');
-          setTimeout(() => URL.revokeObjectURL(url), 60000);
-          notice(tr('已打开 Duty Record 预览。', 'Duty Record preview opened.'), false, '3');
-        });
-      }));
-      container.querySelectorAll('[data-svc-duty-attach]').forEach(btn => btn.addEventListener('click', () => {
-        const app = state.applications.find(row => row.id === btn.getAttribute('data-svc-duty-attach'));
-        if (!app) return;
-        operate('3', tr('附入 Duty Record…', 'Attaching Duty Record…'), async progress => {
-          const bundle = await Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year }));
-          const report = bundle && bundle.report;
-          if (!report) throw new Error(tr('找不到报表资料。', 'Report data not found.'));
-          if (!report.confirmed) throw new Error(tr('Previous 未确认，无法生成正式 PDF。', 'Previous balance is not confirmed — formal generation is blocked.'));
-          progress(tr('生成 PDF…', 'Generating PDF…'));
+          if (!report) throw new Error(tr('找不到 Duty Record。', 'Duty Record not found.'));
+          if (!report.confirmed) throw new Error(tr('请先确认 Previous。没有结转时数就填 0。', 'Confirm Previous first. Enter 0 if there are no carried-over hours.'));
           const bytes = await root.KPTDutyPDF.generateDutyRecord(report);
           const safe = String(report.member && report.member.name || 'member').replace(/[^A-Za-z0-9_-]/g, '_');
-          const data = await Promise.resolve(call({ action: 'serviceUpload', applicationId: app.id, kind: 'duty', fileName: 'Duty-Record-' + report.year + '-' + safe + '.pdf', mime: 'application/pdf', base64: bytesToBase64(bytes) }));
-          state.applications = (data && data.applications) || state.applications;
-          state.batches = (data && data.batches) || state.batches;
-          state.unreadCount = Number((data && data.unreadCount) || 0);
+          const fileName = 'Duty-Record-' + report.year + '-' + safe + '.pdf';
+          if (!attach) {
+            downloadFile(bytes, fileName, 'application/pdf');
+            notice(tr('PDF 已开始下载。', 'PDF download started.'), false, '2.2');
+            return;
+          }
+          if (draft) {
+            applyResponse(await call({ action: 'serviceSave', application: draft }));
+            state.dirty = false;
+            render();
+          }
+          progress(tr('上传 Duty Record…', 'Uploading Duty Record…'));
+          applyResponse(await call({ action: 'serviceUpload', applicationId: app.id, kind: 'duty', fileName, mime: 'application/pdf', base64: bytesToBase64(bytes) }));
           render();
-          notice(tr('Duty Record PDF 已附入（旧的手动附件保留）。', 'Duty Record PDF attached. Older manual attachments are kept.'), false, '3');
+          notice(tr('Duty Record PDF 已附入。', 'Duty Record PDF attached.'), false, '2.2');
         });
       }));
       container.querySelectorAll('[data-svc-status]').forEach(btn => btn.addEventListener('click', () => {

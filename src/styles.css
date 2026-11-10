@@ -243,6 +243,7 @@ body[data-mode="oc"] .nav .doc-package-link.active{background:var(--soft);color:
 .svc-admin .pill.svc-status-Submitted { background: #20623c; color: #fff; }
 
 .svc-admin input, .svc-admin select, .svc-admin textarea, .svc-admin .button { font-size: 14px; }
+.svc-admin .toolbar .svc-file-picker { max-width: min(100%, 24rem); }
 .svc-admin .svc-downloads { display: grid; justify-items: start; gap: .65rem; margin-top: .9rem; }
 .svc-admin .svc-downloads summary { cursor: pointer; }
 .svc-admin .svc-downloads .toolbar { flex-wrap: wrap; margin-top: .5rem; }

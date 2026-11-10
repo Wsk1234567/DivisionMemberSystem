@@ -148,17 +148,54 @@ async function makePdfBytes(title) {
     await secretary.getByText('QA: template temporarily unavailable', { exact: true }).first().waitFor();
     assert.equal(await secretary.locator('#svc-signing-date').inputValue(), '2026-11-06');
     assert.equal(await secretary.locator('#svc-reference').inputValue(), '2026-G001');
+    for (const [year, kind, prefix] of [['1', 'Stripe', 'SS-02'], ['3', 'Star', 'SSTR-02'], ['4', 'Stripe', 'SS-02'], ['4', 'Star', 'SSTR-02']]) {
+      await secretary.locator('#svc-confYear').selectOption(year);
+      const visible = secretary.locator('[data-svc-form-download]:visible');
+      assert.equal(await visible.count(), year === '4' ? 2 : 1);
+      const download = secretary.waitForEvent('download');
+      await secretary.locator('[data-svc-form-kind="' + kind + '"]').click();
+      assert.equal((await download).suggestedFilename(), prefix + '_2026-G001.pdf');
+      await secretary.waitForFunction(() => !document.querySelector('#svc-admin')?.inert);
+      assert.equal(await secretary.locator('.svc-detail .svc-files li').filter({ hasText: /2026-G001\.pdf/ }).count(), 0);
+    }
     await secretary.locator('[data-svc-generate]').click();
     await secretary.waitForFunction(() => !document.querySelector('#svc-admin')?.inert);
-    const generationMessage = await secretary.locator('[data-svc-feedback="2"]').innerText();
+    const generationMessage = await secretary.locator('[data-svc-feedback="2.1"]').innerText();
     assert.match(generationMessage, /2/, generationMessage);
     await secretary.getByText('SS-02_2026-G001.pdf', { exact: false }).first().waitFor();
     await secretary.getByText('SSTR-02_2026-G001.pdf', { exact: false }).first().waitFor();
-    assert.match(await secretary.locator('[data-svc-feedback="2"]').innerText(), /2/);
+    assert.match(await secretary.locator('[data-svc-feedback="2.1"]').innerText(), /2/);
 
-    const input = secretary.locator('input[data-svc-upload-for^="application:"]').first();
+    const attachedStripe = secretary.waitForEvent('download');
+    await secretary.locator('[data-svc-form-kind="Stripe"]').click();
+    assert.equal((await attachedStripe).suggestedFilename(), 'SS-02_2026-G001.pdf');
+    await secretary.waitForFunction(() => !document.querySelector('#svc-admin')?.inert);
+
+    // Duty PDF is independent of manual uploads and requires a confirmed Previous balance.
+    await secretary.locator('[data-svc-duty-download]').click();
+    await secretary.locator('[data-svc-feedback="2.2"]').filter({ hasText: /Previous/ }).waitFor();
+    const memberId = await secretary.locator('#svc-member-pick').inputValue();
+    await sharedCall(secretary, { request: { action: 'dutyPreviousSave', memberId, year: 2026, hours: 0 } });
+    const dutyDownload = secretary.waitForEvent('download');
+    await secretary.locator('[data-svc-duty-download]').click();
+    assert.match((await dutyDownload).suggestedFilename(), /^Duty-Record-2026-.*\.pdf$/);
+    assert.equal(await secretary.locator('.svc-detail .svc-files li').filter({ hasText: /Duty-Record-2026/ }).count(), 0);
+    await secretary.locator('[data-svc-duty-attach]').click();
+    await secretary.locator('.svc-detail .svc-files li').filter({ hasText: /Duty-Record-2026/ }).waitFor();
+
+    const picker = secretary.locator('select[data-svc-kind-for^="application:"]');
+    assert.deepEqual(await picker.locator('option').evaluateAll(opts => opts.map(opt => opt.value)), ['', 'signedStripe', 'signedStar', 'duty', 'support']);
+    await picker.selectOption('duty');
+    const input = secretary.locator('input[data-svc-pick-file^="application:"]');
     await input.setInputFiles({ name: 'duty-detail.pdf', mimeType: 'application/pdf', buffer: dutyPdf });
+    assert.equal(await secretary.getByText('duty-detail.pdf', { exact: false }).count(), 0);
+    await secretary.locator('[data-svc-upload-picked]').click();
     await secretary.getByText('duty-detail.pdf', { exact: false }).first().waitFor();
+
+    await picker.selectOption('signedStripe');
+    await input.setInputFiles({ name: 'manual-stripe.pdf', mimeType: 'application/pdf', buffer: dutyPdf });
+    await secretary.locator('[data-svc-upload-picked]').click();
+    await secretary.getByText('manual-stripe.pdf', { exact: false }).first().waitFor();
 
     await secretary.locator('[data-svc-document-status="AwaitingOwner"]').click();
     await secretary.locator('.svc-detail .svc-status-AwaitingOwner').waitFor();
