@@ -169,21 +169,21 @@
   const serviceHost = byId('service-apply');
   const serviceOpen = byId('service-open');
   const serviceTeaser = byId('service-teaser');
-  let serviceMounted = false;
-  function mountServiceForm() {
-    if (serviceMounted) return true;
+  let mountedAwardType;
+  function mountServiceForm(awardType) {
+    if (mountedAwardType === awardType) return true;
     if (!window.KPTServiceUI || !window.KPTServiceUI.renderPublicForm) return false;
     if (!window.KPTTransport || typeof window.KPTTransport.call !== 'function') return false;
     window.KPTServiceUI.renderPublicForm(serviceHost, {
       call: request => window.KPTTransport.call(request)
-    });
-    serviceMounted = true;
+    }, { awardType });
+    mountedAwardType = awardType;
     return true;
   }
-  function openServiceForm() {
+  function openServiceForm(awardType) {
     if (serviceTeaser) serviceTeaser.hidden = true;
     if (serviceHost) serviceHost.hidden = false;
-    if (mountServiceForm()) {
+    if (mountServiceForm(awardType)) {
       const heading = serviceHost.querySelector('h2');
       if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus(); }
       return;
@@ -193,11 +193,15 @@
       serviceHost.innerHTML = '<div class="card empty"><strong>The application form is not ready yet.</strong>Please refresh the page in a moment.</div>';
     }
   }
-  if (serviceOpen) serviceOpen.addEventListener('click', openServiceForm);
+  if (serviceOpen) serviceOpen.addEventListener('click', () => openServiceForm('ServiceStripeStar'));
+  const serviceOpenSSS = byId('service-open-sss');
+  if (serviceOpenSSS) serviceOpenSSS.addEventListener('click', () => openServiceForm('SpecialServiceShield'));
   // Deep link: #service-apply opens the form directly.
   function openServiceFromHash() {
-    if (String(location.hash || '').replace(/^#/, '') === 'service-apply') openServiceForm();
+    if (location.hash === '#service-apply') openServiceForm('ServiceStripeStar');
+    if (location.hash === '#service-apply-sss') openServiceForm('SpecialServiceShield');
   }
   window.addEventListener('hashchange', openServiceFromHash);
-  openServiceFromHash();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', openServiceFromHash, { once: true });
+  else openServiceFromHash();
 })();

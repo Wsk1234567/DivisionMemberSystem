@@ -73,6 +73,11 @@ async function makePdfBytes(title) {
     publicPage.on('pageerror', e => errors.push('public: ' + e.message));
     await armProxy(publicPage, 'owner');
     await publicPage.goto(BASE + '/index.html', { waitUntil: 'domcontentloaded' });
+    await publicPage.locator('#service-open-sss').click();
+    await publicPage.locator('#svc-sss-fields').waitFor({ state: 'visible' });
+    assert.equal(await publicPage.locator('#svc-award-type').inputValue(), 'SpecialServiceShield');
+    assert.equal(await publicPage.locator('#svc-years-fields').isVisible(), false);
+    await publicPage.reload({ waitUntil: 'domcontentloaded' });
     await publicPage.locator('#service-open').click();
     await publicPage.locator('#service-form').waitFor();
     await publicPage.locator('#svc-name').fill('Strict QA Cadet');

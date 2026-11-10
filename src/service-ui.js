@@ -526,10 +526,11 @@
   }
 
   // ---------- Public form ----------
-  function renderPublicForm(container, api) {
+  function renderPublicForm(container, api, options) {
     const call = (api && api.call) || (root.KPTTransport && root.KPTTransport.call);
     if (!container || typeof call !== 'function') return;
     let clientRequestId = newClientRequestId();
+    let selectedAwardType = options?.awardType === 'SpecialServiceShield' ? 'SpecialServiceShield' : 'ServiceStripeStar';
     function draw() {
       container.innerHTML =
         '<section class="card service-apply" id="service-apply-form" aria-labelledby="svc-title">'
@@ -565,6 +566,8 @@
       const form = container.querySelector('#service-form');
       const select = container.querySelector('#svc-declaredYear');
       const awardType = container.querySelector('#svc-award-type');
+      awardType.value = selectedAwardType;
+      awardType.selectedOptions[0].defaultSelected = true;
       const yearFields = container.querySelector('#svc-years-fields');
       const sssFields = container.querySelector('#svc-sss-fields');
       const mapBox = container.querySelector('#svc-year-map');
@@ -579,7 +582,10 @@
         yearFields.hidden = isSSS;
         sssFields.hidden = !isSSS;
       };
-      awardType.addEventListener('change', refreshAwardType);
+      awardType.addEventListener('change', () => {
+        selectedAwardType = awardType.value;
+        refreshAwardType();
+      });
       form.addEventListener('submit', event => {
         event.preventDefault();
         const result = container.querySelector('#svc-result');
@@ -595,8 +601,8 @@
           occupation: String(data.get('occupation') || '').trim()
         };
         const declaredRaw = String(data.get('declaredYear') || '').trim();
-        const declaredYear = declaredRaw === '' ? null : Number(declaredRaw);
         const awardTypeValue = String(data.get('awardType') || 'ServiceStripeStar');
+        const declaredYear = awardTypeValue === 'SpecialServiceShield' || declaredRaw === '' ? null : Number(declaredRaw);
         const declaredTier = awardTypeValue === 'SpecialServiceShield' ? Number(data.get('declaredTier')) : null;
         if (!applicant.name || !applicant.ic) {
           result.hidden = false;
@@ -625,7 +631,11 @@
         result.textContent = '';
         form.querySelector('#svc-submit').disabled = false;
         clientRequestId = newClientRequestId();
-        setTimeout(refreshMap, 0);
+        setTimeout(() => {
+          selectedAwardType = awardType.value;
+          refreshMap();
+          refreshAwardType();
+        }, 0);
       });
       refreshMap();
       refreshAwardType();
