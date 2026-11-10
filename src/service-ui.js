@@ -436,14 +436,24 @@
     const apps = applications.filter(app => (batch.applicationIds || []).includes(app.id)
       && (YEAR_MAP[app.confirmedYear] || []).includes(kind));
     if (!apps.length) return [];
-    const perApp = apps.map(app => (app.attachments || []).filter(att => att.kind === 'duty' && att.active !== false));
+    const perApp = apps.map(app => {
+      const active = (app.attachments || []).filter(att => att.kind === 'duty' && att.id && att.active !== false);
+      // Older generated Duty Records were saved via serviceUpload, so identify
+      // them by the stable filename used by both generation entry points.
+      const prefix = 'duty-record-' + app.year + '-';
+      const generated = active.findLast(att => {
+        const name = String(att.fileName || '').toLowerCase();
+        return name.startsWith(prefix) && name.endsWith('.pdf');
+      });
+      return generated || active.at(-1);
+    });
     const combined = (batch.attachments || []).findLast(att => att.kind === 'combinedDuty' && att.active !== false);
-    const missing = perApp.findIndex(items => !items.length);
+    const missing = perApp.findIndex(att => !att);
     if (missing !== -1 && !combined) {
       const app = apps[missing];
       throw new Error((app.applicant && app.applicant.name || app.id) + ': missing Duty Record.');
     }
-    const sources = missing === -1 ? perApp.flat() : [combined];
+    const sources = missing === -1 ? perApp : [combined];
     return Promise.all(sources.map(async att => {
       const file = await call({ action: 'serviceDownload', attachmentId: att.id });
       if (!file || !file.base64) throw new Error('Attachment download failed: ' + att.fileName);

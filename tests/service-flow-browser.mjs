@@ -262,6 +262,12 @@ async function makePdfBytes(title) {
       'Service Star Applicants/Duty Record 2026 (Service Star).pdf'
     ].sort());
 
+    for (const [kind, fileName] of [['Stripe', 'Duty Records'], ['Star', 'Duty Record']]) {
+      const entry = archive.FullPaths.findIndex(name => name.endsWith('/' + fileName + ' 2026 (Service ' + kind + ').pdf'));
+      const merged = await PDFDocument.load(archive.FileIndex[entry].content);
+      assert.equal(merged.getPageCount(), 1, 'Only the generated personal Duty Record is included');
+    }
+
     // ---- 9) Secretary marks the batch ready, without switching to Owner ----
     await secretary.locator('[data-svc-batch-status][data-svc-to="Ready"]').click();
     await secretary.locator('[data-svc-batch-status][data-svc-to="Submitted"]').waitFor();
