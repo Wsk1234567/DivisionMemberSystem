@@ -642,6 +642,10 @@
     // Owner and Secretary after the one-time Owner check.
     const canRecordAward = !!(options && (options.owner || options.admin));
     const members = (options && options.members) || [];
+    const awardType = options && options.awardType === 'SpecialServiceShield' ? 'SpecialServiceShield' : 'ServiceStripeStar';
+    const isSSS = awardType === 'SpecialServiceShield';
+    const awardLabel = isSSS ? 'Special Service Shield' : 'Service Stripe & Star';
+    const matchesAward = row => (row.awardType || 'ServiceStripeStar') === awardType;
     if (!container || typeof call !== 'function') return null;
     const state = { applications: [], batches: [], unreadCount: 0, selectedId: null, filter: '', statusFilter: '', tab: 'applications', dirty: false };
 
@@ -653,7 +657,7 @@
     function applyResponse(data) {
       state.applications = (data && data.applications) || state.applications;
       state.batches = (data && data.batches) || state.batches;
-      if (data && data.unreadCount != null) state.unreadCount = Number(data.unreadCount);
+      state.unreadCount = state.applications.filter(app => matchesAward(app) && ['PendingSecretary', 'NeedsInfo'].includes(app.status)).length;
     }
     async function timed(label, work) {
       const start = performance.now();
@@ -692,9 +696,7 @@
     }
     function load() {
       return Promise.resolve(call({ action: 'serviceList' })).then(data => {
-        state.applications = (data && data.applications) || [];
-        state.batches = (data && data.batches) || [];
-        state.unreadCount = Number((data && data.unreadCount) || 0);
+        applyResponse(data);
         render();
       }).catch(error => notice(error && error.message ? error.message : '加载失败。', true));
     }
@@ -1062,16 +1064,17 @@
       return '<section class="svc-step svc-document-guide" aria-labelledby="svc-document-guide-title">'
         + '<h2 id="svc-document-guide-title" class="svc-step-heading">' + escape(tr('申请需要哪些文件？', 'What documents do I need?')) + '</h2>'
         + '<div class="svc-document-guide-grid"><div><h3>' + escape(tr('必交文件', 'Required documents')) + '</h3>'
-        + '<p>' + escape(tr('每位学员都要交 Duty Record，再按 Efficient year 准备以下申请表。', 'Every applicant needs a Duty Record and the application form(s) for their Efficient year.')) + '</p>'
+        + (isSSS ? '<p>' + escape(tr('每批准备一份 SSS-01 Checklist；每位申请者准备一份 SSS-02 和 Duty Record。Covering letter 可选。', 'Prepare one SSS-01 checklist per batch and one SSS-02 and Duty Record per applicant. The covering letter is optional.')) + '</p>' :
+          '<p>' + escape(tr('每位学员都要交 Duty Record，再按 Efficient year 准备以下申请表。', 'Every applicant needs a Duty Record and the application form(s) for their Efficient year.')) + '</p>'
         + '<dl>' + yearGroups.map(years => '<div><dt>' + years.map(year => year + (year === 1 ? 'st' : year === 2 ? 'nd' : year === 3 ? 'rd' : 'th')).join(' / ') + ' Efficient year</dt>'
-          + '<dd>' + YEAR_MAP[years[0]].map(formName).join(' + ') + '</dd></div>').join('') + '</dl></div>'
+          + '<dd>' + YEAR_MAP[years[0]].map(formName).join(' + ') + '</dd></div>').join('') + '</dl>') + '</div>'
         + '<div><h3>' + escape(tr('选交文件', 'Optional documents')) + '</h3><p><strong>Supporting document</strong></p>'
         + '<p>' + escape(tr('有额外的证明文件时才附上。', 'Attach any additional supporting documents if available.')) + '</p></div></div></section>';
     }
     function render() {
       const filter = (state.filter || '').toLowerCase();
       const list = state.applications.filter(app => {
-        if (!filterMatchesStatus(app)) return false;
+        if (!matchesAward(app) || !filterMatchesStatus(app)) return false;
         if (!filter) return true;
         const a = app.applicant || {};
         return String(a.name || '').toLowerCase().includes(filter) || String(app.id).toLowerCase().includes(filter)
@@ -1088,7 +1091,7 @@
           + '<th>' + escape(t('thApplicant')) + '</th><th>' + escape(t('thYear')) + '</th><th>' + escape(t('thStatus')) + '</th><th>' + escape(t('thFiles')) + '</th><th>' + escape(t('viewCol')) + '</th>'
           + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       })() : (() => {
-        const rows = state.batches.map(batch => batchRow(batch) + (selectedBatchId === batch.id
+        const rows = state.batches.filter(matchesAward).map(batch => batchRow(batch) + (selectedBatchId === batch.id
           ? '<tr class="svc-expand-row"><td colspan="5">' + batchDetailBlock(batch) + '</td></tr>' : '')).join('')
           || '<tr><td colspan="5" class="empty">' + escape(t('noBatches')) + '</td></tr>';
         return '<div class="table-wrap"><table class="svc-table"><thead><tr>'
@@ -1098,7 +1101,7 @@
       container.innerHTML =
         '<div class="svc-admin" id="svc-admin">'
         + documentGuide()
-        + '<section class="svc-step"><div class="section-heading">' + stepHeading(1, t('adminTitle'), 'h2')
+        + '<section class="svc-step"><div class="section-heading">' + stepHeading(1, tr('查看 ' + awardLabel + ' 申请', awardLabel + ' applications'), 'h2')
         + (state.unreadCount ? '<span class="hub-badge">' + state.unreadCount + ' ' + escape(t('newApps')) + '</span>' : '')
         + langToggleHtml() + '</div>'
         + '<div id="svc-toast" class="svc-toast" role="status" hidden></div>'
@@ -1444,12 +1447,11 @@
       });
       const newBatch = container.querySelector('[data-svc-new-batch]');
       if (newBatch) newBatch.addEventListener('click', () => {
-        const title = window.prompt(t('batchTitlePrompt'), 'Service awards ' + new Date().getFullYear());
+        const title = window.prompt(t('batchTitlePrompt'), awardLabel + ' ' + new Date().getFullYear());
         if (!title) return;
         const year = Number(window.prompt(t('batchYearPrompt'), String(new Date().getFullYear())));
         if (!Number.isInteger(year)) return;
-        const isSSS = window.confirm(tr('这是 Special Service Shield 批次吗？按“取消”建立 Stripe & Star 批次。', 'Is this a Special Service Shield batch? Choose Cancel for Stripe & Star.'));
-        saveBatch({ year: year, title: title, awardType: isSSS ? 'SpecialServiceShield' : 'ServiceStripeStar', includeCoverLetter: true, applicationIds: [], remarks: '', checks: {} });
+        saveBatch({ year: year, title: title, awardType, includeCoverLetter: true, applicationIds: [], remarks: '', checks: {} });
       });
       bindLangToggles(container, render);
       // Unsaved-edit tracking: any input in the detail form marks the list dirty

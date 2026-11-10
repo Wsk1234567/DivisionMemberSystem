@@ -38,7 +38,7 @@ test('summary poll refreshes the open list only and never clobbers dirty edits',
 test('admin sidebar badge updates in place without re-render', () => {
   const admin = read('src/admin.js');
   assert.match(admin, /function serviceRefreshBadge/);
-  assert.match(admin, /data-nav="Service"/);
+  assert.match(admin, /service-group-badge/);
   assert.match(admin, /hub-badge/);
   assert.match(admin, /serviceStartPolling/);
   assert.match(admin, /serviceStopPolling/);

@@ -8,8 +8,8 @@
   const escape = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const nav = {
     treasurer: [['Overview', 'Dashboard'], ['Finance', 'Organizing Treasurer'], ['Settings', 'Settings']],
-    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['DutyRecord', 'Duty Record'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Service', 'Service'], ['Trash', 'Trash'], ['Settings', 'Settings']],
-    owner: [['Owner', 'Owner'], ['Service', 'Service'], ['Settings', 'Settings']],
+    admin: [['Overview', 'Overview'], ['Phase', 'Phase'], ['Members', 'Members'], ['Activities', 'Activities'], ['Exams', 'Exams'], ['Duty', 'Duty'], ['DutyRecord', 'Duty Record'], ['Awards', 'Awards'], ['Documents', 'Documents'], ['Data', 'Data'], ['Setup', 'Setup'], ['Import', 'Import'], ['Service', 'Service'], ['SpecialServiceShield', 'SpecialServiceShield'], ['Trash', 'Trash'], ['Settings', 'Settings']],
+    owner: [['Owner', 'Owner'], ['Service', 'Service'], ['SpecialServiceShield', 'SpecialServiceShield'], ['Settings', 'Settings']],
     portal: [['Portal', 'Portal']],
     oc: []
   };
@@ -478,35 +478,21 @@
   }
   function serviceRefreshBadge() {
     // Partial update only — never re-render the page (would clobber dirty inputs).
-    const serviceBtn = byId('navigation') ? byId('navigation').querySelector('[data-nav="Service"]') : null;
-    if (!serviceBtn) return;
     const total = Number(serviceSummary.unreadCount || 0) + (user && user.owner ? Number(serviceSummary.ownerReviewCount || 0) : 0);
     const groupBadge = byId('service-group-badge');
     if (groupBadge) {
       groupBadge.textContent = String(total);
       groupBadge.hidden = !total;
     }
-    let badge = serviceBtn.querySelector('.hub-badge');
-    if (!total) {
-      if (badge) badge.remove();
-      return;
-    }
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'hub-badge';
-      badge.id = 'service-nav-badge';
-      serviceBtn.appendChild(badge);
-    }
-    badge.textContent = String(total);
   }
-  function serviceView() {
+  function serviceView(servicePage, awardType) {
     const host = '<div id="service-host"></div>';
     setTimeout(() => {
       const el = byId('service-host');
-      if (!el || !window.KPTServiceUI || !window.KPTServiceUI.renderAdminPanel) return;
+      if (view !== servicePage || !el || !window.KPTServiceUI || !window.KPTServiceUI.renderAdminPanel) return;
       servicePanel = window.KPTServiceUI.renderAdminPanel(el, {
         call: request => window.KPTTransport.call(request)
-      }, { owner: !!user.owner, admin: !!user.admin, members: state.Members || [] });
+      }, { owner: !!user.owner, admin: !!user.admin, members: state.Members || [], awardType });
     }, 0);
     return host;
   }
@@ -535,7 +521,7 @@
         serviceSummary.unreadCount = counts.unreadCount;
         serviceSummary.ownerReviewCount = counts.ownerReviewCount;
       },
-      isListViewOpen: () => view === 'Service' && !!servicePanel,
+      isListViewOpen: () => (view === 'Service' || view === 'SpecialServiceShield') && !!servicePanel,
       isDirty: () => !!(servicePanel && servicePanel.isDirty && servicePanel.isDirty()),
       refreshList: () => {
         if (servicePanel && servicePanel.refreshList) servicePanel.refreshList();
@@ -867,7 +853,7 @@
     };
     const groups = [
       ['会员资料', 'Member records', ['Members', 'Activities', 'Exams', 'Duty', 'DutyRecord']],
-      ['活动与奖励', 'Activities & awards', ['Documents', 'Service', 'Awards']],
+      ['活动与奖励', 'Activities & awards', ['Documents', 'Service', 'SpecialServiceShield', 'Awards']],
       ['财政', 'Finance', ['Finance']],
       ['资料与设置', 'Data & settings', ['Owner', 'Data', 'Import', 'Phase', 'Setup', 'Trash', 'Settings']]
     ];
@@ -876,14 +862,14 @@
       const links = keys.filter(key => allowed.has(key)).map(navButton).join('');
       if (!links) return;
       const label = escape(lang === 'zh' ? zh : en);
+      const badge = allowed.has('Service') && keys.includes('Service') ? '<span id="service-group-badge" class="hub-badge" hidden></span>' : '';
       if (workspaceMode === 'admin') {
         const id = 'nav-section-' + keys[0];
         const expanded = navGroups[id] ?? keys[0] !== 'Owner';
-        const badge = allowed.has('Service') && keys.includes('Service') ? '<span id="service-group-badge" class="hub-badge" hidden></span>' : '';
         html += '<div class="nav-group"><button type="button" class="nav-group-toggle" aria-expanded="' + expanded + '" aria-controls="' + id + '">' + label + badge + '</button><div class="nav-group-links" id="' + id + '">' + links + '</div></div>';
         return;
       }
-      html += '<div class="nav-group" role="group" aria-label="' + label + '"><span class="nav-group-title" aria-hidden="true">' + label + '</span>' + links + '</div>';
+      html += '<div class="nav-group" role="group" aria-label="' + label + '"><span class="nav-group-title" aria-hidden="true">' + label + badge + '</span>' + links + '</div>';
     });
     if (ocMode && state && state.DocPackages) {
       const packages = ocPackages();
@@ -1537,7 +1523,8 @@
       Data: dataList,
       Setup: setupView,
       Import: importView,
-      Service: serviceView,
+      Service: () => serviceView('Service', 'ServiceStripeStar'),
+      SpecialServiceShield: () => serviceView('SpecialServiceShield', 'SpecialServiceShield'),
       Trash: trashView,
       Owner: ownerAccessView,
       Settings: settingsView,
@@ -1664,7 +1651,7 @@
     const linkedView = new URLSearchParams(location.search).get('view');
     if (workspaceMode === 'admin' && linkedView && workspaceNav('admin').some(([key]) => key === linkedView) && view !== linkedView) {
       view = linkedView;
-      const group = { Members: 'Members', Activities: 'Members', Exams: 'Members', Duty: 'Members', Documents: 'Documents', Service: 'Documents', Awards: 'Documents', Data: 'Owner', Import: 'Owner', Phase: 'Owner', Setup: 'Owner', Trash: 'Owner', Settings: 'Owner' }[view];
+      const group = { Members: 'Members', Activities: 'Members', Exams: 'Members', Duty: 'Members', Documents: 'Documents', Service: 'Documents', SpecialServiceShield: 'Documents', Awards: 'Documents', Data: 'Owner', Import: 'Owner', Phase: 'Owner', Setup: 'Owner', Trash: 'Owner', Settings: 'Owner' }[view];
       if (group) navGroups['nav-section-' + group] = true;
     }
     byId('account').textContent = user.email;

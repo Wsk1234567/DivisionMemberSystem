@@ -107,9 +107,13 @@ async function makePdfBytes(title) {
     const listText = await secretary.locator('#content').innerText();
     assert.match(listText, /Strict QA Cadet/, 'the submitted application appears in the Secretary list');
 
-    // ---- 3) Red dot badge updates on the Service nav ----
-    const badge = secretary.locator('#navigation [data-nav="Service"] .hub-badge');
-    assert.ok(await badge.count() > 0, 'a red-dot badge is shown for the new application');
+    // ---- 3) The two service pages separate applications and share a group badge ----
+    await secretary.locator('#navigation [data-nav="SpecialServiceShield"]').click();
+    await secretary.locator('#content').getByText('SSS-01', { exact: false }).waitFor();
+    assert.doesNotMatch(await secretary.locator('#content').innerText(), /Strict QA Cadet/);
+    await secretary.locator('#navigation [data-nav="Service"]').click();
+    await secretary.locator('#content').getByText('Strict QA Cadet', { exact: true }).waitFor();
+    await secretary.locator('#service-group-badge').waitFor();
 
     // ---- 4) Member binding + reference + confirm 4th year ----
     await secretary.locator('[data-svc-open]').first().click();
