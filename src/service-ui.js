@@ -1473,7 +1473,7 @@
         async function buildAwardFiles(kind) {
           const [checklist, signed, duty] = await Promise.all([
             checklistSigningTemplate(call, apps, kind)
-              .then(signingTemplateBase64 => pdf.downloadChecklist(b, apps, kind, { ...zipConfig, signingTemplateBase64 })),
+              .then(signingTemplateBase64 => pdf.downloadChecklist(b, apps, kind, { ...zipConfig, ...(kind === 'SSS' ? { date: todayMY() } : {}), signingTemplateBase64 })),
             gatherSignedDocs(call, b, apps, kind),
             gatherDutyDocuments(call, b, apps, kind)
           ]);

@@ -15,6 +15,7 @@ global.PDFLib = pdfLibModule.exports;
 
 // Load templates and KPT
 global.SERVICE_PDF_TEMPLATES = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'service-pdf-templates.json'), 'utf8'));
+Object.assign(global.SERVICE_PDF_TEMPLATES, require('../src/sss-pdf-templates.json'));
 global.KPT = require('../src/domain.js');
 const KPTServicePDF = require('../src/service-pdf.js');
 
@@ -29,7 +30,7 @@ async function makePdf(text) {
 }
 
 test('SSS generators create clean one-page official documents', async () => {
-  const app = { applicant: { name: 'TEST CADET', ic: '001122-33-4455', gender: 'Female' }, confirmedTier: 750, confirmedDutyHours: 751 };
+  const app = { applicant: { name: 'TEST CADET', ic: '001122-33-4455', gender: 'Female' }, declaredTier: 500, confirmedTier: 200, confirmedDutyHours: 306, currentSSS: { tier: 100, certificate: 'TEST-001' } };
   const application = await KPTServicePDF.generateSSSApplication(app, { division: 'TEST DIVISION', memberNumber: '00123', signingDate: '2026-11-10' });
   const checklist = await KPTServicePDF.generateSSSChecklist({ checks: {} }, { date: '2026-11-10' });
   const cover = await KPTServicePDF.generateSSSCoverLetter({ title: 'TCCD 2026-1', year: 2026, coverLetter: {} }, [app], {});
@@ -37,6 +38,12 @@ test('SSS generators create clean one-page official documents', async () => {
     const doc = await global.PDFLib.PDFDocument.load(bytes);
     assert.equal(doc.getPageCount(), 1);
     assert.ok(bytes.length > 1000);
+  }
+  for (const bytes of [application, checklist]) {
+    const doc = await global.PDFLib.PDFDocument.load(bytes);
+    const assets = doc.getPage(0).node.Resources().lookup(global.PDFLib.PDFName.of('XObject'));
+    assert.ok(assets.has(global.PDFLib.PDFName.of('Im0')), 'original logo remains');
+    assert.ok(!assets.has(global.PDFLib.PDFName.of('Fm0')), 'sample Fill & Sign layer is absent');
   }
 });
 

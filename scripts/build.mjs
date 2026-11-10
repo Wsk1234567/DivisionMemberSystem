@@ -31,7 +31,10 @@ const serviceUi = await read('src/service-ui.js');
 const servicePdf = await read('src/service-pdf.js');
 const dutyPdf = await read('src/duty-pdf.js');
 const dutyRecordUi = await read('src/duty-record-ui.js');
-const serviceTemplates = await read('src/service-pdf-templates.json');
+const serviceTemplates = JSON.stringify({
+  ...JSON.parse(await read('src/service-pdf-templates.json')),
+  ...JSON.parse(await read('src/sss-pdf-templates.json'))
+});
 const pdfLibrary = await read('vendor/pdf-lib.min.js');
 const pdfHash = crypto.createHash('sha256').update(pdfLibrary).digest('hex');
 if (pdfHash !== (await read('vendor/PDF-SHA256.txt')).trim().split(/\s+/)[0]) throw new Error('PDF vendor checksum mismatch.');
