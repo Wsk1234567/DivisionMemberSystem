@@ -295,10 +295,16 @@
     return bytes;
   }
 
+  function batchFileName(type, kind, year) {
+    const star = kind === 'Star';
+    if (type === 'duty') return (star ? 'Duty Record ' : 'Duty Records ') + year + ' (Service ' + kind + ').pdf';
+    const code = (star ? 'SSTR' : 'SS') + (type === 'checklist' ? '-01' : '-02');
+    return 'SJAMKPT CADET ' + code + '.pdf';
+  }
+
   async function downloadChecklist(batch, applications, kind, config) {
     const bytes = await fillChecklist(batch, applications, kind, config);
-    const formCode = kind === 'Star' ? 'SSTR-01' : 'SS-01';
-    const fileName = formCode + '_Service_Checklist.pdf';
+    const fileName = batchFileName('checklist', kind, batch.year);
     if (config && config.download === false) return bytes;
     if (typeof Blob !== 'undefined' && typeof document !== 'undefined') {
       const blob = new Blob([bytes], { type: 'application/pdf' });
@@ -336,6 +342,6 @@
     return out instanceof Uint8Array ? out : new Uint8Array(out);
   }
 
-  root.KPTServicePDF = { generateSigned, download, downloadChecklist, mergeDocuments, mergeAndDownload, zipFiles };
+  root.KPTServicePDF = { generateSigned, download, downloadChecklist, batchFileName, mergeDocuments, mergeAndDownload, zipFiles };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTServicePDF;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

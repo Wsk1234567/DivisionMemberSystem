@@ -452,10 +452,27 @@
     });
     return Promise.all(sources.map(downloadOne));
   }
-  // All real attachments for the ZIP package (duty, covering, support, reply,
-  // combined files) — not just the checklists and signed merges.
+  async function gatherDutyDocuments(call, batch, applications, kind) {
+    const apps = applications.filter(app => (batch.applicationIds || []).includes(app.id)
+      && (YEAR_MAP[app.confirmedYear] || []).includes(kind));
+    if (!apps.length) return [];
+    const perApp = apps.map(app => (app.attachments || []).filter(att => att.kind === 'duty' && att.active !== false));
+    const combined = (batch.attachments || []).findLast(att => att.kind === 'combinedDuty' && att.active !== false);
+    const missing = perApp.findIndex(items => !items.length);
+    if (missing !== -1 && !combined) {
+      const app = apps[missing];
+      throw new Error((app.applicant && app.applicant.name || app.id) + ': missing Duty Record.');
+    }
+    const sources = missing === -1 ? perApp.flat() : [combined];
+    return Promise.all(sources.map(async att => {
+      const file = await call({ action: 'serviceDownload', attachmentId: att.id });
+      if (!file || !file.base64) throw new Error('Attachment download failed: ' + att.fileName);
+      return { bytes: toBytes(file.base64), filename: file.fileName || att.fileName };
+    }));
+  }
+  // Supplementary files retain their original names in the ZIP.
   function gatherExtraAttachments(call, batch, applications) {
-    const extraKinds = ['duty', 'covering', 'support', 'reply', 'combinedDuty'];
+    const extraKinds = ['covering', 'support', 'reply'];
     const sources = [];
     (batch.attachments || []).forEach(att => {
       if (extraKinds.includes(att.kind) && att.id && att.active !== false) sources.push({ id: att.id, fileName: att.fileName, prefix: 'batch' });
@@ -988,10 +1005,13 @@
     }
     function batchDownloads(batch) {
       const id = escape(batch.id);
-      const buttons = ['Stripe', 'Star'].map(kind =>
-        '<button type="button" class="button small" data-svc-batch-pdf="' + id + '" data-svc-kind="' + kind + '">' + escape(t('checklist' + kind)) + '</button>'
-        + '<button type="button" class="button small" data-svc-batch-merge="' + id + '" data-svc-kind="' + kind + '">' + escape(t('merge' + kind)) + '</button>'
-      ).join('');
+      const pdf = root.KPTServicePDF;
+      const kinds = ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
+        (batch.applicationIds || []).includes(app.id) && (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
+      const buttons = pdf ? kinds.flatMap(kind => [['pdf', 'checklist'], ['merge', 'application'], ['duty', 'duty']].map(([action, type]) => {
+        const name = pdf.batchFileName(type, kind, batch.year);
+        return '<button type="button" class="button small" data-svc-batch-' + action + '="' + id + '" data-svc-kind="' + kind + '">' + escape(name) + '</button>';
+      })).join('') : '';
       return '<div class="svc-downloads"><button type="button" class="button primary" data-svc-batch-zip="' + id + '">' + escape(t('zipBatch')) + '</button>'
         + '<details><summary>' + (lang === 'zh' ? '单独下载' : 'Individual downloads') + '</summary><div class="toolbar">' + buttons + '</div></details></div>';
     }
@@ -1348,8 +1368,8 @@
       container.querySelectorAll('[data-svc-batch-pdf]').forEach(btn => btn.addEventListener('click', () => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-pdf'));
         const kind = btn.getAttribute('data-svc-kind') || 'Stripe';
-        const apps = state.applications.filter(app => (b.applicationIds || []).includes(app.id));
         if (!b) return;
+        const apps = state.applications.filter(app => (b.applicationIds || []).includes(app.id));
         const pdf = root.KPTServicePDF;
         if (!pdf) { notice(t('pdfUnavailable'), true); return; }
         const config = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '' };
@@ -1358,16 +1378,17 @@
           .catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
       }));
       // Merged Officer-signed PDF + full ZIP package per kind.
-      container.querySelectorAll('[data-svc-batch-merge]').forEach(btn => btn.addEventListener('click', () => {
-        const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-merge'));
+      container.querySelectorAll('[data-svc-batch-merge], [data-svc-batch-duty]').forEach(btn => btn.addEventListener('click', () => {
+        const duty = Boolean(btn.dataset.svcBatchDuty);
+        const b = state.batches.find(row => row.id === (btn.dataset.svcBatchDuty || btn.dataset.svcBatchMerge));
         const kind = btn.getAttribute('data-svc-kind') || 'Stripe';
         if (!b) return;
         const pdf = root.KPTServicePDF;
         if (!pdf || typeof pdf.mergeAndDownload !== 'function') { notice(t('pdfUnavailable'), true); return; }
-        Promise.resolve().then(() => gatherSignedDocs(call, b, state.applications, kind)).then(items => {
+        Promise.resolve().then(() => (duty ? gatherDutyDocuments : gatherSignedDocs)(call, b, state.applications, kind)).then(items => {
           if (!items.length) throw new Error(t('pdfNoSigned'));
           // Contract: mergeAndDownload(items, fileName) -> Promise + downloads the merged PDF.
-          const mergeName = (kind === 'Stripe' ? 'Signed-Stripe-' : 'Signed-Star-') + (b.title || b.year || 'batch') + '.pdf';
+          const mergeName = pdf.batchFileName(duty ? 'duty' : 'application', kind, b.year);
           return pdf.mergeAndDownload(items, mergeName);
         }).catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
       }));
@@ -1381,42 +1402,29 @@
         const zipConfig = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '', download: false };
         const zipName = (b.title || 'service-batch') + '-' + (b.year || '') + '.zip';
         // Only the Stripe/Star kinds this batch actually needs.
-        const needsStripe = apps.some(a => (YEAR_MAP[Number(a.confirmedYear)] || []).indexOf('Stripe') >= 0);
-        const needsStar = apps.some(a => (YEAR_MAP[Number(a.confirmedYear)] || []).indexOf('Star') >= 0);
+        const kinds = ['Stripe', 'Star'].filter(kind => apps.some(app => (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
         const map = {};
-        const addChecklist = (needed, kind, name) => {
-          if (!needed) return Promise.resolve();
-          return Promise.resolve(pdf.downloadChecklist(b, apps, kind, zipConfig))
-            .then(bytes => { map[name] = toBytes(bytes); });
-        };
-        addChecklist(needsStripe, 'Stripe', 'SS-01_Service_Checklist.pdf')
-          .then(() => addChecklist(needsStar, 'Star', 'SSTR-01_Service_Checklist.pdf'))
-          .then(() => Promise.all([
-            needsStripe ? gatherSignedDocs(call, b, apps, 'Stripe') : [],
-            needsStar ? gatherSignedDocs(call, b, apps, 'Star') : [],
-            gatherExtraAttachments(call, b, apps),
-            gatherDutyProofs(call, apps)
-          ]))
-          .then(([stripeSigned, starSigned, extras, dutyProofs]) => {
-            const merges = [];
-            if (needsStripe && stripeSigned.length) merges.push(Promise.resolve(pdf.mergeDocuments(stripeSigned, 'Signed-Stripe.pdf')).then(bytes => { map['Signed-Stripe.pdf'] = toBytes(bytes); }));
-            if (needsStar && starSigned.length) merges.push(Promise.resolve(pdf.mergeDocuments(starSigned, 'Signed-Star.pdf')).then(bytes => { map['Signed-Star.pdf'] = toBytes(bytes); }));
-            return Promise.all(merges).then(() => extras.concat(dutyProofs));
-          })
-          .then(extras => {
-            extras.forEach((file, index) => {
-              map[file.filename || ('attachment-' + (index + 1))] = file.bytes;
-            });
-            if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
-            // Contract: zipFiles({name: bytes}) -> Uint8Array; the UI triggers the ZIP download.
-            const zipBytes = pdf.zipFiles(map);
-            const url = URL.createObjectURL(new Blob([toBytes(zipBytes)], { type: 'application/zip' }));
-            const a = document.createElement('a');
-            a.href = url; a.download = zipName;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 60000);
-          })
-          .catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
+        async function buildAwardFiles(kind) {
+          const [checklist, signed, duty] = await Promise.all([
+            pdf.downloadChecklist(b, apps, kind, zipConfig),
+            gatherSignedDocs(call, b, apps, kind),
+            gatherDutyDocuments(call, b, apps, kind)
+          ]);
+          map[pdf.batchFileName('checklist', kind, b.year)] = toBytes(checklist);
+          if (signed.length) map[pdf.batchFileName('application', kind, b.year)] = toBytes(await pdf.mergeDocuments(signed));
+          if (duty.length) map[pdf.batchFileName('duty', kind, b.year)] = toBytes(await pdf.mergeDocuments(duty));
+        }
+        Promise.all([
+          Promise.all(kinds.map(buildAwardFiles)),
+          gatherExtraAttachments(call, b, apps),
+          gatherDutyProofs(call, apps)
+        ]).then(([, extras, dutyProofs]) => {
+          extras.concat(dutyProofs).forEach((file, index) => {
+            map[file.filename || ('attachment-' + (index + 1))] = file.bytes;
+          });
+          if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
+          downloadFile(pdf.zipFiles(map), zipName, 'application/zip');
+        }).catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
       }));
       const newBatch = container.querySelector('[data-svc-new-batch]');
       if (newBatch) newBatch.addEventListener('click', () => {

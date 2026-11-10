@@ -237,10 +237,10 @@ async function makePdfBytes(title) {
     const zipPath = await zipDownloads[zipDownloads.length - 1].path();
     const zipBytes = await import('node:fs').then(fs => fs.readFileSync(zipPath));
     const zipText = zipBytes.toString('latin1');
-    assert.match(zipText, /Checklist/i, 'ZIP contains a checklist PDF');
-    assert.match(zipText, /Signed-Stripe|signed-stripe/i, 'ZIP contains the signed Stripe PDF');
-    assert.match(zipText, /Signed-Star|signed-star/i, 'ZIP contains the signed Star PDF');
-    assert.match(zipText, /duty-detail|Duty/i, 'ZIP contains the duty PDF');
+    for (const name of [
+      'SJAMKPT CADET SS-01.pdf', 'SJAMKPT CADET SS-02.pdf', 'Duty Records 2026 (Service Stripe).pdf',
+      'SJAMKPT CADET SSTR-01.pdf', 'SJAMKPT CADET SSTR-02.pdf', 'Duty Record 2026 (Service Star).pdf'
+    ]) assert.ok(zipText.includes(name), 'ZIP contains ' + name);
 
     // ---- 9) Secretary marks the batch ready, without switching to Owner ----
     await secretary.locator('[data-svc-batch-status][data-svc-to="Ready"]').click();
