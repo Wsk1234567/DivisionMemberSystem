@@ -226,9 +226,22 @@ async function makePdfBytes(title) {
 
     await secretary.locator('#svc-check-covering').selectOption('N');
     await secretary.locator('[data-svc-save-checks]').click();
+    await secretary.locator('[data-svc-feedback="2"]').filter({ hasText: /已保存|Saved/ }).waitFor();
     assert.equal(await secretary.locator('#svc-check-covering').inputValue(), 'N');
 
     // ---- 8) ZIP package must contain Duty + checklists + signed forms ----
+    const batchDownload = secretary.locator('.svc-batch-detail section.svc-step').filter({ has: secretary.locator('[data-svc-batch-zip]') });
+    const batchUpload = secretary.locator('.svc-batch-detail section.svc-step').filter({ has: secretary.locator('[data-svc-upload-picked^="batch:"]') });
+    assert.equal(await batchDownload.locator('input[type=file]').count(), 0);
+    assert.equal(await batchUpload.locator('[data-svc-batch-zip]').count(), 0);
+    await batchUpload.locator('select[data-svc-kind-for]').selectOption('support');
+    await batchUpload.locator('input[type=file]').setInputFiles({ name: 'qa-support.pdf', mimeType: 'application/pdf', buffer: dutyPdf });
+    assert.equal(await batchUpload.getByText('qa-support.pdf').count(), 0);
+    await batchUpload.locator('[data-svc-upload-picked]').click();
+    await batchUpload.getByText('qa-support.pdf', { exact: false }).waitFor({ timeout: 5000 }).catch(async error => {
+      throw new Error(await secretary.locator('#svc-admin-notice').innerText(), { cause: error });
+    });
+
     const zipDownloads = [];
     secretary.on('download', d => zipDownloads.push(d));
     await secretary.locator('[data-svc-batch-zip]').first().click();

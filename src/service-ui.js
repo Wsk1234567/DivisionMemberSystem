@@ -737,15 +737,17 @@
       if (target.kind === 'application') body.applicationId = target.id;
       else body.batchId = target.id;
       if (submittedAt) body.submittedAt = submittedAt;
-      return operate('4', tr('更新状态中…', 'Updating status…'), async () => {
+      const section = target.kind === 'batch' ? '5' : '4';
+      return operate(section, tr('更新状态中…', 'Updating status…'), async () => {
         applyResponse(await call(Object.assign({ action: 'serviceTransition' }, body)));
         state.dirty = false;
         render();
-        notice(tr('状态已更新。', 'Status updated.'), false, '4');
+        notice(tr('状态已更新。', 'Status updated.'), false, section);
       });
     }
     function upload(target, kind, file, draft) {
-      return operate('3', tr('上传中…', 'Uploading…'), async () => {
+      const section = target.kind === 'batch' ? '4' : '3';
+      return operate(section, tr('上传中…', 'Uploading…'), async () => {
         if (draft) {
           applyResponse(await call({ action: 'serviceSave', application: draft }));
           state.dirty = false;
@@ -766,7 +768,7 @@
         else body.batchId = target.id;
         applyResponse(await timed('attachment upload', () => call(body)));
         render();
-        notice(tr('附件已上传。', 'Attachment uploaded.'), false, '3');
+        notice(tr('附件已上传。', 'Attachment uploaded.'), false, section);
       });
     }
     function downloadFile(bytes, fileName, mime) {
@@ -844,21 +846,18 @@
         + ' <button type="button" class="button small" data-svc-dl="' + escape(att.id) + '">' + escape(t('download')) + '</button>'
         + (removable ? ' <button type="button" class="button small danger" data-svc-remove-file="' + escape(att.id) + '">' + escape(tr('删除', 'Remove')) + '</button>' : '') + '</li>').join('');
       // Each target gets its own kind select + upload input; no shared first-match lookup.
-      return '<ul class="svc-files">' + (rows || '<li class="muted">' + escape(t('noFiles')) + '</li>') + '</ul>'
+      return '<ul class="svc-files">' + (rows || '<li class="muted">' + escape(target.kind === 'batch' ? tr('这批还没有手动上传的文件。', 'No files manually uploaded for this batch.') : t('noFiles')) + '</li>') + '</ul>'
         + (target.kind === 'application' && lockedApplication(app)
           ? ((app.status === 'Submitted') ? uploadFields(target, '<option value="reply">Reply</option>') : '')
           : uploadFields(target, attachKindOptions(target.kind, app)));
     }
     function uploadFields(target, options) {
       const token = escape(target.kind) + ':' + escape(target.id);
-      const manual = target.kind === 'application';
+      const placeholder = target.kind === 'batch' ? '<option value="">' + escape(tr('选择文件类型', 'Choose a file type')) + '</option>' : '';
       return '<div class="toolbar"><label class="field"><span>' + escape(t('kindLabel')) + '</span>'
-        + '<select data-svc-kind-for="' + token + '">' + options + '</select></label>'
-        + (manual
-          ? '<label class="field"><span>' + escape(tr('选择要上传的文件', 'Choose a file to upload')) + '</span><input type="file" class="svc-file-picker" data-svc-pick-file="' + token + '"></label>'
-            + '<button type="button" class="button primary" data-svc-upload-picked="' + token + '">' + escape(t('upload')) + '</button>'
-          : '<label class="button small">' + escape(t('upload')) + '<input type="file" data-svc-upload-for="' + token + '" hidden></label>')
-        + '</div>';
+        + '<select data-svc-kind-for="' + token + '">' + placeholder + options + '</select></label>'
+        + '<label class="field"><span>' + escape(tr('选择要上传的文件', 'Choose a file to upload')) + '</span><input type="file" class="svc-file-picker" data-svc-pick-file="' + token + '"></label>'
+        + '<button type="button" class="button primary" data-svc-upload-picked="' + token + '">' + escape(t('upload')) + '</button></div>';
     }
     function requiredFiles(app, year) {
       const kinds = YEAR_MAP[year] || [];
@@ -963,16 +962,17 @@
       const pdf = root.KPTServicePDF;
       const kinds = ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
         (batch.applicationIds || []).includes(app.id) && (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
-      const buttons = pdf ? kinds.flatMap(kind => [['pdf', 'checklist'], ['merge', 'application'], ['duty', 'duty']].map(([action, type]) => {
+      const groups = pdf ? kinds.map(kind => '<section><h4>Service ' + kind + '</h4><div class="toolbar">' + [['pdf', 'checklist'], ['merge', 'application'], ['duty', 'duty']].map(([action, type]) => {
         const file = pdf.batchFileName(type, kind, batch.year).replace(/\.pdf$/, '');
         const formCode = (kind === 'Star' ? 'SSTR-' : 'SS-') + (type === 'checklist' ? '01' : '02');
         const official = kind === 'Star' && type === 'checklist' ? file : 'SJAMKPT/CADET/' + formCode;
         const name = type === 'duty' ? 'Duty records of applicants (' + kind + ') (' + file + ')'
           : (type === 'checklist' ? 'Checklist' : tr('合并申请表', 'Combined application forms')) + ' (' + kind + ') - (' + official + ')';
         return '<button type="button" class="button small" data-svc-batch-' + action + '="' + id + '" data-svc-kind="' + kind + '">' + escape(name) + '</button>';
-      })).join('') : '';
+      }).join('') + '</div></section>').join('') : '';
+      if (!groups) return '<p class="hint">' + escape(tr('先加入已确认 Efficient year 的申请，才能生成批次文件。', 'Add applications with a confirmed Efficient year to generate batch files.')) + '</p>';
       return '<div class="svc-downloads"><button type="button" class="button primary" data-svc-batch-zip="' + id + '">' + escape(t('zipBatch')) + '</button>'
-        + '<details><summary>' + (lang === 'zh' ? '单独下载' : 'Individual downloads') + '</summary><div class="toolbar">' + buttons + '</div></details></div>';
+        + '<details><summary>' + (lang === 'zh' ? '单独下载' : 'Individual downloads') + '</summary>' + groups + '</details></div>';
     }
     function batchChecksBlock(batch) {
       const checks = (batch && batch.checks) || {};
@@ -1005,8 +1005,11 @@
           + ' <button type="button" class="button small" data-svc-batch-add="' + escape(batch.id) + '" data-svc-app="' + escape(app.id) + '">' + escape(t('addToBatch')) + '</button></li>').join('') || '<li class="muted">—</li>') + '</ul>'
         + '</div></section>'
         + stepBlock(2, t('checksTitle'), batchChecksBlock(batch))
-        + stepBlock(3, t('files'), attachmentsBlock({ kind: 'batch', id: batch.id }, batch) + batchDownloads(batch))
-        + stepBlock(4, t('statusTitle'), batchActions(batch))
+        + stepBlock(3, tr('下载批次文件', 'Download batch files'), '<p class="hint">'
+          + escape(tr('系统会从这批申请生成 Checklist、合并申请表和 Duty Record。', 'The system prepares the checklist, combined application forms and Duty Record from this batch.')) + '</p>' + batchDownloads(batch))
+        + stepBlock(4, tr('手动上传文件（如有）', 'Upload files manually (if needed)'), '<p class="hint">'
+          + escape(tr('如果每位学员的申请已附齐文件，这里可以跳过。其他手动附件可在下方单独下载。', 'Skip this if each applicant already has the required files. Other manual attachments can be downloaded below.')) + '</p>' + attachmentsBlock({ kind: 'batch', id: batch.id }, batch))
+        + stepBlock(5, t('statusTitle'), batchActions(batch))
         + '</section>';
     }
 
@@ -1205,24 +1208,16 @@
       container.querySelectorAll('[data-svc-upload-picked]').forEach(btn => btn.addEventListener('click', () => {
         if (busy) return;
         const token = btn.dataset.svcUploadPicked;
-        const app = state.applications.find(row => 'application:' + row.id === token);
-        if (!app) return;
+        const [targetKind, targetId] = token.split(':');
+        const app = targetKind === 'application' ? state.applications.find(row => row.id === targetId) : null;
         const kind = container.querySelector('[data-svc-kind-for="' + token + '"]').value;
         const file = container.querySelector('[data-svc-pick-file="' + token + '"]').files[0];
-        if (!kind || !file) { notice(tr('请先选择文件类型和文件。', 'Choose a file type and a file first.'), true, '3'); return; }
-        const draft = state.dirty && !lockedApplication(app) ? collectApplication(app) : null;
-        if (state.dirty && !lockedApplication(app) && !draft) return;
-        upload({ kind: 'application', id: app.id }, kind, file, draft);
-      }));
-      // Uploads are scoped per target (application vs batch) with their own kind select.
-      container.querySelectorAll('[data-svc-upload-for]').forEach(input => input.addEventListener('change', () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        const token = input.getAttribute('data-svc-upload-for');
-        const [targetKind, targetId] = token.split(':');
-        const kindEl = container.querySelector('[data-svc-kind-for="' + token + '"]');
-        input.value = '';
-        upload({ kind: targetKind, id: targetId }, kindEl ? kindEl.value : 'support', file);
+        const section = targetKind === 'batch' ? '4' : '3';
+        if (!kind || !file) { notice(tr('请先选择文件类型和文件。', 'Choose a file type and a file first.'), true, section); return; }
+        const needsSave = app && state.dirty && !lockedApplication(app);
+        const draft = needsSave ? collectApplication(app) : null;
+        if (needsSave && !draft) return;
+        upload({ kind: targetKind, id: targetId }, kind, file, draft);
       }));
       container.querySelectorAll('[data-svc-remove-file]').forEach(btn => btn.addEventListener('click', () => {
         const attachmentId = btn.dataset.svcRemoveFile;
@@ -1235,7 +1230,7 @@
           notice(tr('附件已从申请移除。', 'Attachment removed from the application.'), false, '3');
         });
       }));
-      container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'), '3')));
+      container.querySelectorAll('[data-svc-dl]').forEach(btn => btn.addEventListener('click', () => download(btn.getAttribute('data-svc-dl'), btn.closest('.svc-batch-detail') ? '4' : '3')));
       container.querySelectorAll('[data-svc-duty-download], [data-svc-duty-attach]').forEach(btn => btn.addEventListener('click', () => {
         if (busy) return;
         const attach = Boolean(btn.dataset.svcDutyAttach);
