@@ -316,13 +316,12 @@
       .forEach(([tier, x, y]) => { if (Number(existing.tier) === tier) mark(x, y); });
     const certificate = safeText(existing.certificate || '').replace(/^SJAMKPT\/CADET\/\(SSS\)\/04\s*\(?\s*/i, '').replace(/\)$/, '').trim();
     const certificateParts = /^(\d{4})-G(\d+)$/i.exec(certificate);
-    write(certificateParts ? sssCertificateReference(certificateParts[1], certificateParts[2]) : certificate, 341, 277.6, 62, 8);
+    if (certificateParts) write(sssCertificateReference(certificateParts[1], certificateParts[2]), 341, 277.6, 62, 8);
     const exampleYear = /^\d{4}$/.test(String(app.year)) ? String(app.year) : String(config.signingDate || '').slice(0, 4);
     if (/^\d{4}$/.test(exampleYear)) {
       page.drawRectangle({ x: 427.8, y: 275.5, width: 62, height: 12, color: rgb(1, 1, 1) });
       write(sssCertificateReference(exampleYear, 1), 428.1, 277.6, 60, 9);
     }
-    page.drawRectangle({ x: 58, y: 161, width: 127, height: 5, color: rgb(1, 1, 1) });
     await copyPrivateOfficer(doc, page, config.templateBase64,
       { x: 58, y: 171, width: 176, height: 57 }, { x: 135, y: 106, width: 263, height: 28 });
     write(sssDate(config.signingDate), 135, 98.2, 150, 8);

@@ -51,7 +51,8 @@ test('SSS-02 writes applicant data above the original rules without masking them
   const { PDFDocument, decodePDFRawStream } = global.PDFLib;
   const original = await PDFDocument.load(Buffer.from(global.SERVICE_PDF_TEMPLATES.sss02, 'base64'));
   const filled = await PDFDocument.load(await KPTServicePDF.generateSSSApplication({
-    applicant: { name: 'TEST CADET', ic: '001122-33-4455', rank: 'Sergeant', phone: '011-12345678', email: 'cadet@example.test', occupation: 'Student', joined: '2020-11-02' }
+    applicant: { name: 'TEST CADET', ic: '001122-33-4455', rank: 'Sergeant', phone: '011-12345678', email: 'cadet@example.test', occupation: 'Student', joined: '2020-11-02' },
+    currentSSS: { tier: 100, certificate: 'CERT-001' }
   }, { memberNumber: '00123' }));
   const streams = doc => {
     const contents = doc.getPage(0).node.Contents();
@@ -62,8 +63,8 @@ test('SSS-02 writes applicant data above the original rules without masking them
   const filledStreams = streams(filled);
   assert.deepEqual(filledStreams.slice(1, 1 + originalStreams.length), originalStreams);
   const overlay = filledStreams.at(-1);
-  const rectangles = overlay.match(/^.*\bre\s*$/gm) || [];
-  assert.ok(rectangles.every(rectangle => /^0 0 127 5 re\s*$/.test(rectangle)), 'only the signature rule may be masked');
+  assert.doesNotMatch(overlay, /\bre\s*$/m);
+  assert.doesNotMatch(overlay, /341 277\.6 Tm/, 'invalid certificate reference leaves the field blank');
   assert.match(overlay, /1 0 0 1 154 551\.5 Tm\s+<54455354204341444554> Tj/);
   assert.match(overlay, /1 0 0 1 451 450\.2 Tm\s+<3032> Tj/);
   assert.match(overlay, /1 0 0 1 483 450\.2 Tm\s+<3131> Tj/);
