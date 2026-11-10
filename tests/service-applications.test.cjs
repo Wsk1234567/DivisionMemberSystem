@@ -7,6 +7,7 @@ function makeState() {
   s.Members.push({ id: 'STU-1', version: 1, name: 'Test Member', ic: '123456-78-9012', sjamId: '001', race: 'Cina', form: 'Form 1', joined: '2020-01-01', status: 'Active' });
   s.Catalog.push({ id: 'CAT-SS1', version: 1, code: 'SERVICE_YEAR_1', sortOrder: 900, kind: 'Award', category: 'Service Stripe & Star', name: 'Service Stripe & Star', level: '1st Year - 1 Black-and-White Stripe', eligibilityMetric: 'efficientYears', eligibilityThreshold: 1, archived: false });
   s.Catalog.push({ id: 'CAT-SS4', version: 1, code: 'SERVICE_YEAR_4', sortOrder: 903, kind: 'Award', category: 'Service Stripe & Star', name: 'Service Stripe & Star', level: '4th Year - 1 Service Star + 1 Black-and-White Stripe', eligibilityMetric: 'efficientYears', eligibilityThreshold: 4, archived: false });
+  for (const tier of [100, 200, 500, 750, 1000]) s.Catalog.push({ id: 'CAT-SSS-' + tier, version: 1, code: 'SSS_' + tier, sortOrder: 1000 + tier, kind: 'Award', category: 'Special Service Shield', name: 'Special Service Shield', level: 'SSS ' + tier, eligibilityMetric: 'lifetimeDutyHours', eligibilityThreshold: tier, archived: false });
   return s;
 }
 const ctx = () => ({ actor: 'secretary@gmail.com', now: '2026-10-25T10:00:00Z', uuid: () => 'u' + Math.random().toString(36).slice(2, 8) });
@@ -22,6 +23,42 @@ test('serviceSubmit: creates PendingSecretary, dedupes clientRequestId, returns 
   assert.equal(r2.deduplicated, true);
   assert.equal(r2.reference, r1.reference);
   assert.equal(s.serviceApplications.length, 1, 'dedup prevents duplicate');
+});
+
+test('SSS submission and binding uses confirmed Duty Record cumulative total', () => {
+  const s = makeState();
+  s.DutyPrevious.push({ id: 'PREV-1', version: 1, memberId: 'STU-1', year: 2026, hours: 490, note: 'Opening balance' });
+  s.Activities.push({ id: 'ACT-1', version: 1, name: 'Duty', date: '2026-05-01', tags: [], examType: '', archived: false });
+  s.DutyRecords.push({ id: 'DUTY-1', version: 1, memberId: 'STU-1', activityId: 'ACT-1', date: '2026-05-01', year: 2026, hours: 10, note: '' });
+  KPT.serviceSubmit(s, { awardType: 'SpecialServiceShield', applicant: { name: 'John', ic: '123456-78-9012' }, declaredTier: 200, clientRequestId: 'sss-1' }, ctx());
+  const app = s.serviceApplications[0];
+  KPT.serviceSave(s, { application: { id: app.id, version: app.version, memberId: 'STU-1', year: 2026 } }, ctx());
+  assert.equal(app.awardType, 'SpecialServiceShield');
+  assert.equal(app.confirmedDutyHours, 500);
+  assert.equal(app.confirmedTier, 500, 'highest eligible tier is selected even when lower tiers were never awarded');
+  assert.equal(app.dutyConfirmed, true);
+});
+
+test('SSS tier boundaries use official 750-hour Silver threshold', () => {
+  const expected = [[99.5, null], [100, 100], [199.5, 100], [200, 200], [499.5, 200], [500, 500], [749.5, 500], [750, 750], [999.5, 750], [1000, 1000]];
+  expected.forEach(([hours, tier]) => assert.equal(KPT.highestSssTier(hours), tier, String(hours)));
+});
+
+test('SSS batch cannot mix award types and records the confirmed SSS award', () => {
+  const s = makeState();
+  s.DutyPrevious.push({ id: 'PREV-1', version: 1, memberId: 'STU-1', year: 2026, hours: 750, note: '' });
+  KPT.serviceSubmit(s, { awardType: 'SpecialServiceShield', applicant: { name: 'John', ic: '123456-78-9012' }, declaredTier: 500, clientRequestId: 'sss-2' }, ctx());
+  const app = s.serviceApplications[0];
+  KPT.serviceSave(s, { application: { id: app.id, version: app.version, memberId: 'STU-1', year: 2026 } }, ctx());
+  KPT.serviceUploadMeta(s, { applicationId: app.id, kind: 'duty', fileName: 'duty.pdf', mime: 'application/pdf', bytes: 100 }, ctx());
+  KPT.serviceUploadMeta(s, { applicationId: app.id, kind: 'signedSSS', fileName: 'sss-02.pdf', mime: 'application/pdf', bytes: 100 }, ctx());
+  KPT.serviceSaveBatch(s, { batch: { awardType: 'SpecialServiceShield', year: 2026, title: 'TCCD 2026-1', applicationIds: [app.id] } }, ctx());
+  const batch = s.serviceBatches[0];
+  KPT.serviceTransition(s, { batchId: batch.id, version: batch.version, status: 'Ready' }, { ...ctx(), isOwner: true });
+  KPT.serviceTransition(s, { batchId: batch.id, version: s.serviceBatches[0].version, status: 'Submitted', submittedAt: '2026-11-10' }, { ...ctx(), isOwner: true });
+  KPT.serviceTransition(s, { batchId: batch.id, version: s.serviceBatches[0].version, status: 'Approved' }, { ...ctx(), isOwner: true });
+  KPT.serviceAward(s, { applicationId: app.id, version: s.serviceApplications[0].version, date: '2026-11-10', certificate: '2026-G001' }, ctx());
+  assert.equal(s.Awards.at(-1).catalogId, 'CAT-SSS-750');
 });
 
 test('serviceSubmit: applicant name/ic required, declaredYear 1-5 or null', () => {

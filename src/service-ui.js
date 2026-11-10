@@ -26,9 +26,9 @@
   let lang = 'zh';
   const DICT = {
     zh: {
-      svcTitle: 'Service Stripe & Star 申请表',
+      svcTitle: 'Service Awards 申请表',
       svcEyebrow: '服务奖励',
-      svcIntro: '填上你自己的资料，再告诉我们你认为一共有几年达到 Efficient。这里的年数是达到 Efficient 标准的总年数，不是入会年数。秘书会逐年对照原始记录核对，然后才会正式提交。',
+      svcIntro: '选择 Service Stripe & Star 或 Special Service Shield，再填写个人资料。秘书会对照 Efficient 年度或 Duty Record 核对，确认后才会正式提交。',
       legendDetails: '个人资料',
       hintBlock: '日后填写纸本请用正楷大写（BLOCK LETTERS）。姓名拼法请与学校记录一致。',
       fName: '姓名', fIc: '身份证号码', fGender: '性别', fRank: '军阶', fJoined: '加入日期', fPhone: '电话', fEmail: '电邮', fOccupation: '职业',
@@ -57,7 +57,7 @@
       toggleEn: 'EN',
       toggleZh: '中文',
       // Admin
-      adminTitle: '查看 Service Stripe & Star 申请',
+      adminTitle: '查看 Service Awards 申请',
       filterLabel: '筛选',
       filterHint: '姓名、编号或会员姓名',
       reload: '重新载入',
@@ -134,9 +134,9 @@
       dutyKind: 'Duty detail PDF'
     },
     en: {
-      svcTitle: 'Service Stripe & Star application',
+      svcTitle: 'Service Awards application',
       svcEyebrow: 'Service award',
-      svcIntro: 'Fill in your own details and tell us how many Efficient years you believe you have. This count is the total number of years you met the Efficient standard — not the number of years you joined. A Secretary will check every year against the records before anything is filed.',
+      svcIntro: 'Choose Service Stripe & Star or Special Service Shield, then enter your details. A Secretary will verify the Efficient years or Duty Record before anything is filed.',
       legendDetails: 'Your details',
       hintBlock: 'Use BLOCK LETTERS on paper copies. Keep the spelling you use in school records.',
       fName: 'Name', fIc: 'IC', fGender: 'Gender', fRank: 'Rank', fJoined: 'Joined', fPhone: 'Phone', fEmail: 'Email', fOccupation: 'Occupation',
@@ -164,7 +164,7 @@
       notSentTail: 'Nothing you typed was lost.',
       toggleEn: 'EN',
       toggleZh: '中文',
-      adminTitle: 'Service Stripe & Star applications',
+      adminTitle: 'Service Awards applications',
       filterLabel: 'Filter',
       filterHint: 'Name, reference or member',
       reload: 'Reload',
@@ -303,10 +303,10 @@
     const row = ATTACH_KINDS.concat(ATTACH_KINDS_BATCH).find(([key]) => key === value);
     return row ? row[1] : value;
   }
-  const formName = kind => kind === 'Star' ? 'SSTR-02' : 'SS-02';
+  const formName = kind => kind === 'Star' ? 'SSTR-02' : kind === 'SSS' ? 'SSS-02' : 'SS-02';
   function attachKindOptions(targetKind, record) {
     const list = targetKind === 'batch' ? ATTACH_KINDS_BATCH : [
-      ...(YEAR_MAP[record.confirmedYear] || []).map(kind => ['signed' + kind, formName(kind)]),
+      ...(record.awardType === 'SpecialServiceShield' ? [['signedSSS', formName('SSS')]] : (YEAR_MAP[record.confirmedYear] || []).map(kind => ['signed' + kind, formName(kind)])),
       ['duty', 'Duty Record'],
       ['support', lang === 'zh' ? 'Supporting document（选交）' : 'Supporting document (optional)'],
       ...(record.status === 'NeedsInfo' && record.submittedAt ? [['reply', 'Reply']] : [])
@@ -367,6 +367,7 @@
     return name;
   }
   function pdfKindsFor(app, memberNumber) {
+    if (app && app.awardType === 'SpecialServiceShield') return memberNumber && app.confirmedTier ? ['SSS'] : [];
     const year = app && app.confirmedYear != null ? Number(app.confirmedYear) : null;
     if (!year || !YEAR_MAP[year]) return [];
     if (!memberNumber) return [];
@@ -398,10 +399,12 @@
   // single merged document and per-person files are NOT appended on top.
   // A failed download is an error, never a silent skip.
   function gatherSignedDocs(call, batch, applications, kind) {
+    const isSSS = kind === 'SSS';
     const wantStripe = kind === 'Stripe';
-    const combinedKind = wantStripe ? 'combinedSignedStripe' : 'combinedSignedStar';
-    const signedKind = wantStripe ? 'signedStripe' : 'signedStar';
+    const combinedKind = isSSS ? 'combinedSignedSSS' : wantStripe ? 'combinedSignedStripe' : 'combinedSignedStar';
+    const signedKind = isSSS ? 'signedSSS' : wantStripe ? 'signedStripe' : 'signedStar';
     const wantsKind = app => {
+      if (isSSS) return app.awardType === 'SpecialServiceShield' && app.confirmedTier != null;
       const year = app.confirmedYear != null ? Number(app.confirmedYear) : null;
       if (!year || !YEAR_MAP[year]) return false;
       return YEAR_MAP[year].indexOf(kind) >= 0;
@@ -427,14 +430,14 @@
     return Promise.all(sources.map(downloadOne));
   }
   async function checklistSigningTemplate(call, applications, kind) {
-    const app = applications.find(row => (YEAR_MAP[row.confirmedYear] || []).includes(kind));
+    const app = applications.find(row => kind === 'SSS' ? row.awardType === 'SpecialServiceShield' : (YEAR_MAP[row.confirmedYear] || []).includes(kind));
     if (!app) throw new Error('No Service ' + kind + ' applications in this batch.');
     const result = await call({ action: 'serviceGetTemplates', applicationId: app.id, version: app.version });
     return result && result.templates && result.templates[kind];
   }
   async function gatherDutyDocuments(call, batch, applications, kind) {
     const apps = applications.filter(app => (batch.applicationIds || []).includes(app.id)
-      && (YEAR_MAP[app.confirmedYear] || []).includes(kind));
+      && (kind === 'SSS' ? app.awardType === 'SpecialServiceShield' : (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
     if (!apps.length) return [];
     const perApp = apps.map(app => {
       const active = (app.attachments || []).filter(att => att.kind === 'duty' && att.id && att.active !== false);
@@ -534,6 +537,7 @@
         + '<h2 id="svc-title" style="margin:0">' + escape(t('svcTitle')) + '</h2></div>' + langToggleHtml() + '</div>'
         + '<p class="muted">' + escape(t('svcIntro')) + '</p>'
         + '<form id="service-form" class="service-form" novalidate>'
+        + '<fieldset><legend>' + escape(lang === 'zh' ? '申请类型' : 'Application type') + '</legend><div class="field"><label for="svc-award-type">' + escape(lang === 'zh' ? '选择奖励' : 'Choose award') + '</label><select id="svc-award-type" name="awardType"><option value="ServiceStripeStar">Service Stripe & Star</option><option value="SpecialServiceShield">Special Service Shield (SSS)</option></select></div></fieldset>'
         + '<fieldset><legend>' + escape(t('legendDetails')) + '</legend><p class="hint">' + escape(t('hintBlock')) + '</p>'
         + '<div class="form-grid">'
         + field(t('fName'), 'name', '', { required: true, autocomplete: 'name', hint: t('hintName') })
@@ -545,12 +549,13 @@
         + field(t('fEmail'), 'email', '', { type: 'email', autocomplete: 'email', hint: t('hintEmail') })
         + field(t('fOccupation'), 'occupation', '', { hint: t('hintOccupation') })
         + '</div></fieldset>'
-        + '<fieldset class="svc-years"><legend>' + escape(t('legendYears')) + '</legend>'
+        + '<fieldset class="svc-years" id="svc-years-fields"><legend>' + escape(t('legendYears')) + '</legend>'
         + '<p class="hint">' + escape(t('hintYears')) + '</p>'
         + '<div class="field"><label for="svc-declaredYear">' + escape(t('labelYears')) + '</label><select id="svc-declaredYear" name="declaredYear" aria-describedby="svc-year-map">' + yearChoices('') + '</select></div>'
         + '<div class="svc-year-map" id="svc-year-map" role="status" aria-live="polite"></div>'
         + '<p class="hint">' + escape(t('hintFourth')) + '</p>'
         + '</fieldset>'
+        + '<fieldset id="svc-sss-fields" hidden><legend>Special Service Shield</legend><p class="hint">' + escape(lang === 'zh' ? '选择你预计申请的等级。秘书会按系统 Duty Record 的累计小时重新核对，并采用最高符合等级。' : 'Choose the tier you expect to apply for. The Secretary will verify the accumulated hours in the Duty Record and use the highest eligible tier.') + '</p><div class="field"><label for="svc-declared-tier">' + escape(lang === 'zh' ? '预计等级' : 'Expected tier') + '</label><select id="svc-declared-tier" name="declaredTier"><option value="100">100 Hours - Green</option><option value="200">200 Hours - Blue</option><option value="500">500 Hours - Purple</option><option value="750">750 Hours - Silver</option><option value="1000">1000 Hours - Emas</option></select></div></fieldset>'
         + '<div class="svc-actions">'
         + '<button class="button primary" type="submit" id="svc-submit">' + escape(t('submit')) + '</button>'
         + '<button class="button" type="reset" id="svc-reset">' + escape(t('clear')) + '</button>'
@@ -559,6 +564,9 @@
         + '</section>';
       const form = container.querySelector('#service-form');
       const select = container.querySelector('#svc-declaredYear');
+      const awardType = container.querySelector('#svc-award-type');
+      const yearFields = container.querySelector('#svc-years-fields');
+      const sssFields = container.querySelector('#svc-sss-fields');
       const mapBox = container.querySelector('#svc-year-map');
       const refreshMap = () => {
         const value = select.value === '' ? null : Number(select.value);
@@ -566,6 +574,12 @@
           + '<p class="svc-year-map-award"><span class="svc-year-map-name">' + escape(yearAwardText(value)) + '</span></p>';
       };
       select.addEventListener('change', refreshMap);
+      const refreshAwardType = () => {
+        const isSSS = awardType.value === 'SpecialServiceShield';
+        yearFields.hidden = isSSS;
+        sssFields.hidden = !isSSS;
+      };
+      awardType.addEventListener('change', refreshAwardType);
       form.addEventListener('submit', event => {
         event.preventDefault();
         const result = container.querySelector('#svc-result');
@@ -582,13 +596,15 @@
         };
         const declaredRaw = String(data.get('declaredYear') || '').trim();
         const declaredYear = declaredRaw === '' ? null : Number(declaredRaw);
+        const awardTypeValue = String(data.get('awardType') || 'ServiceStripeStar');
+        const declaredTier = awardTypeValue === 'SpecialServiceShield' ? Number(data.get('declaredTier')) : null;
         if (!applicant.name || !applicant.ic) {
           result.hidden = false;
           result.className = 'message error';
           result.textContent = t('needNameIc');
           return;
         }
-        const payload = { action: 'submitServiceApplication', applicant, declaredYear, clientRequestId: clientRequestId, website: '' };
+        const payload = { action: 'submitServiceApplication', applicant, awardType: awardTypeValue, declaredYear, declaredTier, clientRequestId: clientRequestId, website: '' };
         result.hidden = false;
         result.className = 'message working';
         result.textContent = t('sending');
@@ -612,6 +628,7 @@
         setTimeout(refreshMap, 0);
       });
       refreshMap();
+      refreshAwardType();
       bindLangToggles(container, draw);
     }
     draw();
@@ -693,7 +710,7 @@
       return operate('2.1', tr('保存中…', 'Saving…'), async progress => {
         const selectedMember = memberById(members, payload.memberId);
         const memberNumber = selectedMember && String(selectedMember.sjamId || '').trim();
-        const kinds = (YEAR_MAP[payload.confirmedYear] || []).filter(kind => !downloadKind || kind === downloadKind);
+        const kinds = (payload.awardType === 'SpecialServiceShield' ? ['SSS'] : (YEAR_MAP[payload.confirmedYear] || [])).filter(kind => !downloadKind || kind === downloadKind);
         if (!memberNumber) throw new Error(t('pdfNeedMember'));
         if (!kinds.length) throw new Error(t('pdfNeedYear'));
         if (!signingDate) throw new Error(tr('请选择实际签署日期。', 'Select the signing date.'));
@@ -722,7 +739,7 @@
           if (!cachedTemplates[kind]) throw new Error(tr('无法读取私人签名模板，请让 Owner 检查 TCCD Admin 的模板设置和 Drive 权限：', 'Private signed template unavailable. Ask the Owner to check TCCD Admin template settings and Drive access: ') + kind);
           const bytes = await root.KPTServicePDF.generateSigned(current, kind, {
             division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '',
-            memberNumber, reference: current.reference, templateBase64: cachedTemplates[kind], signingDate
+            memberNumber, reference: current.reference, templateBase64: cachedTemplates[kind] || cachedTemplates.Stripe, signingDate
           });
           return { kind: 'signed' + kind, fileName: formName(kind) + '_' + current.reference.replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf', bytes };
         })));
@@ -870,11 +887,11 @@
         + '<button type="button" class="button primary" data-svc-upload-picked="' + token + '">' + escape(t('upload')) + '</button></div>';
     }
     function requiredFiles(app, year) {
-      const kinds = YEAR_MAP[year] || [];
+      const kinds = app.awardType === 'SpecialServiceShield' ? (app.confirmedTier ? ['SSS'] : []) : (YEAR_MAP[year] || []);
       return '<p class="hint">' + escape(tr('必交文件', 'Required files')) + '</p><ul class="svc-files">'
         + [...kinds.map(kind => ['signed' + kind, formName(kind)]), ['duty', 'Duty Record']].map(([kind, label]) =>
           '<li>' + escape(label) + ' · <strong>' + escape(latestAttachment(app, kind) ? tr('已附上', 'Attached') : tr('缺少', 'Missing')) + '</strong></li>').join('')
-        + '</ul>' + (!kinds.length ? '<p class="hint">' + escape(tr('先确认 Efficient year，系统才会列出要交的申请表。', 'Confirm the Efficient year to see which application forms are required.')) + '</p>' : '')
+        + '</ul>' + (!kinds.length ? '<p class="hint">' + escape(app.awardType === 'SpecialServiceShield' ? tr('先绑定会员并确认 Previous，系统才会按累计 Duty Hours 确认等级。', 'Bind the member and confirm Previous so the system can determine the tier.') : tr('先确认 Efficient year，系统才会列出要交的申请表。', 'Confirm the Efficient year to see which application forms are required.')) + '</p>' : '')
         + '<p class="hint">Supporting document · ' + escape(tr('选交', 'Optional')) + '</p>';
     }
     function generationBlock(app) {
@@ -882,9 +899,10 @@
       const locked = lockedApplication(app);
       const feedback = key => '<p class="svc-feedback" data-svc-feedback="' + key + '" role="status"></p>';
       const button = (label, attrs, primary = false) => '<button type="button" class="button small' + (primary ? ' primary' : '') + '" ' + attrs + '>' + escape(label) + '</button>';
-      return '<h4>2.1 SS-02／SSTR-02</h4><div class="toolbar">'
+      const formKinds = app.awardType === 'SpecialServiceShield' ? ['SSS'] : ['Stripe', 'Star'];
+      return '<h4>2.1 ' + escape(app.awardType === 'SpecialServiceShield' ? 'SSS-02' : 'SS-02／SSTR-02') + '</h4><div class="toolbar">'
         + (!locked ? '<label class="field"><span>' + escape(tr('实际签署日期', 'Signing date')) + '</span><input id="svc-signing-date" type="date" value="' + escape(todayMY()) + '"></label>' : '')
-        + ['Stripe', 'Star'].map(kind => button(tr('下载 ', 'Download ') + formName(kind), 'data-svc-form-download="' + id + '" data-svc-form-kind="' + kind + '" hidden')).join('')
+        + formKinds.map(kind => button(tr('下载 ', 'Download ') + formName(kind), 'data-svc-form-download="' + id + '" data-svc-form-kind="' + kind + '" hidden')).join('')
         + (!locked ? button(tr('生成并上传', 'Generate and upload'), 'data-svc-generate="' + id + '"', true) : '')
         + '</div><p class="hint" data-svc-year-help></p>' + feedback('2.1')
         + '<h4>2.2 Duty Record</h4><div class="toolbar">'
@@ -945,7 +963,9 @@
         + field(t('fOccupation'), 'occupation', a.occupation)
         + field(t('refLabel'), 'reference', app.reference != null ? app.reference : '', { readonly: true, hint: tr('首次保存时按申请年度自动分配。', 'Assigned from the application year on first save.') })
         + '<div class="field"><label for="svc-year">' + escape(t('yearLabel')) + '</label><input id="svc-year" name="year" type="number" min="2000" max="2100"' + (app.reference ? ' readonly' : '') + ' value="' + escape(app.year != null && app.year !== '' ? String(app.year) : '') + '"><p class="hint">' + escape(t('yearHint')) + '</p></div>'
-        + '<div class="field"><label for="svc-confYear">' + escape(t('confYear')) + '</label><select id="svc-confYear">' + yearChoices(app.confirmedYear) + '</select></div>'
+        + (app.awardType === 'SpecialServiceShield'
+          ? '<div class="field"><label>' + escape(tr('预计／确认 SSS 等级', 'Expected / confirmed SSS tier')) + '</label><input value="' + escape(String(app.declaredTier || '')) + ' / ' + escape(String(app.confirmedTier || 'Pending')) + '" readonly><p class="hint">' + escape(tr('累计 Duty Hours：', 'Accumulated Duty Hours: ')) + escape(String(app.confirmedDutyHours == null ? 'Pending' : app.confirmedDutyHours)) + '</p></div>'
+          : '<div class="field"><label for="svc-confYear">' + escape(t('confYear')) + '</label><select id="svc-confYear">' + yearChoices(app.confirmedYear) + '</select></div>')
         + memberPicker(app)
         + field(t('remarks'), 'remarks', app.remarks, { type: 'textarea' })
         + '</form>'
@@ -970,11 +990,11 @@
     function batchDownloads(batch) {
       const id = escape(batch.id);
       const pdf = root.KPTServicePDF;
-      const kinds = ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
+      const kinds = batch.awardType === 'SpecialServiceShield' ? ['SSS'] : ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
         (batch.applicationIds || []).includes(app.id) && (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
       const groups = pdf ? kinds.map(kind => '<section><h4>Service ' + kind + '</h4><div class="toolbar">' + [['pdf', 'checklist'], ['merge', 'application'], ['duty', 'duty']].map(([action, type]) => {
         const file = pdf.batchFileName(type, kind, batch.year).replace(/\.pdf$/, '');
-        const formCode = (kind === 'Star' ? 'SSTR-' : 'SS-') + (type === 'checklist' ? '01' : '02');
+        const formCode = (kind === 'SSS' ? 'SSS-' : kind === 'Star' ? 'SSTR-' : 'SS-') + (type === 'checklist' ? '01' : '02');
         const official = kind === 'Star' && type === 'checklist' ? file : 'SJAMKPT/CADET/' + formCode;
         const name = type === 'duty' ? 'Duty records of applicants (' + kind + ') (' + file + ')'
           : (type === 'checklist' ? 'Checklist' : tr('合并申请表', 'Combined application forms')) + ' (' + kind + ') - (' + official + ')';
@@ -986,6 +1006,7 @@
     }
     function batchChecksBlock(batch) {
       const checks = (batch && batch.checks) || {};
+      const letter = Object.assign({ recipient: 'Mr Phang Kwok Kheun', recipientTitle: 'Area Staff Officer (Cadets)', organization: 'St. John Ambulans Malaysia', area: 'Kawasan Pahang Tengah', sender: 'JDO Wong Shan Kang', phone: '011-20836398', division: 'SMJK Triang Combined Cadet Division', subject: 'Applies Special Service Shield', intro: 'With the above Subject Matters, I would like to apply Special Service Shield for cadets who fulfill the requirements.', closing: 'Looking forward to hearing from you soon.' }, batch.coverLetter || {});
       const rows = BATCH_CHECK_ITEMS.map(([key, label]) => {
         const value = checks[key] != null ? String(checks[key]) : '';
         return '<div class="field svc-check-row"><label for="svc-check-' + key + '">' + escape(label) + '</label>'
@@ -996,6 +1017,8 @@
           + '</select></div>';
       }).join('');
       return '<p class="hint">' + escape(t('checksHint')) + '</p>'
+        + (batch.awardType === 'SpecialServiceShield' ? '<div class="form-grid"><label class="field"><span>Covering letter</span><select data-svc-cover-letter><option value="yes"' + (batch.includeCoverLetter !== false ? ' selected' : '') + '>' + escape(tr('默认包含', 'Include')) + '</option><option value="no"' + (batch.includeCoverLetter === false ? ' selected' : '') + '>' + escape(tr('不放入 ZIP（不影响提交）', 'Exclude from ZIP (does not block submission)')) + '</option></select></label>'
+          + Object.entries(letter).map(([key, value]) => '<label class="field"><span>' + escape(key) + '</span>' + ((key === 'intro' || key === 'closing') ? '<textarea data-svc-cover-field="' + escape(key) + '" rows="2">' + escape(value) + '</textarea>' : '<input data-svc-cover-field="' + escape(key) + '" value="' + escape(value) + '">') + '</label>').join('') + '</div>' : '')
         + '<div class="form-grid svc-checks">' + rows + '</div>'
         + '<div class="toolbar"><button type="button" class="button primary" data-svc-save-checks="' + escape(batch.id) + '">' + escape(t('saveChecks')) + '</button></div>';
     }
@@ -1003,7 +1026,7 @@
       if (!batch) return '';
       const inIds = new Set(batch.applicationIds || []);
       const inBatch = state.applications.filter(app => inIds.has(app.id));
-      const outBatch = state.applications.filter(app => !inIds.has(app.id));
+      const outBatch = state.applications.filter(app => !inIds.has(app.id) && (app.awardType || 'ServiceStripeStar') === (batch.awardType || 'ServiceStripeStar'));
       return '<section class="card svc-batch-detail"><h2>' + escape(batch.title || '') + ' · ' + escape(String(batch.year || '')) + '</h2>'
         + '<p>' + statusPill(batch.status) + '</p>'
         + '<section class="svc-step">' + stepHeading(1, lang === 'zh' ? '核对申请者' : 'Review applicants')
@@ -1165,6 +1188,8 @@
           id: app.id, version: app.version,
           documentStatus,
           applicant: { name: get('name'), ic: get('ic'), gender: get('gender'), rank: get('rank'), joined: get('joined'), phone: get('phone'), email: get('email'), occupation: get('occupation') },
+          awardType: app.awardType || 'ServiceStripeStar',
+          declaredTier: app.declaredTier,
           declaredYear: app.declaredYear,
           confirmedYear: confEl && confEl.value !== '' ? Number(confEl.value) : null,
           memberId: memberEl ? String(memberEl.value || '').trim() : '',
@@ -1189,9 +1214,9 @@
       const efficientYear = container.querySelector('#svc-confYear');
       function syncFileRequirements() {
         const app = state.applications.find(row => row.id === state.selectedId);
-        if (!app || !efficientYear) return;
-        const year = lockedApplication(app) ? app.confirmedYear : Number(efficientYear.value);
-        const kinds = YEAR_MAP[year] || [];
+        if (!app || (app.awardType !== 'SpecialServiceShield' && !efficientYear)) return;
+        const year = lockedApplication(app) ? app.confirmedYear : Number(efficientYear && efficientYear.value);
+        const kinds = app.awardType === 'SpecialServiceShield' ? (app.confirmedTier ? ['SSS'] : []) : (YEAR_MAP[year] || []);
         container.querySelectorAll('[data-svc-form-download]').forEach(btn => {
           const kind = btn.dataset.svcFormKind;
           btn.hidden = !kinds.includes(kind) || (lockedApplication(app) && !latestAttachment(app, 'signed' + kind));
@@ -1322,14 +1347,14 @@
         if (!b) return;
         const ids = (b.applicationIds || []).slice();
         if (!ids.includes(appId)) ids.push(appId);
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, includeCoverLetter: b.includeCoverLetter, coverLetter: b.coverLetter || {}, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
       }));
       container.querySelectorAll('[data-svc-batch-remove]').forEach(btn => btn.addEventListener('click', () => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-remove'));
         const appId = btn.getAttribute('data-svc-app');
         if (!b) return;
         const ids = (b.applicationIds || []).filter(id => id !== appId);
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, includeCoverLetter: b.includeCoverLetter, coverLetter: b.coverLetter || {}, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
       }));
       container.querySelectorAll('[data-svc-save-checks]').forEach(btn => btn.addEventListener('click', () => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-save-checks'));
@@ -1338,7 +1363,10 @@
         container.querySelectorAll('[data-svc-check]').forEach(sel => {
           checks[sel.getAttribute('data-svc-check')] = String(sel.value || '');
         });
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks });
+        const cover = container.querySelector('[data-svc-cover-letter]');
+        const coverLetter = {};
+        container.querySelectorAll('[data-svc-cover-field]').forEach(input => { coverLetter[input.dataset.svcCoverField] = String(input.value || '').trim(); });
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, includeCoverLetter: cover ? cover.value !== 'no' : b.includeCoverLetter, coverLetter: Object.keys(coverLetter).length ? coverLetter : (b.coverLetter || {}), applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks });
       }));
       function onBatchDownload(selector, work) {
         container.querySelectorAll(selector).forEach(btn => btn.addEventListener('click', () => {
@@ -1363,7 +1391,7 @@
         const apps = state.applications.filter(app => (b.applicationIds || []).includes(app.id));
         const pdf = root.KPTServicePDF;
         if (!pdf) throw new Error(t('pdfUnavailable'));
-        const config = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '' };
+        const config = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '', date: todayMY() };
         // Contract: downloadChecklist(batch, apps, kind, config) -> Promise<Uint8Array> + triggers download.
         const signingTemplateBase64 = await checklistSigningTemplate(call, apps, kind);
         await pdf.downloadChecklist(b, apps, kind, { ...config, signingTemplateBase64 });
@@ -1391,7 +1419,7 @@
         const zipConfig = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '', download: false };
         const zipName = (b.title || 'service-batch') + '-' + (b.year || '') + '.zip';
         // Only the Stripe/Star kinds this batch actually needs.
-        const kinds = ['Stripe', 'Star'].filter(kind => apps.some(app => (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
+        const kinds = b.awardType === 'SpecialServiceShield' ? ['SSS'] : ['Stripe', 'Star'].filter(kind => apps.some(app => (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
         const map = {};
         async function buildAwardFiles(kind) {
           const [checklist, signed, duty] = await Promise.all([
@@ -1400,10 +1428,15 @@
             gatherSignedDocs(call, b, apps, kind),
             gatherDutyDocuments(call, b, apps, kind)
           ]);
-          const folder = 'Service ' + kind + ' Applicants/';
+          const folder = kind === 'SSS' ? 'Special Service Shield Applicants/' : 'Service ' + kind + ' Applicants/';
           map[folder + pdf.batchFileName('checklist', kind, b.year)] = toBytes(checklist);
           if (signed.length) map[folder + pdf.batchFileName('application', kind, b.year)] = toBytes(await pdf.mergeDocuments(signed));
-          if (duty.length) map[folder + pdf.batchFileName('duty', kind, b.year)] = toBytes(await pdf.mergeDocuments(duty));
+          const tiers = [...new Set(apps.map(app => Number(app.confirmedTier)).filter(Boolean))].sort((a, b) => a - b);
+          const dutyName = kind === 'SSS' && tiers.length ? 'Duty Records (Total-SSS-' + tiers.join('-') + ').pdf' : pdf.batchFileName('duty', kind, b.year);
+          if (duty.length) map[folder + dutyName] = toBytes(await pdf.mergeDocuments(duty));
+          if (kind === 'SSS' && b.includeCoverLetter !== false && typeof pdf.generateSSSCoverLetter === 'function') {
+            map[folder + pdf.batchFileName('covering', kind, b.year)] = toBytes(await pdf.generateSSSCoverLetter(b, apps, zipConfig));
+          }
         }
         await Promise.all(kinds.map(buildAwardFiles));
         if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
@@ -1415,7 +1448,8 @@
         if (!title) return;
         const year = Number(window.prompt(t('batchYearPrompt'), String(new Date().getFullYear())));
         if (!Number.isInteger(year)) return;
-        saveBatch({ year: year, title: title, applicationIds: [], remarks: '', checks: {} });
+        const isSSS = window.confirm(tr('这是 Special Service Shield 批次吗？按“取消”建立 Stripe & Star 批次。', 'Is this a Special Service Shield batch? Choose Cancel for Stripe & Star.'));
+        saveBatch({ year: year, title: title, awardType: isSSS ? 'SpecialServiceShield' : 'ServiceStripeStar', includeCoverLetter: true, applicationIds: [], remarks: '', checks: {} });
       });
       bindLangToggles(container, render);
       // Unsaved-edit tracking: any input in the detail form marks the list dirty

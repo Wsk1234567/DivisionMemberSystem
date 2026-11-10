@@ -249,6 +249,114 @@
     return doc.save();
   }
 
+  function sssColour(tier) {
+    return ({ 100: 'Green', 200: 'Blue', 500: 'Purple', 750: 'Silver', 1000: 'Emas' })[Number(tier)] || '';
+  }
+
+  async function copyPrivateOfficer(doc, page, templateBase64, signatureTarget, identityTarget) {
+    if (!templateBase64) return;
+    const sourceDoc = await getLib().PDFDocument.load(b64ToBytes(templateBase64));
+    const source = sourceDoc.getPage(0);
+    const signature = await doc.embedPage(source, { left: 59, bottom: 139, right: 235, top: 196 });
+    const identity = await doc.embedPage(source, { left: 134, bottom: 80, right: 397, top: 111 });
+    page.drawPage(signature, signatureTarget);
+    page.drawPage(identity, identityTarget);
+  }
+
+  async function generateSSSApplication(application, config) {
+    const { PDFDocument, rgb, StandardFonts } = getLib();
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.44, A4_H]);
+    const font = await doc.embedFont(StandardFonts.TimesRoman);
+    const bold = await doc.embedFont(StandardFonts.TimesRomanBold);
+    const helv = await doc.embedFont(StandardFonts.Helvetica);
+    const black = rgb(0, 0, 0);
+    const app = application || {};
+    const applicant = app.applicant || {};
+    const tier = Number(app.confirmedTier || app.declaredTier);
+    const division = safeText((config && config.division) || 'SMJK Triang Combined Cadet Division');
+    const memberNumber = safeText((config && config.memberNumber) || '');
+    const existing = (config && config.currentSSS) || app.currentSSS || {};
+    const line = (x1, y1, x2, y2, width) => page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: width || 0.7, color: black });
+    const text = (value, x, y, size, fnt) => page.drawText(safeText(value), { x, y, size: size || 10, font: fnt || font, color: black });
+    const center = (value, y, size, fnt) => { const v = safeText(value); const use = fnt || bold; page.drawText(v, { x: (595.44 - use.widthOfTextAtSize(v, size)) / 2, y, size, font: use, color: black }); };
+    const box = (x, y, checked) => { page.drawRectangle({ x, y, width: 21, height: 21, borderColor: black, borderWidth: 0.8 }); if (checked) text('X', x + 5, y + 4, 13, bold); };
+    center('ST. JOHN AMBULANS MALAYSIA', 748, 11, bold);
+    center('KAWASAN PAHANG TENGAH', 731, 11, bold);
+    text('SJAMKPT/CADET/SSS-02', 422, 780, 9, helv);
+    line(58, 712, 537, 712);
+    center('SPECIAL SERVICE SHIELD', 683, 13, bold);
+    center('APPLICATION FORM', 667, 13, bold);
+    text('Please fill in BLOCK LETTERS', 58, 630, 10, font);
+    text('Application For', 58, 601, 10, font);
+    text('Special Service Shield :', 58, 584, 10, font);
+    [100, 200, 500, 750, 1000].forEach((value, index) => { const x = 171 + index * 72; box(x, 579, tier === value); text(value + 'hrs', x + 25, 584, 9, font); });
+    text('A.  Applicant Details', 58, 545, 11, bold);
+    text('Name (as in NRIC) :', 58, 515, 10, font); line(143, 512, 535, 512);
+    text(blockLetters(applicant.name), 148, 516, 9, helv);
+    text('N.R.I.C No.          :', 58, 487, 10, font); line(142, 484, 283, 484); text(safeText(applicant.ic), 145, 488, 8, helv);
+    text('SJAM ID :', 290, 487, 10, font); line(341, 484, 394, 484); text(memberNumber, 342, 488, 8, helv);
+    text('Gender:', 405, 487, 10, font); box(449, 478, /^M(ALE)?$/i.test(applicant.gender || '')); text('Male', 473, 486, 9, font); box(510, 478, /^F(EMALE)?$/i.test(applicant.gender || '')); text('Female', 534, 486, 9, font);
+    text('Division Name       :', 58, 458, 10, font); line(143, 455, 535, 455); text(division, 147, 460, 8, helv);
+    text('Rank/Position       :', 58, 410, 10, font); line(143, 407, 350, 407); text(safeText(applicant.rank), 147, 411, 8, helv);
+    text('Date Join SJAM :', 360, 410, 10, font); text(safeText(applicant.joined), 447, 410, 8, helv);
+    text('Contact No.          : (+60)', 58, 382, 10, font); line(177, 379, 327, 379); text(safeText(applicant.phone).replace(/^\+60/, '').replace(/^0/, ''), 180, 383, 8, helv);
+    text('Email:', 338, 382, 10, font); line(373, 379, 535, 379); text(safeText(applicant.email), 375, 383, 7, helv);
+    text('Occupation           :', 58, 354, 10, font); line(143, 351, 535, 351); text(safeText(applicant.occupation), 147, 355, 8, helv);
+    text('Total Duty Hours Accumulated On The Date of Application:', 58, 312, 10, font);
+    page.drawRectangle({ x: 338, y: 302, width: 78, height: 23, borderColor: black, borderWidth: 0.8 });
+    text(String(app.confirmedDutyHours == null ? '' : app.confirmedDutyHours), 348, 309, 10, helv); text('Hours.', 425, 312, 10, font);
+    text('Current SSS Achieved:', 58, 270, 10, font);
+    [100, 200, 500, 750].forEach((value, index) => { const x = 171 + index * 85; box(x, 261, Number(existing.tier) === value); text(value + 'hrs/' + sssColour(value), x + 24, 269, 8, font); });
+    text('Certificate Number/Reference:', 58, 228, 10, font); text(safeText(existing.certificate || ''), 205, 228, 9, helv);
+    text('(OIC/Teacher Signature)', 59, 92, 10, bold);
+    text('Name', 58, 64, 9, bold); text('Division', 58, 50, 9, bold); text('Date', 58, 36, 9, bold);
+    await copyPrivateOfficer(doc, page, config && config.templateBase64, { x: 59, y: 82, width: 176, height: 57 }, { x: 126, y: 28, width: 263, height: 31 });
+    if (config && config.signingDate) text(String(config.signingDate).split('-').reverse().join('/'), 132, 36, 8, helv);
+    return doc.save();
+  }
+
+  async function generateSSSChecklist(batch, config) {
+    const { PDFDocument, rgb, StandardFonts } = getLib();
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.44, A4_H]);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+    const black = rgb(0, 0, 0);
+    const text = (v, x, y, size, f) => page.drawText(safeText(v), { x, y, size: size || 9, font: f || font, color: black });
+    const center = (v, y, size) => page.drawText(v, { x: (595.44 - bold.widthOfTextAtSize(v, size)) / 2, y, size, font: bold, color: black });
+    const line = (x1, y1, x2, y2) => page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.7, color: black });
+    text('SJAMKPT/CADET/SSS-01', 412, 785, 9);
+    center('ST. JOHN AMBULANS MALAYSIA', 720, 12); center('KAWASAN PAHANG TENGAH', 703, 12);
+    center('APPLICATION FOR CADET SPECIAL SERVICE SHIELD', 640, 12); center('CHECKLIST', 608, 12);
+    text('Date:', 405, 570, 10, bold); page.drawRectangle({ x: 438, y: 559, width: 98, height: 24, borderColor: black, borderWidth: 0.8 });
+    text(safeText((config && config.date) || ''), 444, 567, 8);
+    const rows = [['covering','Division Covering Letter'],['support','Support Document / Letter'],['applicationForms','Application Form (SJAMKPT/CADET/SSS-02)'],['dutyBook','Duty Book : (Completed)'],['dutyDetails','    - Applicant Details (Front Page)'],['typeHours','    - Type of Duty & Duty Hours'],['approvedSigned','    - Duty Hours approved/signed'],['totalHours','    - State Total Duty Hours Completed']];
+    const left = 72, top = 540, rowH = 24, cols = [72,108,356,392,428,537];
+    for (let i = 0; i <= rows.length + 1; i++) line(left, top - i * rowH, 537, top - i * rowH);
+    cols.forEach(x => line(x, top, x, top - (rows.length + 1) * rowH));
+    text('No.', 80, top - 17, 9, bold); text('ITEM', 220, top - 17, 9, bold); text('YES', 362, top - 17, 9, bold); text('NO', 400, top - 17, 9, bold); text('COMMENT', 454, top - 17, 9, bold);
+    const checks = (batch && batch.checks) || {};
+    rows.forEach(([key,label], index) => { const y = top - (index + 2) * rowH + 8; if (index < 4) text(String(index + 1) + '.', 84, y, 9); text(label, 113, y, 8); if (checks[key] === 'Y') text('X', 369, y, 11, bold); if (checks[key] === 'N') text('X', 404, y, 11, bold); });
+    text('(OIC/Teacher Signature)', 72, 190, 10, bold); text('Name       :', 72, 154, 9, bold); text('Division   :', 72, 140, 9, bold); text('Date         :', 72, 126, 9, bold);
+    await copyPrivateOfficer(doc, page, config && config.signingTemplateBase64, { x: 72, y: 180, width: 176, height: 57 }, { x: 140, y: 118, width: 263, height: 31 });
+    return doc.save();
+  }
+
+  async function generateSSSCoverLetter(batch, applications, config) {
+    const { PDFDocument, rgb, StandardFonts } = getLib();
+    const doc = await PDFDocument.create(); const page = doc.addPage([595.44, A4_H]);
+    const font = await doc.embedFont(StandardFonts.Helvetica); const bold = await doc.embedFont(StandardFonts.HelveticaBold); const black = rgb(0,0,0);
+    const letter = Object.assign({ recipient: 'Mr Phang Kwok Kheun', recipientTitle: 'Area Staff Officer (Cadets)', organization: 'St. John Ambulans Malaysia', area: 'Kawasan Pahang Tengah', sender: 'JDO Wong Shan Kang', phone: '011-20836398', division: 'SMJK Triang Combined Cadet Division', subject: 'Applies Special Service Shield', intro: 'With the above Subject Matters, I would like to apply Special Service Shield for cadets who fulfill the requirements.', closing: 'Looking forward to hearing from you soon.' }, batch && batch.coverLetter || {});
+    const text = (v,x,y,size,f) => page.drawText(safeText(v), { x,y,size:size||10,font:f||font,color:black });
+    let y=780; [letter.recipient,letter.recipientTitle,letter.organization,letter.area,'','Dear Sir,','', 'RE: ' + letter.subject + ' (' + (batch.title || batch.year || '') + ')'].forEach((v,i)=>{ if(v) text(v,58,y,10,i===7?bold:font); y-=17; });
+    y-=8; [letter.intro,'','Attachment for your review:','- Checklist (SJAMKPT/CADET/SSS-01)','- ' + applications.length + ' application letters (SJAMKPT/CADET/SSS-02)','- Duty records of applicants'].forEach(v=>{ if(v) text(v,58,y,9); y-=17; });
+    y-=8; text('And below are the details:',58,y,9); y-=20;
+    [100,200,500,750,1000].forEach(tier=>{ const count=applications.filter(a=>Number(a.confirmedTier)===tier).length; if(count){ text('- ' + tier + ' Duty Hours (Special Service Shield) - ' + count + ' cadet' + (count===1?'':'s'),58,y,9); y-=17; } });
+    y-=10; [letter.closing,'','For any further information, please do not hesitate to contact me at ' + letter.phone + '. Thank you.','',letter.sender,letter.organization,letter.area,letter.division].forEach(v=>{ if(v) text(v,58,y,9); y-=17; });
+    return doc.save();
+  }
+
   async function mergeDocuments(items) {
     const PDFLib = getLib();
     const { PDFDocument } = PDFLib;
@@ -282,6 +390,7 @@
   }
 
   async function generateSigned(application, kind, config) {
+    if (kind === 'SSS') return generateSSSApplication(application, config || {});
     if (!['Stripe', 'Star'].includes(kind) || !config || !config.templateBase64) {
       throw new Error('Private signed application template is missing.');
     }
@@ -304,6 +413,11 @@
   }
 
   function batchFileName(type, kind, year) {
+    if (kind === 'SSS') {
+      if (type === 'duty') return 'Duty Records (Total-SSS).pdf';
+      if (type === 'covering') return 'Covering Letter - SSS ' + year + '.pdf';
+      return 'SJAMKPT CADET SSS-' + (type === 'checklist' ? '01' : '02') + '.pdf';
+    }
     const star = kind === 'Star';
     if (type === 'duty') return (star ? 'Duty Record ' : 'Duty Records ') + year + ' (Service ' + kind + ').pdf';
     const code = (star ? 'SSTR' : 'SS') + (type === 'checklist' ? '-01' : '-02');
@@ -311,7 +425,7 @@
   }
 
   async function downloadChecklist(batch, applications, kind, config) {
-    const bytes = await fillChecklist(batch, applications, kind, config);
+    const bytes = kind === 'SSS' ? await generateSSSChecklist(batch, config || {}) : await fillChecklist(batch, applications, kind, config);
     const fileName = batchFileName('checklist', kind, batch.year);
     if (config && config.download === false) return bytes;
     if (typeof Blob !== 'undefined' && typeof document !== 'undefined') {
@@ -350,6 +464,6 @@
     return out instanceof Uint8Array ? out : new Uint8Array(out);
   }
 
-  root.KPTServicePDF = { generateSigned, download, downloadChecklist, batchFileName, mergeDocuments, mergeAndDownload, zipFiles };
+  root.KPTServicePDF = { generateSigned, generateSSSApplication, generateSSSChecklist, generateSSSCoverLetter, download, downloadChecklist, batchFileName, mergeDocuments, mergeAndDownload, zipFiles };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTServicePDF;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

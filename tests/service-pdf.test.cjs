@@ -28,6 +28,18 @@ async function makePdf(text) {
   return doc.save();
 }
 
+test('SSS generators create clean one-page official documents', async () => {
+  const app = { applicant: { name: 'TEST CADET', ic: '001122-33-4455', gender: 'Female' }, confirmedTier: 750, confirmedDutyHours: 751 };
+  const application = await KPTServicePDF.generateSSSApplication(app, { division: 'TEST DIVISION', memberNumber: '00123', signingDate: '2026-11-10' });
+  const checklist = await KPTServicePDF.generateSSSChecklist({ checks: {} }, { date: '2026-11-10' });
+  const cover = await KPTServicePDF.generateSSSCoverLetter({ title: 'TCCD 2026-1', year: 2026, coverLetter: {} }, [app], {});
+  for (const bytes of [application, checklist, cover]) {
+    const doc = await global.PDFLib.PDFDocument.load(bytes);
+    assert.equal(doc.getPageCount(), 1);
+    assert.ok(bytes.length > 1000);
+  }
+});
+
 test('mergeDocuments: empty array throws clear error', async () => {
   await assert.rejects(
     () => KPTServicePDF.mergeDocuments([]),

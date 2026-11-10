@@ -1071,7 +1071,7 @@ function rpcInternal_(request, apiEmail) {
         const app = (state.serviceApplications || []).find(a => a.id === request.applicationId);
         if (!app) throw new Error('Application not found.');
         if (request.version == null || Number(request.version) !== app.version) throw new Error('Conflict: application changed. Reload first.');
-        const needed = KPT.serviceRequiredSignedKinds(app.confirmedYear);
+        const needed = KPT.serviceRequiredSignedKinds(app.confirmedYear, app.awardType);
         return { ok: true, data: serviceGetTemplates_(needed) };
       }
       if (request.action === 'serviceAttachGenerated') {

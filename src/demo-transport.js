@@ -597,7 +597,7 @@
         const app = (state.serviceApplications || []).find(row => row.id === request.applicationId);
         if (!app || app.version !== Number(request.version)) throw new Error('Application changed. Reload first.');
         const templates = {};
-        for (const kind of KPT.serviceRequiredSignedKinds(app.confirmedYear)) {
+        for (const kind of KPT.serviceRequiredSignedKinds(app.confirmedYear, app.awardType)) {
           const key = kind === 'signedStar' ? 'star' : 'stripe';
           const source = window.SERVICE_PDF_TEMPLATES && window.SERVICE_PDF_TEMPLATES[key];
           if (!source || !window.PDFLib) throw new Error('Demo form unavailable.');
@@ -606,7 +606,7 @@
           const font = await doc.embedFont(window.PDFLib.StandardFonts.Helvetica);
           page.drawText('PREVIEW ONLY - FICTIONAL SIGNATURE', { x: 60, y: 155, size: 10, font });
           doc.getForm().createTextField('SigningDate').addToPage(page, { x: 139, y: 72, width: 80, height: 13 });
-          templates[key === 'star' ? 'Star' : 'Stripe'] = await doc.saveAsBase64();
+          templates[kind === 'signedSSS' ? 'SSS' : key === 'star' ? 'Star' : 'Stripe'] = await doc.saveAsBase64();
         }
         return { templates };
       }

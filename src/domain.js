@@ -51,7 +51,7 @@
     [5, 'Citizenship'], [5, 'Living Skills'], [5, 'Cookery and Nutrition'], [5, 'Do-It-Yourself'], [5, 'Cadet Leadership & Training Course']
   ].forEach(([category, name], index) => addRecommended('PROBADGE_' + String(index + 1).padStart(2, '0'), 100 + index, 'Award', 'Probadge', name, 'Category ' + category));
   ['Lance Corporal', 'Corporal', 'Sergeant', 'Cadet Leader'].forEach((level, index) => addRecommended('PROMOTION_' + String(index + 1), 200 + index, 'Award', 'Promotion', 'Promotion', level));
-  [[100, 'Green'], [200, 'Blue'], [500, 'Purple'], [700, 'Silver'], [1000, 'Emas']].forEach(([hours, colour], index) => addRecommended('SSS_' + hours, 300 + index, 'Award', 'Special Service Shield', 'Special Service Shield', 'SSS ' + hours + ' - ' + colour, 'lifetimeDutyHours', hours));
+  [[100, 'Green'], [200, 'Blue'], [500, 'Purple'], [750, 'Silver'], [1000, 'Emas']].forEach(([hours, colour], index) => addRecommended('SSS_' + hours, 300 + index, 'Award', 'Special Service Shield', 'Special Service Shield', 'SSS ' + hours + ' - ' + colour, 'lifetimeDutyHours', hours));
   ['1st Year - 1 Black-and-White Stripe', '2nd Year - 2 Black-and-White Stripes', '3rd Year - 1 Service Star', '4th Year - 1 Service Star + 1 Black-and-White Stripe', '5th Year - 2 Service Stars'].forEach((level, index) => addRecommended('SERVICE_YEAR_' + (index + 1), 400 + index, 'Award', 'Service Stripe & Star', 'Service Stripe & Star', level, 'efficientYears', index + 1));
   const copy = value => JSON.parse(JSON.stringify(value));
   const str = value => String(value == null ? '' : value).trim();
@@ -75,6 +75,8 @@
     state.finAttachments = Array.isArray(state.finAttachments) ? state.finAttachments : [];
     state.serviceApplications = Array.isArray(state.serviceApplications) ? state.serviceApplications : [];
     state.serviceBatches = Array.isArray(state.serviceBatches) ? state.serviceBatches : [];
+    state.serviceApplications = state.serviceApplications.map(row => Object.assign({ awardType: 'ServiceStripeStar', declaredTier: null, confirmedTier: null, confirmedDutyHours: null, dutyConfirmed: false }, row));
+    state.serviceBatches = state.serviceBatches.map(row => Object.assign({ awardType: 'ServiceStripeStar', includeCoverLetter: true, coverLetter: {} }, row));
     tables.forEach(table => { if (!Array.isArray(state[table])) state[table] = []; });
     state.Catalog = (state.Catalog || []).map((row, index) => Object.assign({ code: '', sortOrder: index + 1, eligibilityMetric: '', eligibilityThreshold: null }, row));
     state.Awards = (state.Awards || []).map(row => {
@@ -923,6 +925,16 @@
   function applyRecommendedSetup(original, context) {
     const state = upgradeState(original);
     if (context.revision !== state.revision) fail('Conflict: newer data is available. Reload before applying setup.');
+    const legacySilver = state.Catalog.find(row => row.code === 'SSS_700');
+    if (legacySilver) {
+      const referenced = state.Awards.some(award => award.catalogId === legacySilver.id);
+      if (referenced) {
+        legacySilver.archived = true;
+        legacySilver.version++;
+      } else {
+        Object.assign(legacySilver, { code: 'SSS_750', level: 'SSS 750 - Silver', eligibilityThreshold: 750, archived: false, version: legacySilver.version + 1 });
+      }
+    }
     recommendedCatalog.forEach(recommended => {
       let row = state.Catalog.find(item => item.code === recommended.code);
       if (!row) row = state.Catalog.find(item => item.kind === recommended.kind && item.category === recommended.category && item.name === recommended.name && item.level === recommended.level);
@@ -947,7 +959,11 @@
     state.Exams.forEach(row => years.add(yearOf(row.date)));
     const eligible = [];
     const members = state.Members.map(member => {
-      const lifetimeDutyHours = state.Duty.filter(row => row.memberId === member.id && row.hours !== null).reduce((total, row) => total + row.hours, 0);
+      const ledgerYears = [...state.DutyPrevious, ...state.DutyRecords].filter(row => row.memberId === member.id).map(row => Number(row.year)).filter(Number.isFinite);
+      const reportYear = ledgerYears.length ? Math.max(...ledgerYears) : null;
+      const lifetimeDutyHours = reportYear == null
+        ? state.Duty.filter(row => row.memberId === member.id && row.hours !== null).reduce((total, row) => total + row.hours, 0)
+        : dutyReportBundle(state, { memberId: member.id, year: reportYear }).cumulative;
       const efficientYears = [...years].filter(year => year && summary(state, member.id, year).efficient === 'Efficient').length;
       const issued = new Set(state.Awards.filter(row => row.memberId === member.id).map(row => row.catalogId).filter(Boolean));
       state.Catalog.filter(row => row.kind === 'Award' && !row.archived && row.eligibilityMetric && !issued.has(row.id)).sort((first, second) => first.sortOrder - second.sortOrder).forEach(catalog => {
@@ -1447,6 +1463,22 @@
     Approved: ['Recorded'],
     Recorded: []
   };
+  const SERVICE_AWARD_TYPES = ['ServiceStripeStar', 'SpecialServiceShield'];
+  const SSS_TIERS = [100, 200, 500, 750, 1000];
+  function serviceAwardType(value) {
+    const type = str(value) || 'ServiceStripeStar';
+    if (!SERVICE_AWARD_TYPES.includes(type)) fail('Invalid service award type.');
+    return type;
+  }
+  function sssTier(value, label) {
+    const tier = value == null || value === '' ? null : Number(value);
+    if (tier != null && !SSS_TIERS.includes(tier)) fail((label || 'SSS tier') + ' must be 100, 200, 500, 750, 1000 or blank.');
+    return tier;
+  }
+  function highestSssTier(hours) {
+    const value = Number(hours);
+    return SSS_TIERS.filter(tier => value >= tier).at(-1) || null;
+  }
   function serviceValidateApplicant(applicant) {
     if (!applicant || typeof applicant !== 'object') fail('Applicant data is required.');
     const name = str(applicant.name);
@@ -1467,8 +1499,11 @@
   }
   function serviceSubmit(state, request, context) {
     const applicant = serviceValidateApplicant(request.applicant);
+    const awardType = serviceAwardType(request.awardType);
     let declaredYear = request.declaredYear == null ? null : Number(request.declaredYear);
-    if (declaredYear != null && ![1, 2, 3, 4, 5].includes(declaredYear)) fail('Declared year must be 1-5 or blank.');
+    if (awardType === 'ServiceStripeStar' && declaredYear != null && ![1, 2, 3, 4, 5].includes(declaredYear)) fail('Declared year must be 1-5 or blank.');
+    if (awardType === 'SpecialServiceShield') declaredYear = null;
+    const declaredTier = awardType === 'SpecialServiceShield' ? sssTier(request.declaredTier, 'Declared SSS tier') : null;
     const clientRequestId = str(request.clientRequestId).slice(0, 100);
     if (!clientRequestId) fail('Request ID is required.');
     state.serviceApplications = Array.isArray(state.serviceApplications) ? state.serviceApplications : [];
@@ -1480,8 +1515,13 @@
       createdAt: context.now,
       clientRequestId,
       applicant,
+      awardType,
       declaredYear,
+      declaredTier,
       confirmedYear: null,
+      confirmedTier: null,
+      confirmedDutyHours: null,
+      dutyConfirmed: false,
       memberId: '',
       year: new Date(Date.parse(context.now) + 8 * 60 * 60 * 1000).getUTCFullYear(),
       status: 'PendingSecretary',
@@ -1508,6 +1548,7 @@
     }
     // Phase 1: validate ALL changes on a temp copy before mutating
     const draft = copy(app);
+    draft.awardType = serviceAwardType(draft.awardType);
     let contentChanged = false;
     if (input.applicant && typeof input.applicant === 'object') {
       const corrected = serviceValidateApplicant(input.applicant);
@@ -1532,6 +1573,11 @@
       if (cy !== app.confirmedYear) contentChanged = true;
       draft.confirmedYear = cy;
     }
+    if (input.declaredTier !== undefined) {
+      const tier = draft.awardType === 'SpecialServiceShield' ? sssTier(input.declaredTier, 'Declared SSS tier') : null;
+      if (tier !== app.declaredTier) contentChanged = true;
+      draft.declaredTier = tier;
+    }
     if (input.year !== undefined) {
       const y = Number(input.year);
       if (!Number.isInteger(y) || y < 2000 || y > 2100) fail('Year must be 2000-2100.');
@@ -1548,6 +1594,20 @@
     if (input.remarks !== undefined) {
       const r = str(input.remarks).slice(0, 2000);
       draft.remarks = r;
+    }
+    if (draft.awardType === 'SpecialServiceShield' && draft.memberId) {
+      const report = dutyReportBundle(state, { memberId: draft.memberId, year: draft.year });
+      const tier = highestSssTier(report.cumulative);
+      const prior = (state.Awards || []).map(award => ({ award, catalog: state.Catalog.find(row => row.id === award.catalogId) }))
+        .filter(item => item.award.memberId === draft.memberId && item.catalog && item.catalog.category === 'Special Service Shield')
+        .map(item => ({ tier: Number(item.catalog.eligibilityThreshold), certificate: item.award.certificate || '' }))
+        .sort((a, b) => b.tier - a.tier)[0] || null;
+      if (draft.confirmedTier !== tier || draft.confirmedDutyHours !== report.cumulative || draft.dutyConfirmed !== report.confirmed) contentChanged = true;
+      draft.confirmedYear = null;
+      draft.confirmedTier = tier;
+      draft.confirmedDutyHours = report.cumulative;
+      draft.dutyConfirmed = report.confirmed;
+      draft.currentSSS = prior;
     }
     // Content change (not remarks) invalidates owner approval and demotes status
     if (contentChanged && ['Ready', 'Submitted'].includes(app.status)) {
@@ -1573,7 +1633,9 @@
       }
       if (!['Preparing', 'AwaitingOwner'].includes(input.documentStatus)) fail('Invalid document status.');
       if (input.documentStatus === 'AwaitingOwner') {
-        if (!draft.memberId || draft.confirmedYear == null) fail('Bind a member and confirm the Efficient year first.');
+        if (!draft.memberId) fail('Bind a member first.');
+        if (draft.awardType === 'SpecialServiceShield' && (!draft.dutyConfirmed || draft.confirmedTier == null)) fail('Confirm the Duty Record previous balance and reach an SSS tier first.');
+        if (draft.awardType === 'ServiceStripeStar' && draft.confirmedYear == null) fail('Confirm the Efficient year first.');
         if (!(draft.attachments || []).some(a => a.active && a.kind === 'duty')) fail('Upload Duty Records first.');
         serviceValidateSigned(draft, true);
       }
@@ -1612,12 +1674,14 @@
     const title = str(input.title);
     if (!title) fail('Batch title is required.');
     const applicationIds = Array.isArray(input.applicationIds) ? input.applicationIds.map(str).filter(Boolean).slice(0, 500) : [];
+    const awardType = serviceAwardType(input.awardType || (batch && batch.awardType));
     // Empty applicationIds allowed for Preparing draft; formal nodes enforce non-empty in serviceTransition
     // Validate all application IDs exist and share the same year (if any provided)
     for (const aid of applicationIds) {
       const app = state.serviceApplications.find(row => row.id === aid);
       if (!app) fail('Application ' + aid + ' not found.');
       if (Number(app.year) !== year) fail('Application ' + aid + ' has year ' + app.year + ', batch expects ' + year + '.');
+      if (serviceAwardType(app.awardType) !== awardType) fail('A batch cannot mix Service Stripe & Star and Special Service Shield applications.');
     }
     // Same app cannot join multiple unfinished batches
     const finishedStatuses = ['Approved', 'Recorded', 'NeedsInfo'];
@@ -1628,13 +1692,16 @@
       if (otherBatch) fail('Application ' + aid + ' is already in unfinished batch「' + otherBatch.title + '」. Finish or remove it first.');
     }
     if (!batch) {
-      batch = { id: 'SVCB-' + context.uuid(), version: 1, year, title, applicationIds, status: 'Preparing', remarks: '', attachments: [], ownerApproved: false };
+      batch = { id: 'SVCB-' + context.uuid(), version: 1, year, title, awardType, applicationIds, status: 'Preparing', remarks: '', attachments: [], ownerApproved: false, includeCoverLetter: input.includeCoverLetter !== false, coverLetter: copy(input.coverLetter || {}) };
       state.serviceBatches.push(batch);
     } else {
       if (batch.year !== year || batch.title !== title || JSON.stringify(batch.applicationIds) !== JSON.stringify(applicationIds)) batch.ownerApproved = false;
       batch.year = year;
       batch.title = title;
+      batch.awardType = awardType;
       batch.applicationIds = applicationIds;
+      if (input.includeCoverLetter !== undefined) batch.includeCoverLetter = input.includeCoverLetter !== false;
+      if (input.coverLetter !== undefined) batch.coverLetter = copy(input.coverLetter || {});
       if (input.remarks !== undefined) batch.remarks = str(input.remarks).slice(0, 2000);
       // Save batch.checks (8 whitelist items, Y/N/blank)
       if (input.checks !== undefined) {
@@ -1665,7 +1732,8 @@
     }
     return batch.id;
   }
-  function serviceRequiredSignedKinds(year) {
+  function serviceRequiredSignedKinds(year, awardType) {
+    if (serviceAwardType(awardType) === 'SpecialServiceShield') return ['signedSSS'];
     const y = Number(year);
     if (y === 1 || y === 2) return ['signedStripe'];
     if (y === 3 || y === 5) return ['signedStar'];
@@ -1674,7 +1742,7 @@
   }
   function serviceValidateSigned(app, forReady) {
     const kinds = (app.attachments || []).filter(a => a.active).map(a => a.kind);
-    const needed = serviceRequiredSignedKinds(app.confirmedYear);
+    const needed = serviceRequiredSignedKinds(app.confirmedYear, app.awardType);
     for (const k of needed) {
       if (!kinds.includes(k)) fail('Year ' + app.confirmedYear + ' requires ' + k + ' attachment' + (forReady ? ' before approval' : ' before owner review') + '.');
     }
@@ -1708,7 +1776,10 @@
       // Ready requires: memberId, confirmedYear, duty, signed forms, ownerApproved
       if (status === 'Ready') {
         if (!app.memberId) fail('Bind a member before marking ready.');
-        if (app.confirmedYear == null) fail('Confirm the efficient year before marking ready.');
+        if (serviceAwardType(app.awardType) === 'SpecialServiceShield') {
+          if (!app.dutyConfirmed) fail('Confirm the Duty Record previous balance before marking ready.');
+          if (app.confirmedTier == null) fail('The accumulated Duty hours do not reach an SSS tier.');
+        } else if (app.confirmedYear == null) fail('Confirm the efficient year before marking ready.');
         const kinds = (app.attachments || []).filter(a => a.active).map(a => a.kind);
         if (!kinds.includes('duty')) fail('Duty records must be uploaded before marking ready.');
         serviceValidateSigned(app, true);
@@ -1748,15 +1819,18 @@
         // Validate ALL children before setting any
         for (const a of childApps) {
           if (!a.memberId) fail('Application ' + a.id + ' has no member bound.');
-          if (a.confirmedYear == null) fail('Application ' + a.id + ' has no confirmed year.');
+          if (serviceAwardType(a.awardType) === 'SpecialServiceShield') {
+            if (!a.dutyConfirmed) fail('Application ' + a.id + ' has no confirmed Duty previous balance.');
+            if (a.confirmedTier == null) fail('Application ' + a.id + ' does not reach an SSS tier.');
+          } else if (a.confirmedYear == null) fail('Application ' + a.id + ' has no confirmed year.');
           // Duty: app-level or batch-level combinedDuty
           const appKinds = (a.attachments || []).filter(x => x.active).map(x => x.kind);
           const hasDuty = appKinds.includes('duty') || batchKinds.includes('combinedDuty');
           if (!hasDuty) fail('Application ' + a.id + ' missing duty records (upload per-app or batch combinedDuty).');
           // Signed: app-level or batch-level combined signed forms
-          const needed = serviceRequiredSignedKinds(a.confirmedYear);
+          const needed = serviceRequiredSignedKinds(a.confirmedYear, a.awardType);
           for (const k of needed) {
-            const batchK = k === 'signedStripe' ? 'combinedSignedStripe' : k === 'signedStar' ? 'combinedSignedStar' : '';
+            const batchK = k === 'signedStripe' ? 'combinedSignedStripe' : k === 'signedStar' ? 'combinedSignedStar' : k === 'signedSSS' ? 'combinedSignedSSS' : '';
             const hasSigned = appKinds.includes(k) || (batchK && batchKinds.includes(batchK));
             if (!hasSigned) fail('Application ' + a.id + ' missing ' + k + ' (upload per-app or batch combined form).');
           }
@@ -1816,12 +1890,12 @@
   }
   function serviceUploadMeta(state, request, context) {
     const kind = str(request.kind);
-    const validKinds = ['duty', 'signedStripe', 'signedStar', 'covering', 'support', 'reply', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar'];
+    const validKinds = ['duty', 'signedStripe', 'signedStar', 'signedSSS', 'covering', 'support', 'reply', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar', 'combinedSignedSSS'];
     if (!validKinds.includes(kind)) fail('Invalid attachment kind: ' + kind);
     // Combined kinds only allowed on batch
     if (kind.startsWith('combined') && !request.batchId) fail('Combined forms can only be uploaded to a batch.');
     if (!kind.startsWith('combined') && request.batchId && !['covering', 'support', 'reply'].includes(kind)) {
-      fail('Per-application forms (duty/signed) must be uploaded to individual applications, not batch. Use combinedDuty/combinedSignedStripe/combinedSignedStar for batch-level.');
+      fail('Per-application forms (duty/signed) must be uploaded to individual applications, not batch. Use a combined batch attachment instead.');
     }
     const fileName = str(request.fileName).slice(0, 200);
     const mime = str(request.mime).slice(0, 100);
@@ -1895,16 +1969,16 @@
     const certificate = str(request.certificate).slice(0, 100);
     if (!date) fail('Award date is required.');
     if (app.awardDate) fail('Award already recorded for this application.');
+    const isSSS = serviceAwardType(app.awardType) === 'SpecialServiceShield';
     const cy = Number(app.confirmedYear);
-    if (![1, 2, 3, 4, 5].includes(cy)) fail('Confirmed year must be 1-5 before recording.');
-    const catalogEntry = (state.Catalog || []).find(row =>
-      row.kind === 'Award' && !row.archived &&
-      row.category === 'Service Stripe & Star' &&
-      row.code === 'SERVICE_YEAR_' + cy
-    );
-    if (!catalogEntry) fail('Catalog entry SERVICE_YEAR_' + cy + ' not found. Run System Setup first.');
+    const tier = Number(app.confirmedTier);
+    if (isSSS && !SSS_TIERS.includes(tier)) fail('Confirmed SSS tier is required before recording.');
+    if (!isSSS && ![1, 2, 3, 4, 5].includes(cy)) fail('Confirmed year must be 1-5 before recording.');
+    const catalogCode = isSSS ? 'SSS_' + tier : 'SERVICE_YEAR_' + cy;
+    const catalogEntry = (state.Catalog || []).find(row => row.kind === 'Award' && !row.archived && row.code === catalogCode);
+    if (!catalogEntry) fail('Catalog entry ' + catalogCode + ' not found. Run System Setup first.');
     const existing = (state.Awards || []).find(row => row.memberId === app.memberId && row.catalogId === catalogEntry.id);
-    if (existing) fail('This member already has the same Service Stripe & Star award' + (existing.archived ? ' (archived records still count as issued).' : '.'));
+    if (existing) fail('This member already has the same service award' + (existing.archived ? ' (archived records still count as issued).' : '.'));
     const award = {
       id: 'AWD-' + context.uuid(),
       version: 1,
@@ -1979,26 +2053,27 @@
     if (!['PendingSecretary', 'Preparing', 'NeedsInfo', 'AwaitingSignature', 'AwaitingOwner', 'Ready'].includes(app.status)) {
       fail('Cannot attach generated documents to application in status ' + app.status + '. Only pre-submit and Ready states allowed.');
     }
-    // Must have confirmed year
-    if (app.confirmedYear == null) fail('Confirm the efficient year before attaching generated documents.');
+    if (serviceAwardType(app.awardType) === 'SpecialServiceShield') {
+      if (!app.dutyConfirmed || app.confirmedTier == null) fail('Confirm the Duty Record and SSS tier before attaching generated documents.');
+    } else if (app.confirmedYear == null) fail('Confirm the efficient year before attaching generated documents.');
     const files = request.files;
     if (!Array.isArray(files) || !files.length) fail('Files array is required.');
-    const validKinds = ['signedStripe', 'signedStar'];
+    const validKinds = ['signedStripe', 'signedStar', 'signedSSS'];
     const provided = [];
     for (const f of files) {
       const kind = str(f.kind);
-      if (!validKinds.includes(kind)) fail('Invalid generated file kind: ' + f.kind + '. Use signedStripe or signedStar.');
+      if (!validKinds.includes(kind)) fail('Invalid generated file kind: ' + f.kind + '.');
       if (provided.includes(kind)) fail('Duplicate generated file kind: ' + kind + '. Each kind at most once.');
       provided.push(kind);
       if (!str(f.fileName)) fail('File name is required for generated documents.');
     }
     // Must have exactly the needed kinds (no extra, no duplicate)
-    const needed = serviceRequiredSignedKinds(app.confirmedYear);
+    const needed = serviceRequiredSignedKinds(app.confirmedYear, app.awardType);
     for (const k of needed) {
-      if (!provided.includes(k)) fail('Generated documents must include ' + k + ' for year ' + app.confirmedYear + '.');
+      if (!provided.includes(k)) fail('Generated documents must include ' + k + '.');
     }
     for (const k of provided) {
-      if (!needed.includes(k)) fail('Unexpected generated file kind: ' + k + '. Year ' + app.confirmedYear + ' requires: ' + needed.join(', ') + '.');
+      if (!needed.includes(k)) fail('Unexpected generated file kind: ' + k + '. Required: ' + needed.join(', ') + '.');
     }
     // Real calendar date validation (signingDate already extracted above)
     if (!signingDate) fail('Signing date is required.');
@@ -2203,7 +2278,7 @@
     finish(state, context.actor, 'Save duty proof: ' + proof.id, context.now);
     return { state, proof };
   }
-  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, dutyWorkspaceProjection, dutyReportBundle, dutyImportRows, dutyRecordSave, dutyRecordRemove, dutyPreviousSave, dutyPreviousRemove, dutyProofSave, SERVICE_STATUSES, SERVICE_TRANSITIONS, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceRemoveAttachment, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
+  const api = { fields, tables, categories, statuses, results, forms, races, recommendedCatalog, docActivityTypes, docItemStatuses, docPackageStatuses, defaultDocItems, empty, upgradeState, normalize, validateState, mutate, summary, setupPreview, applyRecommendedSetup, awardEligibility, projectPublic, projectForActor, publicSearch, importRows, recycleBundle, recycleDelete, allMembersBundle, recycleDeleteAllMembers, restoreTrash, purgeTrash, copy, finish, norm, icKey, saveFinanceBook, money, appendHubEvents, hubNotificationFeed, hubKinds, uploadFinanceAttachment, removeFinanceAttachment, dutyWorkspaceProjection, dutyReportBundle, dutyImportRows, dutyRecordSave, dutyRecordRemove, dutyPreviousSave, dutyPreviousRemove, dutyProofSave, SERVICE_STATUSES, SERVICE_TRANSITIONS, SERVICE_AWARD_TYPES, SSS_TIERS, highestSssTier, serviceSubmit, serviceListProjection, serviceSave, serviceSaveBatch, serviceTransition, serviceUploadMeta, serviceRemoveAttachment, serviceAward, serviceRequiredSignedKinds, serviceSummary, servicePreserveReferenceCounters, serviceGenerateReference, serviceAttachGenerated };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KPT = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

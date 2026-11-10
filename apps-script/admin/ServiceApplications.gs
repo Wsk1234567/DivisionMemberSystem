@@ -43,13 +43,13 @@ function serviceAnonymousSubmit_(request) {
 
 function serviceValidateUpload_(request) {
   const kind = String(request.kind || '');
-  const validKinds = ['duty', 'signedStripe', 'signedStar', 'covering', 'support', 'reply', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar'];
+  const validKinds = ['duty', 'signedStripe', 'signedStar', 'signedSSS', 'covering', 'support', 'reply', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar', 'combinedSignedSSS'];
   if (!validKinds.includes(kind)) throw new Error('Invalid attachment kind.');
   const fileName = String(request.fileName || '').slice(0, 200);
   if (!fileName) throw new Error('File name is required.');
   const mime = String(request.mime || '').slice(0, 100);
   // Signed forms, duty, and combined variants must be PDF
-  const pdfRequired = ['duty', 'signedStripe', 'signedStar', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar'];
+  const pdfRequired = ['duty', 'signedStripe', 'signedStar', 'signedSSS', 'combinedDuty', 'combinedSignedStripe', 'combinedSignedStar', 'combinedSignedSSS'];
   if (pdfRequired.includes(kind) && !/pdf$/i.test(fileName)) {
     throw new Error('Duty records, signed forms and combined forms must be PDF files.');
   }
@@ -114,6 +114,15 @@ function serviceGetTemplates_(neededKinds) {
         const file = DriveApp.getFileById(stripeId);
         templates.Stripe = Utilities.base64Encode(file.getBlob().getBytes());
       } catch (e) { templates.Stripe = null; }
+    }
+  }
+  if (kinds.includes('signedSSS')) {
+    const stripeId = props.getProperty('SERVICE_STRIPE_TEMPLATE_ID');
+    if (stripeId) {
+      try {
+        const file = DriveApp.getFileById(stripeId);
+        templates.SSS = Utilities.base64Encode(file.getBlob().getBytes());
+      } catch (e) { templates.SSS = null; }
     }
   }
   if (kinds.includes('signedStar')) {
