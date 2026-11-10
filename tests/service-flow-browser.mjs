@@ -236,11 +236,18 @@ async function makePdfBytes(title) {
     assert.ok(zipDownloads.length >= 1, 'a ZIP was downloaded');
     const zipPath = await zipDownloads[zipDownloads.length - 1].path();
     const zipBytes = await import('node:fs').then(fs => fs.readFileSync(zipPath));
-    const zipText = zipBytes.toString('latin1');
-    for (const name of [
-      'SJAMKPT CADET SS-01.pdf', 'SJAMKPT CADET SS-02.pdf', 'Duty Records 2026 (Service Stripe).pdf',
-      'SJAMKPT CADET SSTR-01.pdf', 'SJAMKPT CADET SSTR-02.pdf', 'Duty Record 2026 (Service Star).pdf'
-    ]) assert.ok(zipText.includes(name), 'ZIP contains ' + name);
+    const { CFB } = require('../vendor/xlsx.full.min.js');
+    const archive = CFB.read(zipBytes, { type: 'buffer' });
+    const files = archive.FullPaths.filter((name, index) => archive.FileIndex[index].type === 2 && !name.endsWith('/\x01Sh33tJ5'))
+      .map(name => name.slice(name.indexOf('/') + 1)).sort();
+    assert.deepEqual(files, [
+      'Service Stripe Applicants/SJAMKPT CADET SS-01.pdf',
+      'Service Stripe Applicants/SJAMKPT CADET SS-02.pdf',
+      'Service Stripe Applicants/Duty Records 2026 (Service Stripe).pdf',
+      'Service Star Applicants/SJAMKPT CADET SSTR-01.pdf',
+      'Service Star Applicants/SJAMKPT CADET SSTR-02.pdf',
+      'Service Star Applicants/Duty Record 2026 (Service Star).pdf'
+    ].sort());
 
     // ---- 9) Secretary marks the batch ready, without switching to Owner ----
     await secretary.locator('[data-svc-batch-status][data-svc-to="Ready"]').click();

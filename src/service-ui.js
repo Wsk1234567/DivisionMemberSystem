@@ -391,32 +391,6 @@
     for (let i = 0; i < arr.length; i += 0x8000) bin += String.fromCharCode.apply(null, arr.subarray(i, i + 0x8000));
     return btoa(bin);
   }
-  // Private duty proofs backing the Duty Record PDF. One proof per activity,
-  // deduped across the whole batch so the same proof is never packed twice.
-  // Only confirmed reports contribute proofs (未确认阻止正式生成).
-  function gatherDutyProofs(call, applications) {
-    const seen = new Set();
-    const jobs = applications.map(app => {
-      if (!app || !app.memberId || !app.year) return Promise.resolve([]);
-      return Promise.resolve(call({ action: 'dutyReportBundle', memberId: app.memberId, year: app.year })).then(bundle => {
-        const report = bundle && bundle.report;
-        if (!report || !report.confirmed) return [];
-        const proofs = bundle.proofs || [];
-        const unavailable = proofs.find(proof => !proof.base64);
-        if (unavailable) {
-          const line = report.lines.find(row => row.activityId === unavailable.activityId);
-          const activity = line ? (line.activityName || line.dutyType || line.activityId) : unavailable.activityId;
-          throw new Error('Cannot read Duty proof for ' + activity + ' (' + unavailable.fileName + '). Re-upload the proof and retry.');
-        }
-        return proofs.filter(p => p.activityId && !seen.has(p.activityId)).map(p => {
-          seen.add(p.activityId);
-          const base = String(p.fileName || 'proof').replace(/[\\/:*?"<>|]/g, '_');
-          return { filename: 'proofs/' + String(p.activityId).replace(/[\\/:*?"<>|]/g, '_') + '-' + base, bytes: toBytes(p.base64) };
-        });
-      });
-    });
-    return Promise.all(jobs).then(lists => [].concat.apply([], lists));
-  }
   // Collect the Officer-signed PDFs for one kind. 4th-year applications
   // legitimately appear in BOTH the Stripe and the Star merge.
   // Collect the Officer-signed PDFs for one kind. Batch-level combined uploads
@@ -476,31 +450,6 @@
       return { bytes: toBytes(file.base64), filename: file.fileName || att.fileName };
     }));
   }
-  // Supplementary files retain their original names in the ZIP.
-  function gatherExtraAttachments(call, batch, applications) {
-    const extraKinds = ['covering', 'support', 'reply'];
-    const sources = [];
-    (batch.attachments || []).forEach(att => {
-      if (extraKinds.includes(att.kind) && att.id && att.active !== false) sources.push({ id: att.id, fileName: att.fileName, prefix: 'batch' });
-    });
-    applications.forEach(app => {
-      (app.attachments || []).forEach(att => {
-        if (extraKinds.includes(att.kind) && att.id && att.active !== false) {
-          const name = (app.applicant && app.applicant.name) || app.id;
-          sources.push({ id: att.id, fileName: att.fileName, prefix: name });
-        }
-      });
-    });
-    return Promise.all(sources.map(src => Promise.resolve(call({ action: 'serviceDownload', attachmentId: src.id }))
-      .then(file => {
-        if (!file || !file.base64) throw new Error('Attachment download failed: ' + (src.fileName || src.id));
-        const bytes = toBytes(file.base64);
-        const base = (file.fileName || src.fileName || 'attachment').replace(/[\\/:*?"<>|]/g, '_');
-        const folder = String(src.prefix || '').replace(/[\\/:*?"<>|]/g, '_');
-        return { bytes: bytes, filename: folder ? folder + '/' + base : base };
-      })));
-  }
-
   // ---------- Lightweight summary polling (sidebar badges) ----------
   // Agent2 contract: KPTTransport.call({action:'serviceSummary'}) ->
   //   {unreadCount, ownerReviewCount, changeKey} — nothing else.
@@ -1015,7 +964,11 @@
       const kinds = ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
         (batch.applicationIds || []).includes(app.id) && (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
       const buttons = pdf ? kinds.flatMap(kind => [['pdf', 'checklist'], ['merge', 'application'], ['duty', 'duty']].map(([action, type]) => {
-        const name = pdf.batchFileName(type, kind, batch.year);
+        const file = pdf.batchFileName(type, kind, batch.year).replace(/\.pdf$/, '');
+        const formCode = (kind === 'Star' ? 'SSTR-' : 'SS-') + (type === 'checklist' ? '01' : '02');
+        const official = kind === 'Star' && type === 'checklist' ? file : 'SJAMKPT/CADET/' + formCode;
+        const name = type === 'duty' ? 'Duty records of applicants (' + kind + ') (' + file + ')'
+          : (type === 'checklist' ? 'Checklist' : tr('合并申请表', 'Combined application forms')) + ' (' + kind + ') - (' + official + ')';
         return '<button type="button" class="button small" data-svc-batch-' + action + '="' + id + '" data-svc-kind="' + kind + '">' + escape(name) + '</button>';
       })).join('') : '';
       return '<div class="svc-downloads"><button type="button" class="button primary" data-svc-batch-zip="' + id + '">' + escape(t('zipBatch')) + '</button>'
@@ -1418,18 +1371,12 @@
             gatherSignedDocs(call, b, apps, kind),
             gatherDutyDocuments(call, b, apps, kind)
           ]);
-          map[pdf.batchFileName('checklist', kind, b.year)] = toBytes(checklist);
-          if (signed.length) map[pdf.batchFileName('application', kind, b.year)] = toBytes(await pdf.mergeDocuments(signed));
-          if (duty.length) map[pdf.batchFileName('duty', kind, b.year)] = toBytes(await pdf.mergeDocuments(duty));
+          const folder = 'Service ' + kind + ' Applicants/';
+          map[folder + pdf.batchFileName('checklist', kind, b.year)] = toBytes(checklist);
+          if (signed.length) map[folder + pdf.batchFileName('application', kind, b.year)] = toBytes(await pdf.mergeDocuments(signed));
+          if (duty.length) map[folder + pdf.batchFileName('duty', kind, b.year)] = toBytes(await pdf.mergeDocuments(duty));
         }
-        Promise.all([
-          Promise.all(kinds.map(buildAwardFiles)),
-          gatherExtraAttachments(call, b, apps),
-          gatherDutyProofs(call, apps)
-        ]).then(([, extras, dutyProofs]) => {
-          extras.concat(dutyProofs).forEach((file, index) => {
-            map[file.filename || ('attachment-' + (index + 1))] = file.bytes;
-          });
+        Promise.all(kinds.map(buildAwardFiles)).then(() => {
           if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
           downloadFile(pdf.zipFiles(map), zipName, 'application/zip');
         }).catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
@@ -1475,7 +1422,6 @@
     memberNumberFor: memberNumberFor,
     memberOptionLabel: memberOptionLabel,
     pdfKindsFor: pdfKindsFor,
-    gatherDutyProofs: gatherDutyProofs,
     statusLabel: statusLabel,
     TRANSITIONS: TRANSITIONS
   };
