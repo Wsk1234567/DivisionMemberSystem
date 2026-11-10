@@ -1329,39 +1329,52 @@
         });
         saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks });
       }));
-      container.querySelectorAll('[data-svc-batch-pdf]').forEach(btn => btn.addEventListener('click', () => {
+      function onBatchDownload(selector, work) {
+        container.querySelectorAll(selector).forEach(btn => btn.addEventListener('click', () => {
+          if (busy) return;
+          const label = btn.textContent;
+          const loading = tr('下载中…', 'Downloading…');
+          btn.textContent = loading;
+          btn.disabled = true;
+          operate('3', loading, async () => {
+            await work(btn);
+            notice(tr('文件已开始下载。', 'Download started.'), false, '3');
+          }).finally(() => {
+            btn.textContent = label;
+            btn.disabled = false;
+          });
+        }));
+      }
+      onBatchDownload('[data-svc-batch-pdf]', async btn => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-pdf'));
         const kind = btn.getAttribute('data-svc-kind') || 'Stripe';
-        if (!b) return;
+        if (!b) throw new Error(tr('找不到批次。', 'Batch not found.'));
         const apps = state.applications.filter(app => (b.applicationIds || []).includes(app.id));
         const pdf = root.KPTServicePDF;
-        if (!pdf) { notice(t('pdfUnavailable'), true); return; }
+        if (!pdf) throw new Error(t('pdfUnavailable'));
         const config = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '' };
         // Contract: downloadChecklist(batch, apps, kind, config) -> Promise<Uint8Array> + triggers download.
-        checklistSigningTemplate(call, apps, kind)
-          .then(signingTemplateBase64 => pdf.downloadChecklist(b, apps, kind, { ...config, signingTemplateBase64 }))
-          .catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
-      }));
+        const signingTemplateBase64 = await checklistSigningTemplate(call, apps, kind);
+        await pdf.downloadChecklist(b, apps, kind, { ...config, signingTemplateBase64 });
+      });
       // Merged Officer-signed PDF + full ZIP package per kind.
-      container.querySelectorAll('[data-svc-batch-merge], [data-svc-batch-duty]').forEach(btn => btn.addEventListener('click', () => {
+      onBatchDownload('[data-svc-batch-merge], [data-svc-batch-duty]', async btn => {
         const duty = Boolean(btn.dataset.svcBatchDuty);
         const b = state.batches.find(row => row.id === (btn.dataset.svcBatchDuty || btn.dataset.svcBatchMerge));
         const kind = btn.getAttribute('data-svc-kind') || 'Stripe';
-        if (!b) return;
+        if (!b) throw new Error(tr('找不到批次。', 'Batch not found.'));
         const pdf = root.KPTServicePDF;
-        if (!pdf || typeof pdf.mergeAndDownload !== 'function') { notice(t('pdfUnavailable'), true); return; }
-        Promise.resolve().then(() => (duty ? gatherDutyDocuments : gatherSignedDocs)(call, b, state.applications, kind)).then(items => {
-          if (!items.length) throw new Error(t('pdfNoSigned'));
-          // Contract: mergeAndDownload(items, fileName) -> Promise + downloads the merged PDF.
-          const mergeName = pdf.batchFileName(duty ? 'duty' : 'application', kind, b.year);
-          return pdf.mergeAndDownload(items, mergeName);
-        }).catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
-      }));
-      container.querySelectorAll('[data-svc-batch-zip]').forEach(btn => btn.addEventListener('click', () => {
+        if (!pdf || typeof pdf.mergeAndDownload !== 'function') throw new Error(t('pdfUnavailable'));
+        const items = await (duty ? gatherDutyDocuments : gatherSignedDocs)(call, b, state.applications, kind);
+        if (!items.length) throw new Error(t('pdfNoSigned'));
+        const mergeName = pdf.batchFileName(duty ? 'duty' : 'application', kind, b.year);
+        await pdf.mergeAndDownload(items, mergeName);
+      });
+      onBatchDownload('[data-svc-batch-zip]', async btn => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-zip'));
-        if (!b) return;
+        if (!b) throw new Error(tr('找不到批次。', 'Batch not found.'));
         const pdf = root.KPTServicePDF;
-        if (!pdf || typeof pdf.zipFiles !== 'function') { notice(t('pdfUnavailable'), true); return; }
+        if (!pdf || typeof pdf.zipFiles !== 'function') throw new Error(t('pdfUnavailable'));
         const apps = state.applications.filter(app => (b.applicationIds || []).includes(app.id));
         // ZIP path must not fire extra single-file downloads — download:false.
         const zipConfig = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '', download: false };
@@ -1381,11 +1394,10 @@
           if (signed.length) map[folder + pdf.batchFileName('application', kind, b.year)] = toBytes(await pdf.mergeDocuments(signed));
           if (duty.length) map[folder + pdf.batchFileName('duty', kind, b.year)] = toBytes(await pdf.mergeDocuments(duty));
         }
-        Promise.all(kinds.map(buildAwardFiles)).then(() => {
-          if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
-          downloadFile(pdf.zipFiles(map), zipName, 'application/zip');
-        }).catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
-      }));
+        await Promise.all(kinds.map(buildAwardFiles));
+        if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
+        downloadFile(pdf.zipFiles(map), zipName, 'application/zip');
+      });
       const newBatch = container.querySelector('[data-svc-new-batch]');
       if (newBatch) newBatch.addEventListener('click', () => {
         const title = window.prompt(t('batchTitlePrompt'), 'Service awards ' + new Date().getFullYear());
