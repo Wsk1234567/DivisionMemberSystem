@@ -62,8 +62,24 @@ test('SSS-02 writes applicant data above the original rules without masking them
   const filledStreams = streams(filled);
   assert.deepEqual(filledStreams.slice(1, 1 + originalStreams.length), originalStreams);
   const overlay = filledStreams.at(-1);
-  assert.doesNotMatch(overlay, /\bre\s*$/m);
+  const rectangles = overlay.match(/^.*\bre\s*$/gm) || [];
+  assert.ok(rectangles.every(rectangle => /^0 0 127 5 re\s*$/.test(rectangle)), 'only the signature rule may be masked');
   assert.match(overlay, /1 0 0 1 154 551\.5 Tm\s+<54455354204341444554> Tj/);
+  assert.match(overlay, /1 0 0 1 451 450\.2 Tm\s+<3032> Tj/);
+  assert.match(overlay, /1 0 0 1 483 450\.2 Tm\s+<3131> Tj/);
+  assert.match(overlay, /1 0 0 1 515 450\.2 Tm\s+<32303230> Tj/);
+});
+
+test('SSS-02 formats the historical certificate and the example using their respective years', async () => {
+  const { PDFDocument, decodePDFRawStream } = global.PDFLib;
+  const doc = await PDFDocument.load(await KPTServicePDF.generateSSSApplication({
+    year: 2027, currentSSS: { tier: 100, certificate: '2026-G7' }
+  }));
+  const overlayRef = doc.getPage(0).node.Contents().asArray().at(-1);
+  const overlay = Buffer.from(decodePDFRawStream(doc.context.lookup(overlayRef)).decode()).toString('latin1');
+  for (const reference of ['2026-G007', '2027-G0001']) {
+    assert.ok(overlay.includes('<' + Buffer.from(reference).toString('hex').toUpperCase() + '> Tj'));
+  }
 });
 
 test('mergeDocuments: empty array throws clear error', async () => {

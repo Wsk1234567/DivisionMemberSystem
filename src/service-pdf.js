@@ -279,7 +279,12 @@
     return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.split('-').reverse().join('/') : date;
   }
 
+  function sssCertificateReference(year, sequence) {
+    return year + '-G' + String(sequence).replace(/^0+(?=\d)/, '').padStart(Number(year) >= 2027 ? 4 : 3, '0');
+  }
+
   async function generateSSSApplication(application, config = {}) {
+    const { rgb } = getLib();
     const { doc, page, write } = await loadSssForm('sss02');
     const app = application || {};
     const applicant = app.applicant || {};
@@ -295,15 +300,29 @@
     if (/^F(EMALE)?$/i.test(applicant.gender || '')) mark(490, 524);
     fill(config.division || 'SMJK Triang Combined Cadet Division', 144.5, 540, 493.9);
     fill(applicant.rank, 144.5, 358, 443.2);
-    fill(sssDate(applicant.joined), 442, 545, 443.2);
+    const joined = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(applicant.joined || ''));
+    if (joined) {
+      write(joined[3], 451, 450.2, 18);
+      write(joined[2], 483, 450.2, 18);
+      write(joined[1], 515, 450.2, 27);
+    } else {
+      fill(applicant.joined, 442, 545, 443.2);
+    }
     fill(safeText(applicant.phone).replace(/^\+60/, '').replace(/^0/, ''), 174.5, 336, 417.9);
     fill(applicant.email, 371, 545, 417.9);
     fill(applicant.occupation, 147, 540, 392.7);
     write(app.confirmedDutyHours ?? '', 346, 359, 63, 10);
     [[100, 176, 321], [200, 262, 321], [500, 344, 320], [750, 437, 321]]
       .forEach(([tier, x, y]) => { if (Number(existing.tier) === tier) mark(x, y); });
-    const certificate = safeText(existing.certificate || '').replace(/^SJAMKPT\/CADET\/\(SSS\)\/04\s*\(?\s*/i, '').replace(/\)$/, '');
-    write(certificate, 341, 277.6, 62, 8);
+    const certificate = safeText(existing.certificate || '').replace(/^SJAMKPT\/CADET\/\(SSS\)\/04\s*\(?\s*/i, '').replace(/\)$/, '').trim();
+    const certificateParts = /^(\d{4})-G(\d+)$/i.exec(certificate);
+    write(certificateParts ? sssCertificateReference(certificateParts[1], certificateParts[2]) : certificate, 341, 277.6, 62, 8);
+    const exampleYear = /^\d{4}$/.test(String(app.year)) ? String(app.year) : String(config.signingDate || '').slice(0, 4);
+    if (/^\d{4}$/.test(exampleYear)) {
+      page.drawRectangle({ x: 427.8, y: 275.5, width: 62, height: 12, color: rgb(1, 1, 1) });
+      write(sssCertificateReference(exampleYear, 1), 428.1, 277.6, 60, 9);
+    }
+    page.drawRectangle({ x: 58, y: 161, width: 127, height: 5, color: rgb(1, 1, 1) });
     await copyPrivateOfficer(doc, page, config.templateBase64,
       { x: 58, y: 171, width: 176, height: 57 }, { x: 135, y: 106, width: 263, height: 28 });
     write(sssDate(config.signingDate), 135, 98.2, 150, 8);
