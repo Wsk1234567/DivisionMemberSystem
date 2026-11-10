@@ -1034,6 +1034,17 @@
       if (f === 'Preparing') return ['Preparing', 'AwaitingSignature', 'NeedsInfo'].includes(app.status);
       return app.status === f;
     }
+    function documentGuide() {
+      const yearGroups = [[1, 2], [3, 5], [4]];
+      return '<section class="svc-step svc-document-guide" aria-labelledby="svc-document-guide-title">'
+        + '<h2 id="svc-document-guide-title" class="svc-step-heading">' + escape(tr('申请需要哪些文件？', 'What documents do I need?')) + '</h2>'
+        + '<div class="svc-document-guide-grid"><div><h3>' + escape(tr('必交文件', 'Required documents')) + '</h3>'
+        + '<p>' + escape(tr('每位学员都要交 Duty Record，再按 Efficient year 准备以下申请表。', 'Every applicant needs a Duty Record and the application form(s) for their Efficient year.')) + '</p>'
+        + '<dl>' + yearGroups.map(years => '<div><dt>' + years.map(year => year + (year === 1 ? 'st' : year === 2 ? 'nd' : year === 3 ? 'rd' : 'th')).join(' / ') + ' Efficient year</dt>'
+          + '<dd>' + YEAR_MAP[years[0]].map(formName).join(' + ') + '</dd></div>').join('') + '</dl></div>'
+        + '<div><h3>' + escape(tr('选交文件', 'Optional documents')) + '</h3><p><strong>Supporting document</strong></p>'
+        + '<p>' + escape(tr('有额外的证明文件时才附上。', 'Attach any additional supporting documents if available.')) + '</p></div></div></section>';
+    }
     function render() {
       const filter = (state.filter || '').toLowerCase();
       const list = state.applications.filter(app => {
@@ -1063,12 +1074,12 @@
       })();
       container.innerHTML =
         '<div class="svc-admin" id="svc-admin">'
+        + documentGuide()
         + '<section class="svc-step"><div class="section-heading">' + stepHeading(1, t('adminTitle'), 'h2')
         + (state.unreadCount ? '<span class="hub-badge">' + state.unreadCount + ' ' + escape(t('newApps')) + '</span>' : '')
         + langToggleHtml() + '</div>'
         + '<div id="svc-toast" class="svc-toast" role="status" hidden></div>'
         + '<div id="svc-admin-notice" class="message" role="status" aria-live="polite"></div>'
-        + (isApps ? '<p class="hint">' + escape(tr('必交：SS-02／SSTR-02（按 Efficient year）和 Duty Record。选交：Supporting document。', 'Required: SS-02 / SSTR-02 (based on Efficient year) and Duty Record. Optional: Supporting document.')) + '</p>' : '')
         + '<div class="svc-tabs" role="group" aria-label="' + escape(lang === 'zh' ? '申请类型' : 'Application type') + '">'
         + '<button type="button" class="svc-tab' + (isApps ? ' svc-tab-active' : '') + '" data-svc-tab="applications" aria-pressed="' + (isApps ? 'true' : 'false') + '">' + escape(t('tabApplications')) + '</button>'
         + '<button type="button" class="svc-tab' + (!isApps ? ' svc-tab-active' : '') + '" data-svc-tab="batches" aria-pressed="' + (isApps ? 'false' : 'true') + '">' + escape(t('tabBatches')) + '</button>'

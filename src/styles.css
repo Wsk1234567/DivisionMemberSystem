@@ -194,6 +194,16 @@ body[data-mode="oc"] .nav .doc-package-link.active{background:var(--soft);color:
 }
 .svc-admin h2 { font-size: 18px; line-height: 1.3; margin: 0 0 .5rem; }
 .svc-admin .svc-step { background: var(--svc-card); border: 1px solid var(--svc-border); }
+.svc-admin .svc-document-guide { border-inline-start: 4px solid var(--svc-primary); }
+.svc-document-guide-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1rem 2rem; font-size: 1rem; }
+.svc-document-guide-grid h3 { margin: 0 0 .4rem; color: var(--svc-primary); }
+.svc-document-guide-grid p { margin: 0 0 .55rem; }
+.svc-document-guide-grid dl { margin: 0; max-width: 26rem; }
+.svc-document-guide-grid dl > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .25rem 1rem; padding: .4rem 0; border-top: 1px solid var(--svc-border); }
+.svc-document-guide-grid dd { margin: 0; font-weight: 700; }
+@media (max-width: 620px) {
+  .svc-document-guide-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .svc-admin .svc-step-heading { font-size: 18px; line-height: 1.4; }
 .svc-admin .svc-step-number { color: var(--svc-primary); font-weight: 700; }
 .svc-admin p, .svc-admin td, .svc-admin li, .svc-admin label span { font-size: 14px; }
