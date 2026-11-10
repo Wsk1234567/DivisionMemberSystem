@@ -64,22 +64,28 @@ test('SSS-02 writes applicant data above the original rules without masking them
   assert.deepEqual(filledStreams.slice(1, 1 + originalStreams.length), originalStreams);
   const overlay = filledStreams.at(-1);
   assert.doesNotMatch(overlay, /\bre\s*$/m);
-  assert.doesNotMatch(overlay, /341 277\.6 Tm/, 'invalid certificate reference leaves the field blank');
+  assert.doesNotMatch(overlay, /341 277\.6 Tm/, 'a historical certificate does not replace a missing application reference');
   assert.match(overlay, /1 0 0 1 154 551\.5 Tm\s+<54455354204341444554> Tj/);
   assert.match(overlay, /1 0 0 1 451 450\.2 Tm\s+<3032> Tj/);
   assert.match(overlay, /1 0 0 1 483 450\.2 Tm\s+<3131> Tj/);
   assert.match(overlay, /1 0 0 1 515 450\.2 Tm\s+<32303230> Tj/);
 });
 
-test('SSS-02 formats the historical certificate and the example using their respective years', async () => {
+test('SSS-02 fills the application reference without replacing the printed example', async () => {
   const { PDFDocument, decodePDFRawStream } = global.PDFLib;
-  const doc = await PDFDocument.load(await KPTServicePDF.generateSSSApplication({
-    year: 2027, currentSSS: { tier: 100, certificate: '2026-G7' }
-  }));
-  const overlayRef = doc.getPage(0).node.Contents().asArray().at(-1);
-  const overlay = Buffer.from(decodePDFRawStream(doc.context.lookup(overlayRef)).decode()).toString('latin1');
-  for (const reference of ['2026-G007', '2027-G0001']) {
-    assert.ok(overlay.includes('<' + Buffer.from(reference).toString('hex').toUpperCase() + '> Tj'));
+  for (const [reference, config, expected] of [
+    ['2026-G003', {}, '2026-G003'],
+    ['', { reference: '2027-G002' }, '2027-G0002']
+  ]) {
+    const doc = await PDFDocument.load(await KPTServicePDF.generateSSSApplication({
+      reference, currentSSS: { tier: 100, certificate: '2025-G001' }
+    }, config));
+    const overlayRef = doc.getPage(0).node.Contents().asArray().at(-1);
+    const overlay = Buffer.from(decodePDFRawStream(doc.context.lookup(overlayRef)).decode()).toString('latin1');
+    const hex = Buffer.from(expected).toString('hex').toUpperCase();
+    assert.match(overlay, new RegExp('341 277\\.6 Tm\\s+<' + hex + '> Tj'));
+    assert.doesNotMatch(overlay, /\bre\s*$/m);
+    assert.doesNotMatch(overlay, /428\.1 277\.6 Tm/);
   }
 });
 
