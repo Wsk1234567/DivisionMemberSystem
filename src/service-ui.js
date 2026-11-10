@@ -452,6 +452,12 @@
     });
     return Promise.all(sources.map(downloadOne));
   }
+  async function checklistSigningTemplate(call, applications, kind) {
+    const app = applications.find(row => (YEAR_MAP[row.confirmedYear] || []).includes(kind));
+    if (!app) throw new Error('No Service ' + kind + ' applications in this batch.');
+    const result = await call({ action: 'serviceGetTemplates', applicationId: app.id, version: app.version });
+    return result && result.templates && result.templates[kind];
+  }
   async function gatherDutyDocuments(call, batch, applications, kind) {
     const apps = applications.filter(app => (batch.applicationIds || []).includes(app.id)
       && (YEAR_MAP[app.confirmedYear] || []).includes(kind));
@@ -1374,7 +1380,8 @@
         if (!pdf) { notice(t('pdfUnavailable'), true); return; }
         const config = { division: (root.KPT_CONFIG && root.KPT_CONFIG.organization) || '' };
         // Contract: downloadChecklist(batch, apps, kind, config) -> Promise<Uint8Array> + triggers download.
-        Promise.resolve(pdf.downloadChecklist(b, apps, kind, config))
+        checklistSigningTemplate(call, apps, kind)
+          .then(signingTemplateBase64 => pdf.downloadChecklist(b, apps, kind, { ...config, signingTemplateBase64 }))
           .catch(error => notice(t('pdfFailed') + ' ' + (error && error.message ? error.message : ''), true));
       }));
       // Merged Officer-signed PDF + full ZIP package per kind.
@@ -1406,7 +1413,8 @@
         const map = {};
         async function buildAwardFiles(kind) {
           const [checklist, signed, duty] = await Promise.all([
-            pdf.downloadChecklist(b, apps, kind, zipConfig),
+            checklistSigningTemplate(call, apps, kind)
+              .then(signingTemplateBase64 => pdf.downloadChecklist(b, apps, kind, { ...zipConfig, signingTemplateBase64 })),
             gatherSignedDocs(call, b, apps, kind),
             gatherDutyDocuments(call, b, apps, kind)
           ]);

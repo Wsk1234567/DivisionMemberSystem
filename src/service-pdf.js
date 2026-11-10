@@ -207,9 +207,25 @@
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 
-    // Date
-    const dateStr = safeText((config && config.date) || new Date().toISOString().slice(0, 10));
+    const date = (config && config.date) || new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date());
+    const dateStr = safeText(date).replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
     page.drawText(dateStr, { x: CHECK_POS.date.x, y: yLib(CHECK_POS.date.yTop), size: 8, font, color: rgb(0, 0, 0) });
+
+    const privateTemplate = config && config.signingTemplateBase64;
+    if (!privateTemplate) throw new Error('Private signed application template is unavailable for Service ' + kind + '.');
+    const source = (await PDFDocument.load(b64ToBytes(privateTemplate))).getPage(0);
+    // Crop the signed area of the matching SS-02/SSTR-02. Keep applicant fields
+    // and the application's date widget outside the embedded regions.
+    const signature = { left: 59, bottom: isStar ? 141 : 139, right: 235, top: 196 };
+    const identity = { left: 134, bottom: 80, right: 397, top: 111 };
+    const copyRegion = async (box, x, y) => {
+      const region = await doc.embedPage(source, box);
+      page.drawPage(region, { x, y });
+    };
+    await copyRegion(signature, 72, 273);
+    await copyRegion(identity, CHECK_POS.officerName.x, isStar ? 208 : 210);
 
     // Batch-level checks (NOT per-person). Default: blank unless batch.checks provided.
     // batch.checks = { covering: 'Y'|'N'|'', support: ..., applicationForms: ..., dutyBook: ...,
@@ -228,15 +244,7 @@
       }
     });
 
-    // Officer area
-    const draw = (p, text, fnt, size) => {
-      if (!text) return;
-      page.drawText(text, { x: p.x, y: yLib(p.yTop), size: size || 8, font: fnt || font, color: rgb(0, 0, 0) });
-    };
-    // Officer area: only fill if explicitly provided, signature stays BLANK
-    draw(CHECK_POS.officerName, safeText(config && config.officerName), font);
-    draw(CHECK_POS.officerDiv, safeText(config && config.officerDivision), font);
-    draw(CHECK_POS.officerDate, safeText(config && config.officerDate), font);
+    page.drawText(dateStr, { x: CHECK_POS.officerDate.x, y: yLib(CHECK_POS.officerDate.yTop), size: 8, font, color: rgb(0, 0, 0) });
 
     return doc.save();
   }
