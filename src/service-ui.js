@@ -710,12 +710,12 @@
         render();
       }).catch(error => notice(error && error.message ? error.message : '加载失败。', true));
     }
-    function saveApplication(app) {
-      return operate('4', tr('保存中…', 'Saving…'), async () => {
+    function saveApplication(app, section = '4') {
+      return operate(section, tr('保存中…', 'Saving…'), async () => {
         applyResponse(await timed('save', () => call({ action: 'serviceSave', application: app })));
         state.dirty = false;
         render();
-        notice(t('saved'), false, '4');
+        notice(section === '1' ? tr('会员已绑定，已重新核对 SSS 等级。', 'Member linked and SSS eligibility recalculated.') : t('saved'), false, section);
       });
     }
     async function generateApplication(app, payload, signingDate, downloadKind) {
@@ -926,6 +926,7 @@
       // Searchable select. Value is the internal id; label shows name, and
       // duplicates carry the actual member number.
       const current = memberById(members, app.memberId);
+      const confirmSss = app.awardType === 'SpecialServiceShield' && !lockedApplication(app);
       const currentLabel = current ? tr('已绑定：', 'Linked: ') + current.name + (current.sjamId ? ' · ' + current.sjamId : '') : (app.memberId ? t('memberUnresolved') : '');
       const options = ['<option value="">' + escape(t('memberNone')) + '</option>']
         .concat(members.map(m => '<option value="' + escape(m.id) + '"' + (String(m.id) === String(app.memberId) ? ' selected' : '') + '>'
@@ -935,7 +936,15 @@
         + '<select id="svc-member-pick" name="memberId" size="6">' + options.join('') + '</select>'
         + '<p class="hint">' + escape(t('memberHint')) + '</p>'
         + '<p id="svc-member-selection" class="hint" aria-live="polite">' + escape(currentLabel) + '</p>'
+        + (confirmSss ? '<div class="toolbar"><button type="button" class="button primary" data-svc-confirm-member="' + escape(app.id) + '"' + (current ? '' : ' disabled') + '>' + escape(tr('确认绑定并计算 SSS 等级', 'Confirm member & calculate SSS tier')) + '</button></div>'
+          + '<p class="hint">' + escape(tr('选好会员后点确认。系统会保存本页资料并按申请年度核对 Duty Record，不会提交申请。', 'Select a member and click Confirm. This saves your edits and checks the Duty Record for the application year without submitting the application.')) + '</p>'
+          + '<p class="svc-feedback" data-svc-feedback="1" role="status"></p>' : '')
         + '</div>';
+    }
+    function sssEligibilityText(app) {
+      if (!app.memberId || app.confirmedDutyHours == null) return tr('待确认会员', 'Confirm the member first');
+      if (!app.dutyConfirmed) return tr('待确认 Duty Record 的 Previous', 'Confirm Previous in Duty Record');
+      return app.confirmedTier == null ? tr('不足 100 小时，未达标', 'Not eligible (under 100 hours)') : String(app.confirmedTier);
     }
     function statusButtons(app) {
       const flow = TRANSITIONS[app.status] || { next: [], back: [] };
@@ -976,7 +985,7 @@
         + field(t('refLabel'), 'reference', app.reference != null ? app.reference : '', { readonly: true, hint: tr('首次保存时按申请年度自动分配。', 'Assigned from the application year on first save.') })
         + '<div class="field"><label for="svc-year">' + escape(t('yearLabel')) + '</label><input id="svc-year" name="year" type="number" min="2000" max="2100"' + (app.reference ? ' readonly' : '') + ' value="' + escape(app.year != null && app.year !== '' ? String(app.year) : '') + '"><p class="hint">' + escape(t('yearHint')) + '</p></div>'
         + (app.awardType === 'SpecialServiceShield'
-          ? '<div class="field"><label>' + escape(tr('预计／确认 SSS 等级', 'Expected / confirmed SSS tier')) + '</label><input value="' + escape(String(app.declaredTier || '')) + ' / ' + escape(String(app.confirmedTier || 'Pending')) + '" readonly><p class="hint">' + escape(tr('累计 Duty Hours：', 'Accumulated Duty Hours: ')) + escape(String(app.confirmedDutyHours == null ? 'Pending' : app.confirmedDutyHours)) + '</p></div>'
+          ? '<div class="field"><label for="svc-sss-eligibility">' + escape(tr('预计／确认 SSS 等级', 'Expected / confirmed SSS tier')) + '</label><input id="svc-sss-eligibility" value="' + escape(String(app.declaredTier || '—') + ' / ' + sssEligibilityText(app)) + '" readonly><p class="hint" id="svc-sss-hours">' + escape(tr('累计 Duty Hours：', 'Accumulated Duty Hours: ') + (app.memberId && app.dutyConfirmed ? String(app.confirmedDutyHours ?? '—') : '—')) + '</p></div>'
           : '<div class="field"><label for="svc-confYear">' + escape(t('confYear')) + '</label><select id="svc-confYear">' + yearChoices(app.confirmedYear) + '</select></div>')
         + memberPicker(app)
         + field(t('remarks'), 'remarks', app.remarks, { type: 'textarea' })
@@ -1178,6 +1187,33 @@
       // Member picker: filter the select live.
       const memberSearch = container.querySelector('#svc-member-search');
       const memberPick = container.querySelector('#svc-member-pick');
+      const confirmMember = container.querySelector('[data-svc-confirm-member]');
+      if (confirmMember) {
+        const app = state.applications.find(row => row.id === confirmMember.dataset.svcConfirmMember);
+        const yearField = container.querySelector('#svc-year');
+        const eligibility = container.querySelector('#svc-sss-eligibility');
+        const hours = container.querySelector('#svc-sss-hours');
+        const savedHours = hours.textContent;
+        const refreshEligibility = () => {
+          confirmMember.disabled = !memberPick.value;
+          const changed = memberPick.value !== String(app.memberId || '') || Number(yearField.value) !== Number(app.year);
+          eligibility.value = String(app.declaredTier || '—') + ' / ' + (changed ? tr('请点击确认重新计算', 'Click Confirm to recalculate') : sssEligibilityText(app));
+          hours.textContent = changed ? '' : savedHours;
+        };
+        memberPick.addEventListener('change', refreshEligibility);
+        yearField.addEventListener('input', refreshEligibility);
+        confirmMember.addEventListener('click', () => {
+          if (busy || !memberPick.value) return;
+          const year = Number(yearField.value);
+          if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+            notice(tr('请先填写有效的申请年度。', 'Enter a valid application year first.'), true, '1');
+            yearField.focus();
+            return;
+          }
+          const payload = collectApplication(app);
+          if (payload) saveApplication(payload, '1');
+        });
+      }
       if (memberSearch && memberPick) {
         memberPick.addEventListener('change', () => {
           const member = memberById(members, memberPick.value);
@@ -1239,7 +1275,7 @@
         const hint = container.querySelector('[data-svc-year-help]');
         if (hint) hint.textContent = kinds.length
           ? kinds.map(formName).join(' + ')
-          : tr('请先确认 Efficient year。', 'Confirm the Efficient year first.');
+          : app.awardType === 'SpecialServiceShield' ? sssEligibilityText(app) : tr('请先确认 Efficient year。', 'Confirm the Efficient year first.');
         const checklist = container.querySelector('[data-svc-required]');
         if (checklist) checklist.innerHTML = requiredFiles(app, year);
         const picker = container.querySelector('[data-svc-kind-for="application:' + app.id + '"]');
