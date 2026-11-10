@@ -18,13 +18,6 @@
     for (let i = 0; i < arr.length; i += chunk) binary += String.fromCharCode.apply(null, arr.subarray(i, i + chunk));
     return btoa(binary);
   }
-  function base64ToBytes(data) {
-    const text = typeof data === 'string' ? data : (data && data.base64) || '';
-    const bin = atob(text);
-    const arr = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    return arr;
-  }
   // Integers as-is, everything else at most 2 decimals.
   function formatHours(value) {
     const n = Number(value);
@@ -187,7 +180,7 @@
       members: [], activities: [], records: [], previous: [],
       services: [],
       editPrev: null, editRec: null, dirty: false,
-      report: null, reportProofs: [], reportMemberId: '', reportYear: String(new Date().getFullYear()),
+      report: null, reportMemberId: '', reportYear: String(new Date().getFullYear()),
       tab: 'dashboard', rankingYear: String(new Date().getFullYear()),
       importMode: 'records', importRows: [], importPreviewOk: false, importGeneralErrors: []
     };
@@ -395,7 +388,6 @@
         state.reportYear = String(year);
         const bundle = await call({ action: 'dutyReportBundle', memberId, year });
         state.report = bundle && bundle.report ? bundle.report : null;
-        state.reportProofs = (bundle && bundle.proofs) || [];
         render();
         notice(tr('报表已载入。', 'Report loaded.'), false);
       });
@@ -421,24 +413,12 @@
         notice(tr('PDF 已生成。', 'PDF generated.'), false);
       });
     }
-    function downloadZip(btn) {
-      return operate(btn, tr('打包中…', 'Packing…'), async () => {
+    function downloadPdf(btn) {
+      return operate(btn, tr('生成中…', 'Generating…'), async () => {
         const report = state.report;
         const bytes = await buildDutyPdf(report);
-        const zip = root.KPTServicePDF;
-        if (!zip || typeof zip.zipFiles !== 'function') throw new Error(tr('ZIP 模块尚未就绪，无法打包。请稍后再试。', 'The ZIP module is not ready yet. Please try again later.'));
-        const map = {};
-        map['Duty-Record-' + report.year + '-' + report.member.name + '.pdf'] = bytes;
-        const seen = new Set();
-        state.reportProofs.forEach(proof => {
-          const key = String(proof && proof.activityId != null ? proof.activityId : '');
-          if (!key || seen.has(key)) return;
-          seen.add(key);
-          map['proofs/' + key + '-' + (proof.fileName || 'proof')] = base64ToBytes(proof.base64);
-        });
-        const zipBytes = zip.zipFiles(map);
-        downloadBytes(zipBytes instanceof Uint8Array ? zipBytes : new Uint8Array(zipBytes), 'Duty-Record-' + report.year + '-' + report.member.name + '.zip', 'application/zip');
-        notice(tr('ZIP 已开始下载。', 'ZIP download started.'), false);
+        downloadBytes(bytes, 'Duty-Record-' + report.year + '-' + report.member.name + '.pdf', 'application/pdf');
+        notice(tr('PDF 已开始下载。', 'PDF download started.'), false);
       });
     }
     function attachService(btn) {
@@ -606,7 +586,7 @@
           + ' · ' + escape(tr('累计', 'Cumulative')) + '：<strong>' + escape(formatHours(report.cumulative)) + '</strong></p>';
         summary += '<div class="toolbar">'
           + '<button type="button" class="button primary" data-duty-report-preview="1">' + escape(tr('预览 PDF', 'Preview PDF')) + '</button>'
-          + '<button type="button" class="button" data-duty-report-zip="1">' + escape(tr('下载 ZIP', 'Download ZIP')) + '</button>'
+          + '<button type="button" class="button" data-duty-report-download="1">' + escape(tr('下载 PDF', 'Download PDF')) + '</button>'
           + '</div>';
         if (canAttachService) {
           const apps = state.services.filter(app => app && String(app.memberId) === String(report.member ? report.member.id : ''));
@@ -787,7 +767,7 @@
       });
       on('[data-duty-report-load]', btn => loadReport(btn));
       on('[data-duty-report-preview]', btn => previewPdf(btn));
-      on('[data-duty-report-zip]', btn => downloadZip(btn));
+      on('[data-duty-report-download]', btn => downloadPdf(btn));
       on('[data-duty-report-attach]', btn => attachService(btn));
       const modeEl = container.querySelector('#duty-import-mode');
       if (modeEl) modeEl.addEventListener('change', () => {
