@@ -290,14 +290,14 @@
   // Covering and Support may be N without blocking; duty items are confirmed
   // by the Secretary by hand (never auto-filled to Yes).
   const BATCH_CHECK_ITEMS = [
-    ['covering', 'Covering letter'],
-    ['support', 'Supporting documents'],
-    ['applicationForms', 'Application forms'],
-    ['dutyBook', 'Duty book'],
-    ['dutyDetails', 'Duty details'],
-    ['typeHours', 'Type & hours sheet'],
-    ['approvedSigned', 'Approved signed forms'],
-    ['totalHours', 'Total hours sheet']
+    ['covering', 'Division Covering Letter'],
+    ['support', 'Support Document / Letter'],
+    ['applicationForms', 'Application Form'],
+    ['dutyBook', 'Duty Book: (Completed)'],
+    ['dutyDetails', 'Applicant Details (Front Page)'],
+    ['typeHours', 'Type of Duty & Duty Hours'],
+    ['approvedSigned', 'Duty Hours approved/signed'],
+    ['totalHours', 'State Total Duty Hours Completed']
   ];
   function attachKindLabel(value) {
     const row = ATTACH_KINDS.concat(ATTACH_KINDS_BATCH).find(([key]) => key === value);
