@@ -1027,7 +1027,6 @@
     }
     function batchChecksBlock(batch) {
       const checks = (batch && batch.checks) || {};
-      const letter = Object.assign({ recipient: 'Mr Phang Kwok Kheun', recipientTitle: 'Area Staff Officer (Cadets)', organization: 'St. John Ambulans Malaysia', area: 'Kawasan Pahang Tengah', sender: 'JDO Wong Shan Kang', phone: '011-20836398', division: 'SMJK Triang Combined Cadet Division', subject: 'Applies Special Service Shield', intro: 'With the above Subject Matters, I would like to apply Special Service Shield for cadets who fulfill the requirements.', closing: 'Looking forward to hearing from you soon.' }, batch.coverLetter || {});
       const rows = BATCH_CHECK_ITEMS.map(([key, label]) => {
         const value = checks[key] != null ? String(checks[key]) : '';
         return '<div class="field svc-check-row"><label for="svc-check-' + key + '">' + escape(label) + '</label>'
@@ -1038,8 +1037,7 @@
           + '</select></div>';
       }).join('');
       return '<p class="hint">' + escape(t('checksHint')) + '</p>'
-        + (batch.awardType === 'SpecialServiceShield' ? '<div class="form-grid"><label class="field"><span>Covering letter</span><select data-svc-cover-letter><option value="yes"' + (batch.includeCoverLetter !== false ? ' selected' : '') + '>' + escape(tr('默认包含', 'Include')) + '</option><option value="no"' + (batch.includeCoverLetter === false ? ' selected' : '') + '>' + escape(tr('不放入 ZIP（不影响提交）', 'Exclude from ZIP (does not block submission)')) + '</option></select></label>'
-          + Object.entries(letter).map(([key, value]) => '<label class="field"><span>' + escape(key) + '</span>' + ((key === 'intro' || key === 'closing') ? '<textarea data-svc-cover-field="' + escape(key) + '" rows="2">' + escape(value) + '</textarea>' : '<input data-svc-cover-field="' + escape(key) + '" value="' + escape(value) + '">') + '</label>').join('') + '</div>' : '')
+        + (batch.awardType === 'SpecialServiceShield' ? '<p class="hint">' + escape(tr('公函请自行准备和提交；系统不会生成公函，也不会放入 ZIP。', 'Prepare and submit the covering letter separately. The system does not generate or include it in the ZIP.')) + '</p>' : '')
         + '<div class="form-grid svc-checks">' + rows + '</div>'
         + '<div class="toolbar"><button type="button" class="button primary" data-svc-save-checks="' + escape(batch.id) + '">' + escape(t('saveChecks')) + '</button></div>';
     }
@@ -1396,14 +1394,14 @@
         if (!b) return;
         const ids = (b.applicationIds || []).slice();
         if (!ids.includes(appId)) ids.push(appId);
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, includeCoverLetter: b.includeCoverLetter, coverLetter: b.coverLetter || {}, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
       }));
       container.querySelectorAll('[data-svc-batch-remove]').forEach(btn => btn.addEventListener('click', () => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-batch-remove'));
         const appId = btn.getAttribute('data-svc-app');
         if (!b) return;
         const ids = (b.applicationIds || []).filter(id => id !== appId);
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, includeCoverLetter: b.includeCoverLetter, coverLetter: b.coverLetter || {}, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, applicationIds: ids, remarks: b.remarks || '', checks: b.checks || {} });
       }));
       container.querySelectorAll('[data-svc-save-checks]').forEach(btn => btn.addEventListener('click', () => {
         const b = state.batches.find(row => row.id === btn.getAttribute('data-svc-save-checks'));
@@ -1412,10 +1410,7 @@
         container.querySelectorAll('[data-svc-check]').forEach(sel => {
           checks[sel.getAttribute('data-svc-check')] = String(sel.value || '');
         });
-        const cover = container.querySelector('[data-svc-cover-letter]');
-        const coverLetter = {};
-        container.querySelectorAll('[data-svc-cover-field]').forEach(input => { coverLetter[input.dataset.svcCoverField] = String(input.value || '').trim(); });
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, includeCoverLetter: cover ? cover.value !== 'no' : b.includeCoverLetter, coverLetter: Object.keys(coverLetter).length ? coverLetter : (b.coverLetter || {}), applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks });
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks });
       }));
       function onBatchDownload(selector, work) {
         container.querySelectorAll(selector).forEach(btn => btn.addEventListener('click', () => {
@@ -1483,9 +1478,6 @@
           const tiers = [...new Set(apps.map(app => Number(app.confirmedTier)).filter(Boolean))].sort((a, b) => a - b);
           const dutyName = kind === 'SSS' && tiers.length ? 'Duty Records (Total-SSS-' + tiers.join('-') + ').pdf' : pdf.batchFileName('duty', kind, b.year);
           if (duty.length) map[folder + dutyName] = toBytes(await pdf.mergeDocuments(duty));
-          if (kind === 'SSS' && b.includeCoverLetter !== false && typeof pdf.generateSSSCoverLetter === 'function') {
-            map[folder + pdf.batchFileName('covering', kind, b.year)] = toBytes(await pdf.generateSSSCoverLetter(b, apps, zipConfig));
-          }
         }
         await Promise.all(kinds.map(buildAwardFiles));
         if (!Object.keys(map).length) throw new Error(t('pdfNoSigned'));
@@ -1497,7 +1489,7 @@
         if (!title) return;
         const year = Number(window.prompt(t('batchYearPrompt'), String(new Date().getFullYear())));
         if (!Number.isInteger(year)) return;
-        saveBatch({ year: year, title: title, awardType, includeCoverLetter: true, applicationIds: [], remarks: '', checks: {} });
+        saveBatch({ year: year, title: title, awardType, applicationIds: [], remarks: '', checks: {} });
       });
       bindLangToggles(container, render);
       // Unsaved-edit tracking: any input in the detail form marks the list dirty

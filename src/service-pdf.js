@@ -338,20 +338,6 @@
     return doc.save();
   }
 
-  async function generateSSSCoverLetter(batch, applications, config) {
-    const { PDFDocument, rgb, StandardFonts } = getLib();
-    const doc = await PDFDocument.create(); const page = doc.addPage([595.44, A4_H]);
-    const font = await doc.embedFont(StandardFonts.Helvetica); const bold = await doc.embedFont(StandardFonts.HelveticaBold); const black = rgb(0,0,0);
-    const letter = Object.assign({ recipient: 'Mr Phang Kwok Kheun', recipientTitle: 'Area Staff Officer (Cadets)', organization: 'St. John Ambulans Malaysia', area: 'Kawasan Pahang Tengah', sender: 'JDO Wong Shan Kang', phone: '011-20836398', division: 'SMJK Triang Combined Cadet Division', subject: 'Applies Special Service Shield', intro: 'With the above Subject Matters, I would like to apply Special Service Shield for cadets who fulfill the requirements.', closing: 'Looking forward to hearing from you soon.' }, batch && batch.coverLetter || {});
-    const text = (v,x,y,size,f) => page.drawText(safeText(v), { x,y,size:size||10,font:f||font,color:black });
-    let y=780; [letter.recipient,letter.recipientTitle,letter.organization,letter.area,'','Dear Sir,','', 'RE: ' + letter.subject + ' (' + (batch.title || batch.year || '') + ')'].forEach((v,i)=>{ if(v) text(v,58,y,10,i===7?bold:font); y-=17; });
-    y-=8; [letter.intro,'','Attachment for your review:','- Checklist (SJAMKPT/CADET/SSS-01)','- ' + applications.length + ' application letters (SJAMKPT/CADET/SSS-02)','- Duty records of applicants'].forEach(v=>{ if(v) text(v,58,y,9); y-=17; });
-    y-=8; text('And below are the details:',58,y,9); y-=20;
-    [100,200,500,750,1000].forEach(tier=>{ const count=applications.filter(a=>Number(a.confirmedTier)===tier).length; if(count){ text('- ' + tier + ' Duty Hours (Special Service Shield) - ' + count + ' cadet' + (count===1?'':'s'),58,y,9); y-=17; } });
-    y-=10; [letter.closing,'','For any further information, please do not hesitate to contact me at ' + letter.phone + '. Thank you.','',letter.sender,letter.organization,letter.area,letter.division].forEach(v=>{ if(v) text(v,58,y,9); y-=17; });
-    return doc.save();
-  }
-
   async function mergeDocuments(items) {
     const PDFLib = getLib();
     const { PDFDocument } = PDFLib;
@@ -459,6 +445,6 @@
     return out instanceof Uint8Array ? out : new Uint8Array(out);
   }
 
-  root.KPTServicePDF = { generateSigned, generateSSSApplication, generateSSSChecklist, generateSSSCoverLetter, download, downloadChecklist, batchFileName, mergeDocuments, mergeAndDownload, zipFiles };
+  root.KPTServicePDF = { generateSigned, generateSSSApplication, generateSSSChecklist, download, downloadChecklist, batchFileName, mergeDocuments, mergeAndDownload, zipFiles };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.KPTServicePDF;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

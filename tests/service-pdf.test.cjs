@@ -33,8 +33,7 @@ test('SSS generators create clean one-page official documents', async () => {
   const app = { applicant: { name: 'TEST CADET', ic: '001122-33-4455', gender: 'Female' }, declaredTier: 500, confirmedTier: 200, confirmedDutyHours: 306, currentSSS: { tier: 100, certificate: 'TEST-001' } };
   const application = await KPTServicePDF.generateSSSApplication(app, { division: 'TEST DIVISION', memberNumber: '00123', signingDate: '2026-11-10' });
   const checklist = await KPTServicePDF.generateSSSChecklist({ checks: {} }, { date: '2026-11-10' });
-  const cover = await KPTServicePDF.generateSSSCoverLetter({ title: 'TCCD 2026-1', year: 2026, coverLetter: {} }, [app], {});
-  for (const bytes of [application, checklist, cover]) {
+  for (const bytes of [application, checklist]) {
     const doc = await global.PDFLib.PDFDocument.load(bytes);
     assert.equal(doc.getPageCount(), 1);
     assert.ok(bytes.length > 1000);
