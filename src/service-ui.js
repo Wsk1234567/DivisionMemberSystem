@@ -972,6 +972,7 @@
       return '<div class="svc-detail">'
         + '<h2>' + escape(a.name || (lang === 'zh' ? '(没有姓名)' : '(no name)')) + ' ' + statusPill(app.status) + '</h2>'
         + '<p class="muted">' + escape(String(app.createdAt || '').slice(0, 10)) + '</p>'
+        + (isSSS ? '' : stripeNextStep(app))
         + '<section class="svc-step">' + stepHeading(1, lang === 'zh' ? '核对申请资料' : 'Verify application details')
         + '<form id="svc-detail-form" class="form-grid">'
         + field(t('fName'), 'name', a.name, { required: true })
@@ -1068,9 +1069,33 @@
     let selectedBatchId = null;
     // Canonical status filter values (matches the five-colour legend).
     const STATUS_FILTERS = ['PendingSecretary', 'Preparing', 'AwaitingOwner', 'Ready', 'Submitted'];
+    const stripeQueue = app => app.status === 'Recorded' ? 'done'
+      : (['NeedsInfo', 'Submitted'].includes(app.status) || (app.status === 'AwaitingOwner' && !options?.owner)) ? 'waiting' : 'todo';
+    function stripeNextStep(app) {
+      const kinds = YEAR_MAP[app.confirmedYear] || [];
+      const missing = [...kinds.map(kind => ['signed' + kind, formName(kind)]), ['duty', 'Duty Record']]
+        .filter(([kind]) => !latestAttachment(app, kind)).map(([, label]) => label);
+      const next = {
+        NeedsInfo: tr('等资料补齐，再回来核对。', 'Wait for the missing details, then check again.'),
+        AwaitingOwner: options?.owner ? tr('检查资格和文件，没问题就标为符合资格。', 'Check the files and eligibility, then mark it eligible.') : tr('等 Owner 核对，你可以先做下一份。', 'Wait for the Owner to check. You can move on to another application.'),
+        Ready: tr('可以准备批次了。下载 ZIP 不算提交，交出去后再登记。', 'Prepare the batch. Downloading the ZIP is not submission; mark it submitted after sending it.'),
+        Submitted: tr('已登记提交，等审批结果。', 'Submission recorded. Wait for the decision.'),
+        Approved: tr('已获批，可以登记奖项。', 'Approved. Record the award next.'),
+        Recorded: tr('奖项已登记，不用再做了。', 'Award recorded. Nothing else to do.')
+      }[app.status] || (!app.memberId ? tr('先找到这位同学，选好会员后保存。', 'Find and select the matching member, then save.')
+        : !kinds.length ? tr('先核对有几个 Efficient 年度。还没确认的年份不要算。', 'Check how many Efficient years are confirmed. Leave pending years out.')
+        : missing.length ? tr('还要准备：', 'Still needed: ') + missing.join(' · ')
+        : tr('文件都附上了。检查没问题后，点「保存-已完成」。', 'Check the attached files, then click “Save - documents complete”.'));
+      return '<section class="svc-step svc-document-guide"><h3>' + escape(tr('接下来做什么？', 'What do I do next?')) + '</h3>'
+        + '<p>' + escape(next) + '</p><p class="hint">' + escape(tr('申请年度：', 'Application year: ') + (app.year || '—')
+          + tr(' · 学生自报：', ' · Student says: ') + (app.declaredYear || '—')
+          + tr(' · 已确认 Efficient 年数：', ' · Confirmed Efficient years: ') + (app.confirmedYear || '—')
+          + (kinds.length ? tr(' · 需要的表格：', ' · Forms needed: ') + kinds.map(formName).join(' + ') : '')) + '</p></section>';
+    }
     function filterMatchesStatus(app) {
       const f = state.statusFilter;
       if (!f) return true;
+      if (!isSSS && f.startsWith('work:')) return stripeQueue(app) === f.slice(5);
       // Submitted is the umbrella for Submitted / Approved / Recorded (same colour).
       if (f === 'Submitted') return ['Submitted', 'Approved', 'Recorded'].includes(app.status);
       if (f === 'Preparing') return ['Preparing', 'AwaitingSignature', 'NeedsInfo'].includes(app.status);
@@ -1099,6 +1124,7 @@
       });
       const isApps = state.tab !== 'batches';
       const statusOpts = ['<option value="">' + escape(t('allStatuses')) + '</option>']
+        .concat(isSSS ? [] : [['todo', tr('等我处理', 'My next steps')], ['waiting', tr('等别人处理', 'Waiting on others')], ['done', tr('已登记奖项', 'Award recorded')]].map(([key, label]) => '<option value="work:' + key + '"' + (state.statusFilter === 'work:' + key ? ' selected' : '') + '>' + escape(label) + '</option>'))
         .concat(STATUS_FILTERS.map(s => '<option value="' + escape(s) + '"' + (state.statusFilter === s ? ' selected' : '') + '>' + escape(statusLabel(s)) + '</option>')).join('');
       const listBlock = isApps ? (() => {
         const rows = list.map(app => appRow(app) + (state.selectedId === app.id
@@ -1124,8 +1150,8 @@
         + '<div id="svc-toast" class="svc-toast" role="status" hidden></div>'
         + '<div id="svc-admin-notice" class="message" role="status" aria-live="polite"></div>'
         + '<div class="svc-tabs" role="group" aria-label="' + escape(lang === 'zh' ? '申请类型' : 'Application type') + '">'
-        + '<button type="button" class="svc-tab' + (isApps ? ' svc-tab-active' : '') + '" data-svc-tab="applications" aria-pressed="' + (isApps ? 'true' : 'false') + '">' + escape(t('tabApplications')) + '</button>'
-        + '<button type="button" class="svc-tab' + (!isApps ? ' svc-tab-active' : '') + '" data-svc-tab="batches" aria-pressed="' + (isApps ? 'false' : 'true') + '">' + escape(t('tabBatches')) + '</button>'
+        + '<button type="button" class="svc-tab' + (isApps ? ' svc-tab-active' : '') + '" data-svc-tab="applications" aria-pressed="' + (isApps ? 'true' : 'false') + '">' + escape(isSSS ? t('tabApplications') : tr('① 核对申请', '① Check applications')) + '</button>'
+        + '<button type="button" class="svc-tab' + (!isApps ? ' svc-tab-active' : '') + '" data-svc-tab="batches" aria-pressed="' + (isApps ? 'false' : 'true') + '">' + escape(isSSS ? t('tabBatches') : tr('② 打包和提交', '② Batches and submission')) + '</button>'
         + (!isApps ? ' <button type="button" class="button primary svc-new-batch" data-svc-new-batch="1">' + escape(t('newBatch')) + '</button>' : '')
         + '</div>'
         + '<div class="svc-toolbar-row">'
