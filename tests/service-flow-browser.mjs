@@ -235,11 +235,17 @@ async function makePdfBytes(title) {
 
     await secretary.locator('#svc-check-covering').selectOption('N');
     await secretary.locator('[data-svc-save-checks]').click();
-    await secretary.locator('[data-svc-feedback="2"]').filter({ hasText: /已保存|Saved/ }).waitFor();
+    await secretary.locator('[data-svc-feedback="3"]').filter({ hasText: /已保存|Saved/ }).waitFor();
     assert.equal(await secretary.locator('#svc-check-covering').inputValue(), 'N');
 
     // ---- 8) ZIP package must contain Duty + checklists + signed forms ----
     const batchDownload = secretary.locator('.svc-batch-detail section.svc-step').filter({ has: secretary.locator('[data-svc-batch-zip]') });
+    const batchSteps = secretary.locator('.svc-batch-detail > section.svc-step');
+    assert.ok(await batchSteps.nth(1).locator('[data-svc-batch-merge]').count());
+    assert.ok(await batchSteps.nth(1).locator('[data-svc-batch-duty]').count());
+    assert.equal(await batchSteps.nth(1).locator('[data-svc-batch-zip]').count(), 0);
+    assert.equal(await batchSteps.nth(2).locator('[data-svc-save-checks]').count(), 1);
+    assert.equal(await batchSteps.nth(3).locator('[data-svc-batch-zip]').count(), 1);
     const batchUpload = secretary.locator('.svc-batch-detail section.svc-step').filter({ has: secretary.locator('[data-svc-upload-picked^="batch:"]') });
     assert.equal(await batchDownload.locator('input[type=file]').count(), 0);
     assert.equal(await batchUpload.locator('[data-svc-batch-zip]').count(), 0);
