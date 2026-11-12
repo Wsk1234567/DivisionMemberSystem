@@ -776,7 +776,7 @@
       if (target.kind === 'application') body.applicationId = target.id;
       else body.batchId = target.id;
       if (submittedAt) body.submittedAt = submittedAt;
-      const section = target.kind === 'batch' ? (isSSS ? '5' : '6') : '4';
+      const section = target.kind === 'batch' ? '6' : '4';
       return operate(section, tr('更新状态中…', 'Updating status…'), async () => {
         applyResponse(await call(Object.assign({ action: 'serviceTransition' }, body)));
         state.dirty = false;
@@ -785,7 +785,7 @@
       });
     }
     function upload(target, kind, file, draft) {
-      const section = target.kind === 'batch' ? (isSSS ? '4' : '5') : '3';
+      const section = target.kind === 'batch' ? '5' : '3';
       return operate(section, tr('上传中…', 'Uploading…'), async () => {
         if (draft) {
           applyResponse(await call({ action: 'serviceSave', application: draft }));
@@ -1012,11 +1012,10 @@
     function batchDownloads(batch, mode) {
       const id = escape(batch.id);
       const pdf = root.KPTServicePDF;
-      const kinds = batch.awardType === 'SpecialServiceShield' ? ['SSS'] : ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
+      const kinds = batch.awardType === 'SpecialServiceShield' ? ((batch.applicationIds || []).length ? ['SSS'] : []) : ['Stripe', 'Star'].filter(kind => state.applications.some(app =>
         (batch.applicationIds || []).includes(app.id) && (YEAR_MAP[app.confirmedYear] || []).includes(kind)));
-      const files = mode === 'review' ? [['merge', 'application'], ['duty', 'duty']]
-        : mode === 'final' ? [['pdf', 'checklist']] : [['pdf', 'checklist'], ['merge', 'application'], ['duty', 'duty']];
-      const groups = pdf ? kinds.map(kind => '<section><h4>Service ' + kind + '</h4><div class="toolbar">' + files.map(([action, type]) => {
+      const files = mode === 'review' ? [['merge', 'application'], ['duty', 'duty']] : [['pdf', 'checklist']];
+      const groups = pdf ? kinds.map(kind => '<section><h4>' + (kind === 'SSS' ? 'Special Service Shield' : 'Service ' + kind) + '</h4><div class="toolbar">' + files.map(([action, type]) => {
         const file = pdf.batchFileName(type, kind, batch.year).replace(/\.pdf$/, '');
         const formCode = (kind === 'SSS' ? 'SSS-' : kind === 'Star' ? 'SSTR-' : 'SS-') + (type === 'checklist' ? '01' : '02');
         const official = kind === 'Star' && type === 'checklist' ? file : 'SJAMKPT/CADET/' + formCode;
@@ -1025,7 +1024,9 @@
         const reviewLabel = type === 'duty' ? tr('下载合并 Duty Record', 'Download combined Duty Record') : tr('下载合并申请表', 'Download combined forms') + ' (' + formCode + ')';
         return '<button type="button" class="button small" data-svc-batch-' + action + '="' + id + '" data-svc-kind="' + kind + '">' + escape(mode === 'review' ? reviewLabel : name) + '</button>';
       }).join('') + '</div></section>').join('') : '';
-      if (!groups) return '<p class="hint">' + escape(tr('先加入已确认 Efficient year 的申请，才能生成批次文件。', 'Add applications with a confirmed Efficient year to generate batch files.')) + '</p>';
+      if (!groups) return '<p class="hint">' + escape(!pdf ? t('pdfUnavailable') : isSSS
+        ? tr('先把申请者加进这批，才能下载文件。', 'Add applicants to this batch before downloading files.')
+        : tr('先加入已确认 Efficient year 的申请，才能生成批次文件。', 'Add applications with a confirmed Efficient year to generate batch files.')) + '</p>';
       if (mode === 'review') return '<div class="svc-downloads">' + groups + '</div>';
       return '<div class="svc-downloads"><button type="button" class="button primary" data-svc-batch-zip="' + id + '">' + escape(t('zipBatch')) + '</button>'
         + '<details><summary>' + (lang === 'zh' ? '单独下载' : 'Individual downloads') + '</summary>' + groups + '</details></div>';
@@ -1061,18 +1062,16 @@
         + '<ul class="svc-files">' + (outBatch.map(app => '<li>' + escape(app.applicant && app.applicant.name || app.id)
           + ' <button type="button" class="button small" data-svc-batch-add="' + escape(batch.id) + '" data-svc-app="' + escape(app.id) + '">' + escape(t('addToBatch')) + '</button></li>').join('') || '<li class="muted">—</li>') + '</ul>'
         + '</div></section>'
-        + (isSSS ? stepBlock(2, t('checksTitle'), batchChecksBlock(batch))
-        + stepBlock(3, tr('下载批次文件', 'Download batch files'), '<p class="hint">'
-          + escape(tr('系统会从这批申请生成 Checklist、合并申请表和 Duty Record。', 'The system prepares the checklist, combined application forms and Duty Record from this batch.')) + '</p>' + batchDownloads(batch))
-          : stepBlock(2, tr('先下载文件来看', 'Download and check the files first'), '<p class="hint">'
+        + stepBlock(2, tr('先下载文件来看', 'Download and check the files first'), '<p class="hint">'
             + escape(tr('先打开合并申请表和 Duty Record，按名单一个个对。有缺漏就先补，不要急着勾清单。', 'Open the combined forms and Duty Records and check them against the list. Fix any gaps before filling in the checklist.')) + '</p>' + batchDownloads(batch, 'review'))
-          + stepBlock(3, tr('看完文件再填清单', 'Fill in the checklist after checking'), batchChecksBlock(batch)))
-        + (isSSS ? '' : stepBlock(4, tr('下载最后的 ZIP', 'Download the final ZIP'),
-          '<p class="hint">' + escape(tr('先保存清单，再下载 ZIP。解压看一遍，确认清单和刚核对的文件都在。', 'Save the checklist before downloading the ZIP. Open it to make sure it contains the checklist and the files you just checked.')) + '</p>' + batchDownloads(batch, 'final')))
-        + stepBlock(isSSS ? 4 : 5, tr('手动上传文件（如有）', 'Upload files manually (if needed)'), '<p class="hint">'
+        + stepBlock(3, tr('看完文件再填清单', 'Fill in the checklist after checking'), batchChecksBlock(batch))
+        + stepBlock(4, tr('下载最后的 ZIP', 'Download the final ZIP'),
+          '<p class="hint">' + escape(tr('先保存清单，再下载 ZIP。解压看一遍，确认清单和刚核对的文件都在。', 'Save the checklist before downloading the ZIP. Open it to make sure it contains the checklist and the files you just checked.')) + '</p>'
+          + (isSSS ? '<p class="hint">' + escape(tr('Covering Letter 自己准备和交，不在 ZIP 里面。', 'Prepare and submit the covering letter separately. It is not in the ZIP.')) + '</p>' : '') + batchDownloads(batch, 'final'))
+        + stepBlock(5, tr('手动上传文件（如有）', 'Upload files manually (if needed)'), '<p class="hint">'
           + escape(tr('如果每位学员的申请已附齐文件，这里可以跳过。其他手动附件可在下方单独下载。', 'Skip this if each applicant already has the required files. Other manual attachments can be downloaded below.')) + '</p>' + attachmentsBlock({ kind: 'batch', id: batch.id }, batch))
-        + stepBlock(isSSS ? 5 : 6, isSSS ? t('statusTitle') : tr('交出去后才登记', 'Record it after sending'),
-          (isSSS ? '' : '<p class="hint">' + escape(tr('这个按钮不会帮你发送文件。真的交出去了，才标为已提交。', 'This does not send the files. Mark it submitted only after sending it.')) + '</p>') + batchActions(batch))
+        + stepBlock(6, tr('交出去后才登记', 'Record it after sending'),
+          '<p class="hint">' + escape(tr('这个按钮不会帮你发送文件。真的交出去了，才标为已提交。', 'This does not send the files. Mark it submitted only after sending it.')) + '</p>' + batchActions(batch))
         + '</section>';
     }
 
@@ -1446,7 +1445,7 @@
         container.querySelectorAll('[data-svc-check]').forEach(sel => {
           checks[sel.getAttribute('data-svc-check')] = String(sel.value || '');
         });
-        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks }, isSSS ? '2' : '3');
+        saveBatch({ id: b.id, version: b.version, year: b.year, title: b.title, awardType: b.awardType, applicationIds: b.applicationIds || [], remarks: b.remarks || '', checks: checks }, '3');
       }));
       function onBatchDownload(selector, work) {
         container.querySelectorAll(selector).forEach(btn => btn.addEventListener('click', () => {
@@ -1455,7 +1454,7 @@
           const loading = tr('下载中…', 'Downloading…');
           btn.textContent = loading;
           btn.disabled = true;
-          const section = isSSS ? '3' : (btn.hasAttribute('data-svc-batch-merge') || btn.hasAttribute('data-svc-batch-duty')) ? '2' : '4';
+          const section = (btn.hasAttribute('data-svc-batch-merge') || btn.hasAttribute('data-svc-batch-duty')) ? '2' : '4';
           operate(section, loading, async () => {
             await work(btn);
             notice(tr('文件已开始下载。', 'Download started.'), false, section);
@@ -1486,7 +1485,7 @@
         const pdf = root.KPTServicePDF;
         if (!pdf || typeof pdf.mergeAndDownload !== 'function') throw new Error(t('pdfUnavailable'));
         const items = await (duty ? gatherDutyDocuments : gatherSignedDocs)(call, b, state.applications, kind);
-        if (!items.length) throw new Error(!isSSS && duty
+        if (!items.length) throw new Error(duty
           ? tr('还没有可合并的 Duty Record。先到申请详情生成或上传。', 'No Duty Records to merge. Generate or upload them from the application details first.')
           : t('pdfNoSigned'));
         const mergeName = pdf.batchFileName(duty ? 'duty' : 'application', kind, b.year);
