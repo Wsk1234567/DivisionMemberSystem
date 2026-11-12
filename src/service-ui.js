@@ -785,7 +785,7 @@
       });
     }
     function upload(target, kind, file, draft) {
-      const section = target.kind === 'batch' ? '5' : '3';
+      const section = target.kind === 'batch' ? '4' : '3';
       return operate(section, tr('上传中…', 'Uploading…'), async () => {
         if (draft) {
           applyResponse(await call({ action: 'serviceSave', application: draft }));
@@ -1065,13 +1065,13 @@
         + stepBlock(2, tr('先下载文件来看', 'Download and check the files first'), '<p class="hint">'
             + escape(tr('先打开合并申请表和 Duty Record，按名单一个个对。有缺漏就先补，不要急着勾清单。', 'Open the combined forms and Duty Records and check them against the list. Fix any gaps before filling in the checklist.')) + '</p>' + batchDownloads(batch, 'review'))
         + stepBlock(3, tr('看完文件再填清单', 'Fill in the checklist after checking'), batchChecksBlock(batch))
-        + stepBlock(4, tr('下载最后的 ZIP', 'Download the final ZIP'),
-          '<p class="hint">' + escape(tr('先保存清单，再下载 ZIP。解压看一遍，确认清单和刚核对的文件都在。', 'Save the checklist before downloading the ZIP. Open it to make sure it contains the checklist and the files you just checked.')) + '</p>'
+        + stepBlock(4, tr('手动上传文件（如有）', 'Upload files manually (if needed)'), '<p class="hint">'
+          + escape(tr('有额外附件才用这里。要给 Officer 看的附件可以单独下载，跟 ZIP 一起交。', 'Use this only for extra files. Download any attachments the Officer needs separately and send them with the ZIP.')) + '</p>' + attachmentsBlock({ kind: 'batch', id: batch.id }, batch))
+        + stepBlock(5, tr('下载 ZIP 给 Officer 检查', 'Download ZIP for Officer review'),
+          '<p class="hint">' + escape(tr('保存清单后再下载 ZIP。解压确认文件都在，再把 ZIP 交给 Officer 检查。', 'Save the checklist, then download and open the ZIP to check the files. Send the ZIP to the Officer for review.')) + '</p>'
           + (isSSS ? '<p class="hint">' + escape(tr('Covering Letter 自己准备和交，不在 ZIP 里面。', 'Prepare and submit the covering letter separately. It is not in the ZIP.')) + '</p>' : '') + batchDownloads(batch, 'final'))
-        + stepBlock(5, tr('手动上传文件（如有）', 'Upload files manually (if needed)'), '<p class="hint">'
-          + escape(tr('如果每位学员的申请已附齐文件，这里可以跳过。其他手动附件可在下方单独下载。', 'Skip this if each applicant already has the required files. Other manual attachments can be downloaded below.')) + '</p>' + attachmentsBlock({ kind: 'batch', id: batch.id }, batch))
-        + stepBlock(6, tr('交出去后才登记', 'Record it after sending'),
-          '<p class="hint">' + escape(tr('这个按钮不会帮你发送文件。真的交出去了，才标为已提交。', 'This does not send the files. Mark it submitted only after sending it.')) + '</p>' + batchActions(batch))
+        + stepBlock(6, tr('Officer 看完后怎么做', 'After Officer review'),
+          '<p class="hint">' + escape(tr('给 Officer 检查不算正式提交。等 Officer 看完、文件真的对外交了，才点「标为已提交」。', 'Sending the ZIP to the Officer is not formal submission. Mark it submitted only after Officer review and formal submission.')) + '</p>' + batchActions(batch))
         + '</section>';
     }
 
@@ -1454,10 +1454,12 @@
           const loading = tr('下载中…', 'Downloading…');
           btn.textContent = loading;
           btn.disabled = true;
-          const section = (btn.hasAttribute('data-svc-batch-merge') || btn.hasAttribute('data-svc-batch-duty')) ? '2' : '4';
+          const section = (btn.hasAttribute('data-svc-batch-merge') || btn.hasAttribute('data-svc-batch-duty')) ? '2' : '5';
           operate(section, loading, async () => {
             await work(btn);
-            notice(tr('文件已开始下载。', 'Download started.'), false, section);
+            notice(btn.hasAttribute('data-svc-batch-zip')
+              ? tr('ZIP 已开始下载。下载后记得交给 Officer 检查。', 'ZIP download started. Send it to the Officer for review.')
+              : tr('文件已开始下载。', 'Download started.'), false, section);
           }).finally(() => {
             btn.textContent = label;
             btn.disabled = false;
