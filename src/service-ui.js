@@ -939,13 +939,21 @@
         + (confirmSss ? '<div class="toolbar"><button type="button" class="button primary" data-svc-confirm-member="' + escape(app.id) + '"' + (current ? '' : ' disabled') + '>' + escape(tr('确认绑定并计算 SSS 等级', 'Confirm member & calculate SSS tier')) + '</button></div>'
           + '<p class="hint">' + escape(tr('选好会员后点确认。系统会保存本页资料并按申请年度核对 Duty Record，不会提交申请。', 'Select a member and click Confirm. This saves your edits and checks the Duty Record for the application year without submitting the application.')) + '</p>'
           + '<p class="svc-feedback" data-svc-feedback="1" role="status"></p>' : '')
+        + (isSSS ? '<section class="svc-step" aria-live="polite">'
+          + '<p>' + escape(tr('学生选的等级：', 'Student picked: ')) + '<strong>' + escape(sssTierLabel(app.declaredTier)) + '</strong></p>'
+          + '<p>' + escape(tr('系统核对结果：', 'Checked result: ')) + '<strong id="svc-sss-eligibility">' + escape(sssEligibilityText(app)) + '</strong></p>'
+          + '<p>' + escape(tr('累计 Duty 小时：', 'Total Duty hours: ')) + '<strong id="svc-sss-hours">' + escape(String(app.memberId && app.dutyConfirmed ? app.confirmedDutyHours ?? '—' : '—')) + '</strong></p>'
+          + (app.memberId && !app.dutyConfirmed ? '<a href="?mode=admin&amp;view=DutyRecord" target="_blank" rel="noopener">' + escape(tr('打开 Duty Record（新分页）', 'Open Duty Record in a new tab')) + '</a>' : '')
+          + '</section>' : '')
         + '</div>';
     }
     function sssEligibilityText(app) {
-      if (!app.memberId || app.confirmedDutyHours == null) return tr('待确认会员', 'Confirm the member first');
-      if (!app.dutyConfirmed) return tr('待确认 Duty Record 的 Previous', 'Confirm Previous in Duty Record');
-      return app.confirmedTier == null ? tr('不足 100 小时，未达标', 'Not eligible (under 100 hours)') : String(app.confirmedTier);
+      if (!app.memberId) return tr('先选会员，再点确认。', 'Select the member and click Confirm.');
+      if (!app.dutyConfirmed) return tr('先去 Duty Record 确认 Previous。没有结转就填 0 并保存，再回来点确认。', 'Confirm Previous in Duty Record. If there are no hours to carry over, save 0, then come back and click Confirm.');
+      if (app.confirmedDutyHours == null) return tr('还没算出小时，请再点一次确认。', 'Hours are not available yet. Click Confirm again.');
+      return app.confirmedTier == null ? tr('不足 100 小时，还不能申请。', 'Under 100 hours; not eligible yet.') : sssTierLabel(app.confirmedTier);
     }
+    const sssTierLabel = tier => ({ 100: '100 Green', 200: '200 Blue', 500: '500 Purple', 750: '750 Silver', 1000: '1000 Emas' })[tier] || '—';
     function statusButtons(app) {
       const flow = TRANSITIONS[app.status] || { next: [], back: [] };
       const canSave = ['PendingSecretary', 'Preparing', 'AwaitingSignature', 'AwaitingOwner', 'NeedsInfo'].includes(app.status);
@@ -985,9 +993,7 @@
         + field(t('fOccupation'), 'occupation', a.occupation)
         + field(t('refLabel'), 'reference', app.reference != null ? app.reference : '', { readonly: true, hint: tr('首次保存时按申请年度自动分配。', 'Assigned from the application year on first save.') })
         + '<div class="field"><label for="svc-year">' + escape(t('yearLabel')) + '</label><input id="svc-year" name="year" type="number" min="2000" max="2100"' + (app.reference ? ' readonly' : '') + ' value="' + escape(app.year != null && app.year !== '' ? String(app.year) : '') + '"><p class="hint">' + escape(t('yearHint')) + '</p></div>'
-        + (app.awardType === 'SpecialServiceShield'
-          ? '<div class="field"><label for="svc-sss-eligibility">' + escape(tr('预计／确认 SSS 等级', 'Expected / confirmed SSS tier')) + '</label><input id="svc-sss-eligibility" value="' + escape(String(app.declaredTier || '—') + ' / ' + sssEligibilityText(app)) + '" readonly><p class="hint" id="svc-sss-hours">' + escape(tr('累计 Duty Hours：', 'Accumulated Duty Hours: ') + (app.memberId && app.dutyConfirmed ? String(app.confirmedDutyHours ?? '—') : '—')) + '</p></div>'
-          : '<div class="field"><label for="svc-confYear">' + escape(t('confYear')) + '</label><select id="svc-confYear">' + yearChoices(app.confirmedYear) + '</select></div>')
+        + (isSSS ? '' : '<div class="field"><label for="svc-confYear">' + escape(t('confYear')) + '</label><select id="svc-confYear">' + yearChoices(app.confirmedYear) + '</select></div>')
         + memberPicker(app)
         + field(t('remarks'), 'remarks', app.remarks, { type: 'textarea' })
         + '</form>'
@@ -1230,8 +1236,8 @@
         const refreshEligibility = () => {
           confirmMember.disabled = !memberPick.value;
           const changed = memberPick.value !== String(app.memberId || '') || Number(yearField.value) !== Number(app.year);
-          eligibility.value = String(app.declaredTier || '—') + ' / ' + (changed ? tr('请点击确认重新计算', 'Click Confirm to recalculate') : sssEligibilityText(app));
-          hours.textContent = changed ? '' : savedHours;
+          eligibility.textContent = changed ? (memberPick.value ? tr('点确认，重新算这位会员的等级。', 'Click Confirm to recalculate the tier.') : tr('先选会员，再点确认。', 'Select the member and click Confirm.')) : sssEligibilityText(app);
+          hours.textContent = changed ? '—' : savedHours;
         };
         memberPick.addEventListener('change', refreshEligibility);
         yearField.addEventListener('input', refreshEligibility);
