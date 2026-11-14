@@ -160,7 +160,11 @@
       byId('results-title').textContent = 'Member records';
       byId('updated').textContent = '';
       byId('results').innerHTML = '<div class="card empty" style="grid-column:1/-1"><strong>Search unavailable</strong>Please retry when the connection is available.</div>';
+      return;
     } finally { button.disabled = false; button.textContent = 'Search members'; }
+    const resultsTitle = byId('results-title');
+    resultsTitle.focus({ preventScroll: true });
+    resultsTitle.scrollIntoView({ block: 'center' });
   });
 
   // ---- Service Stripe & Star application (public, anonymous) ----
