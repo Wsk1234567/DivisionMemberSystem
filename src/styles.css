@@ -323,6 +323,10 @@ body[data-mode="oc"] .nav .doc-package-link.active{background:var(--soft);color:
 }
 .svc-toast.error { background: #852b3d; }
 
+#results + .service-teaser {
+  margin-top: clamp(24px, 4vw, 40px);
+}
+
 @media (min-width: 761px) {
   .admin-shell .sidebar > .nav { min-height: 0; overflow-y: auto; }
   .admin-shell .sidebar > .sidebar-bottom { flex-shrink: 0; }
