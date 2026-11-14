@@ -1168,8 +1168,8 @@
       + '<div class="toolbar">' + button(t('importPreviewBtn'), 'previewImport') + '</div>'
       + (isAll ? '<p class="hint">' + escape(t('importAdvancedNote')) + '</p>' : '')
       + '</section><section class="card"><div class="eyebrow">Portable records</div><h2>Export &amp; backup</h2><p class="muted">Export the current private records as Excel. Includes IDs and versions for future updates.</p><div class="toolbar">' + button('Export all records', 'export') + button('Export with annual summary', 'exportSummary') + '</div><p class="hint">Store exports privately; they contain IC and other personal records.</p></section></div>'
-      + importMembersGuide()
-      + '<section id="import-preview" style="margin-top:24px"></section>';
+      + '<section id="import-preview" style="margin-top:24px"></section>'
+      + importMembersGuide();
   }
   function docProgress(pkg) {
     const items = state.DocItems.filter(row => row.packageId === pkg.id && !row.archived);
